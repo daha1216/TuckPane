@@ -53,6 +53,8 @@ internal sealed class AppUpdateService : IDisposable
             }
         }
         catch (Exception ex) { Error = ex.Message; }
+        // Sessions survive a successful install; reclaim old downloads without blocking startup.
+        _ = Task.Run(CleanupSessions);
     }
 
     public async Task CheckAsync(bool manual)
@@ -150,6 +152,46 @@ internal sealed class AppUpdateService : IDisposable
     {
         try { return JsonSerializer.Deserialize<UpdateResult>(File.ReadAllText(path))?.Message ?? ""; }
         catch { return ""; }
+    }
+
+    private void CleanupSessions()
+    {
+        try
+        {
+            string root = Path.Combine(_root, "sessions");
+            if (!Directory.Exists(root)) return;
+            // A download or install finishes within minutes; anything older is residue from
+            // a previous attempt and can hold a full setup package.
+            DateTime cutoff = DateTime.UtcNow.AddHours(-1);
+            int removed = 0;
+            foreach (string candidate in Directory.EnumerateDirectories(root, "*", SearchOption.TopDirectoryOnly))
+            {
+                try
+                {
+                    var directory = new DirectoryInfo(candidate);
+                    if ((directory.Attributes & FileAttributes.ReparsePoint) != 0) continue;
+                    if (directory.LastWriteTimeUtc >= cutoff) continue;
+                    UpdateFiles.NoLinks(candidate);
+                    DeleteSessionEntry(candidate);
+                    removed++;
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+            }
+            if (removed > 0) AppLogger.Performance($"update-sessions cleanup removed={removed}");
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+    }
+
+    private static void DeleteSessionEntry(string directory)
+    {
+        foreach (string entry in Directory.EnumerateFileSystemEntries(directory))
+        {
+            FileAttributes attributes = File.GetAttributes(entry);
+            if ((attributes & FileAttributes.ReparsePoint) != 0) continue;
+            if ((attributes & FileAttributes.Directory) != 0) DeleteSessionEntry(entry);
+            else File.Delete(entry);
+        }
+        Directory.Delete(directory);
     }
 
     public void CancelDownload() { if (Downloading) _operation?.Cancel(); }

@@ -22,24 +22,79 @@ public static class AppLogger
         _ => DiagnosticStage.Notice
     }, origin: name);
 
+    private const int MaximumPerformanceBytes = 2 * 1024 * 1024;
+    private static readonly object PerformanceGate = new();
+
     public static bool PerformanceTraceEnabled =>
         string.Equals(Environment.GetEnvironmentVariable("TUCKPANE_PERF_TRACE"), "1", StringComparison.Ordinal);
+
+    // Opt-in tracing only: samples are persisted exclusively while TUCKPANE_PERF_TRACE=1.
     public static void Performance(string message, [CallerMemberName] string caller = "")
     {
-        // Normal performance samples are intentionally not persisted, including opt-in legacy tracing.
+        if (!PerformanceTraceEnabled) return;
+        try
+        {
+            string directory = Path.Combine(AppPaths.LocalRoot, "diagnostics");
+            string line = $"{DateTimeOffset.UtcNow:O} {caller} {SanitizePerformance(message)}";
+            lock (PerformanceGate)
+            {
+                Directory.CreateDirectory(directory);
+                string path = Path.Combine(directory, "performance.0.jsonl");
+                if (File.Exists(path) && new FileInfo(path).Length > MaximumPerformanceBytes)
+                    File.Move(path, Path.Combine(directory, "performance.1.jsonl"), overwrite: true);
+                File.AppendAllText(path, line + Environment.NewLine);
+            }
+        }
+        catch { /* Tracing must never change application behavior. */ }
+    }
+
+    private static string SanitizePerformance(string message)
+    {
+        string sanitized = message.ReplaceLineEndings(" ");
+        return sanitized.Length <= 512 ? sanitized : sanitized[..512];
     }
 
     public static async Task FlushAsync() => await Writer.FlushAsync(TimeSpan.FromSeconds(2));
 
+    // CallerMemberName reports ".ctor" for constructors, which is not a usable code location.
+    // A stack walk resolves the declaring type instead; this only runs for constructor failures.
+    internal static string OriginFor(string caller)
+    {
+        if (caller is not (".ctor" or ".cctor")) return caller;
+        try
+        {
+            foreach (StackFrame frame in new StackTrace(fNeedFileInfo: false).GetFrames())
+            {
+                Type? type = frame.GetMethod()?.DeclaringType;
+                if (type is null || type == typeof(AppLogger)) continue;
+                string name = SafeTypeName(type);
+                return name.Length == 0 ? caller : $"{name}.{caller}";
+            }
+        }
+        catch { }
+        return caller;
+    }
+
+    private static string SafeTypeName(Type type)
+    {
+        var parts = new Stack<string>();
+        for (Type? current = type; current is not null; current = current.DeclaringType) parts.Push(current.Name);
+        string name = string.Join('.', parts);
+        foreach (char character in name)
+            if (!char.IsAsciiLetterOrDigit(character) && character is not ('_' or '.')) return "";
+        return name;
+    }
+
     internal static void Record(DiagnosticArea area, DiagnosticStage stage, Guid? operation = null,
         double? elapsedMs = null, int? count = null, Exception? exception = null, [CallerMemberName] string origin = "")
     {
+        origin = OriginFor(origin);
         if (!DiagnosticRecord.ShouldRecord(stage, DiagnosticRecord.ClassifyFault(exception))) return;
         try { Writer.Write(DiagnosticRecord.Create(area, stage, operation, elapsedMs, count, exception, origin)); }
         catch { /* Diagnostic failures must not change application behavior. */ }
     }
 
-    internal static Operation Begin(DiagnosticArea area, [CallerMemberName] string origin = "") => new(area, origin);
+    internal static Operation Begin(DiagnosticArea area, [CallerMemberName] string origin = "") => new(area, OriginFor(origin));
     internal sealed class Operation : IDisposable
     {
         internal Guid Id { get; } = Guid.NewGuid();

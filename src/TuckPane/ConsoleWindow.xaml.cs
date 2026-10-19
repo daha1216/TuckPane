@@ -122,7 +122,14 @@ public sealed partial class ConsoleWindow : Window
         _accessibilitySubscription = OptionalEventSubscription.TryCreate(
             () => _accessibilitySettings.HighContrastChanged += SettingsHighContrastChanged,
             () => _accessibilitySettings.HighContrastChanged -= SettingsHighContrastChanged,
-            ex => AppLogger.Error("高对比度事件不可用；将在设置窗口激活时检查外观。", ex));
+            // Some Win10/Win11 builds refuse this subscription with ERROR_NOT_FOUND (0x80070490).
+            // That is an expected environment difference, not a runtime failure: themes are
+            // re-checked when settings open, so keep it out of the failure log.
+            ex =>
+            {
+                AppLogger.Info("高对比度事件不可用；将在设置窗口激活时检查外观。");
+                AppLogger.Performance($"high-contrast-subscription-unavailable hresult=0x{ex.HResult:X8} type={ex.GetType().Name}");
+            });
         ExtendsContentIntoTitleBar = true;
         SetTitleBar(TitleBarDragRegion);
         _componentReady = true;

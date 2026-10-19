@@ -109,7 +109,10 @@ public sealed partial class AppHost : IDisposable
 
     public async Task InitializeAsync()
     {
+        long startupStarted = Environment.TickCount64;
         AppPaths.EnsureCreated();
+        // Age out icon cache leftovers in the background; startup must not wait for disk cleanup.
+        _ = IconCacheService.SweepAsync();
         State = await _stateStore.LoadAsync();
         AppStrings.SetLanguage(State.GlobalSettings.Language);
         try { FolderContextMenu.RepairIfOwned(AppStrings.Get("FolderMenuCommand")); }
@@ -131,6 +134,7 @@ public sealed partial class AppHost : IDisposable
         foreach (OrganizerDefinition organizer in State.Organizers) CreateWindow(organizer);
         Console.RefreshAll();
         _ = Updates.CheckAsync(false);
+        AppLogger.Performance($"startup organizers={State.Organizers.Count} elapsedMs={Environment.TickCount64 - startupStarted}");
     }
 
     public async Task<OrganizerDefinition> CreateOrganizerAsync(OrganizerDefinition draft, string? storagePath = null)

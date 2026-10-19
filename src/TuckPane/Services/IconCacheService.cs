@@ -36,6 +36,61 @@ public sealed class IconCacheService
         }
     }
 
+    internal const int MaximumCachedIcons = 4096;
+    internal const long MaximumCacheBytes = 64L * 1024 * 1024;
+
+    // Cache files have no expiry of their own, so leftovers are pruned once per startup:
+    // interrupted writes leave .tmp files behind and the cache grows without bound.
+    internal static Task SweepAsync(CancellationToken cancellationToken = default) => Task.Run(() =>
+    {
+        try
+        {
+            string root = AppPaths.IconCacheRoot;
+            if (!Directory.Exists(root)) return;
+            var icons = new List<FileInfo>();
+            long totalBytes = 0;
+            int deleted = 0;
+            DateTime staleBefore = DateTime.UtcNow.AddHours(-1);
+            foreach (string entry in Directory.EnumerateFiles(root, "*", SearchOption.TopDirectoryOnly))
+            {
+                if (cancellationToken.IsCancellationRequested) return;
+                var file = new FileInfo(entry);
+                if ((file.Attributes & System.IO.FileAttributes.ReparsePoint) != 0) continue;
+                if (file.Extension.Equals(".tmp", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (file.LastWriteTimeUtc < staleBefore && TryDelete(file)) deleted++;
+                    continue;
+                }
+                if (!file.Extension.Equals(".png", StringComparison.OrdinalIgnoreCase)) continue;
+                icons.Add(file);
+                totalBytes += file.Length;
+            }
+            if (icons.Count > MaximumCachedIcons || totalBytes > MaximumCacheBytes)
+            {
+                icons.Sort((left, right) => left.LastWriteTimeUtc.CompareTo(right.LastWriteTimeUtc));
+                int remaining = icons.Count;
+                foreach (FileInfo file in icons)
+                {
+                    if (remaining <= MaximumCachedIcons && totalBytes <= MaximumCacheBytes) break;
+                    // Length must be read before the delete: FileInfo refreshes its state on access.
+                    long length = file.Length;
+                    if (!TryDelete(file)) continue;
+                    remaining--;
+                    totalBytes -= length;
+                    deleted++;
+                }
+            }
+            AppLogger.Performance($"icon-cache sweep files={icons.Count} deleted={deleted} bytes={totalBytes}");
+        }
+        catch { /* Cache maintenance must never change application behavior. */ }
+    });
+
+    private static bool TryDelete(FileInfo file)
+    {
+        try { file.Delete(); return !file.Exists; }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or NotSupportedException) { return false; }
+    }
+
     public Task<BitmapImage?> GetIconAsync(string path, bool refresh = false) =>
         GetIconCoreAsync(path, refresh, dockPresentation: false);
 

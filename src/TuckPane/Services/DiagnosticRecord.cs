@@ -28,6 +28,24 @@ internal sealed record DiagnosticRecord(int Format, DateTimeOffset Timestamp, Gu
         }
         catch { return new(StringComparer.Ordinal); }
     });
+    // Constructor failures arrive as "<Type>..ctor"; the type name joins the same membership allowlist.
+    private static readonly Lazy<HashSet<string>> CodeTypes = new(() =>
+    {
+        try
+        {
+            var types = new HashSet<string>(StringComparer.Ordinal);
+            foreach (Type type in typeof(AppLogger).Assembly.DefinedTypes)
+            {
+                if (type.Namespace is not ("TuckPane" or "TuckPane.Core" or "TuckPane.Services")) continue;
+                foreach (string? name in new[] { type.Name, type.FullName?.Replace('+', '.') })
+                    if (name is { Length: > 0 and <= 120 } && name.All(IsTypeNameCharacter)) types.Add(name);
+            }
+            return types;
+        }
+        catch { return new(StringComparer.Ordinal); }
+    });
+    private static bool IsTypeNameCharacter(char value) =>
+        char.IsAsciiLetterOrDigit(value) || value is '_' or '.';
     private static readonly HashSet<string> ExceptionTypes = new(StringComparer.Ordinal)
     {
         nameof(Exception), nameof(IOException), nameof(UnauthorizedAccessException), nameof(TimeoutException),
@@ -66,8 +84,17 @@ internal sealed record DiagnosticRecord(int Format, DateTimeOffset Timestamp, Gu
         _ => DiagnosticFault.Other
     };
 
-    private static string? SafeCodeLocation(string? value) =>
-        value is { Length: <= 128 } && CodeMembers.Value.Contains(value) ? value : null;
+    private static readonly string[] ConstructorSuffixes = ["..ctor", "..cctor"];
+
+    private static string? SafeCodeLocation(string? value)
+    {
+        if (value is not { Length: > 0 and <= 128 }) return null;
+        if (CodeMembers.Value.Contains(value)) return value;
+        foreach (string suffix in ConstructorSuffixes)
+            if (value.EndsWith(suffix, StringComparison.Ordinal) && CodeTypes.Value.Contains(value[..^suffix.Length]))
+                return value;
+        return null;
+    }
 
     private static string? SafeExceptionType(Exception? exception)
     {
