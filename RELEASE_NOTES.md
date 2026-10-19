@@ -1,3 +1,22 @@
+## 4.2.2
+
+本版是个人维护的 fork 构建（发布源 daha1216/TuckPane），基于上游 4.2.1 合入诊断与运行期维护修复；应用内更新只检查本 fork，不会安装上游构建。
+
+- 新增可选性能日志：设置 `TUCKPANE_PERF_TRACE=1` 时写入 `diagnostics/performance.0.jsonl`（2 MiB 轮转到 `.1`），记录启动与交互耗时样本，单行截断 512 字符、过滤换行；未设置时无额外开销。此前性能日志方法为空实现，日志中没有任何性能数据。
+- 构造函数内发生的失败现在能记录代码位置（如 `ConsoleWindow..ctor`），不再因调用方名称为 `.ctor` 而丢成空值。
+- 启动日志降噪：宿主缺少高对比度事件（`COMException 0x80070490`）属于可预期降级，改为 info 级并只写可选性能日志，不再写入 `runtime` 失败记录；启动时不再每次留下一条 ERROR。
+- 图标缓存启动清扫与上限：后台删除超过 1 小时的 `.tmp`，png 超过 4096 个或 64 MiB 时按最旧优先清理到限额内，跳过 reparse point；只统计与清理缓存 png，不触碰真实文件。
+- 更新会话自动清理：启动时删除 `updates/sessions` 下超过 1 小时的历史目录（递归、跳过 reparse point），避免每次应用内更新后留下数百 MB 残留。
+- 应用内更新源改为本 fork；同版本或更低版本不会安装。
+
+## 验证
+- 非 GUI 自动检查：`LogicChecks --stability` 八个区域（storage/queue/lifecycle/drop/launch/watcher/diagnostics/diagnostics-limits）与 `UpdateChecks --updates` 4/4 全部通过。
+- 隔离测试根端到端：种入 4301 个缓存 png 后清理到 4096 个、过期 tmp 删除、旧更新会话删除，启动不再产生 `Runtime/Failed` 记录。
+- 构建：Release x64 自包含（.NET 10 + Windows App SDK），FileVersion 4.2.2.0；未执行 GUI 鼠标/键盘手测。
+
+## 已知问题
+- Dock 短线：与 4.2.1 相同，本次未修改相关代码，未修复。
+
 ## 4.2.1
 
 - 修复便携包双击 `00-启动 TuckPane.exe` 无窗口、无托盘并立即退出的问题。该入口现在独立启动同目录的 `TuckPane.exe`，保留已有快捷方式和命令参数。
