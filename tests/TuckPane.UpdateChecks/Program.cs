@@ -54,7 +54,7 @@ static void CheckReleaseRules()
 
 static string ReleaseJson(string? fault = null, bool prerelease = false, bool draft = false)
 {
-    const string prefix = "https://github.com/ch998244353/TuckPane/releases/download/v3.1.0/";
+    string prefix = $"https://github.com/{ReleaseRules.Repository}/releases/download/v3.1.0/";
     var assets = new List<Dictionary<string, object>>();
     foreach (string name in new[] { "TuckPane-3.1.0-win-x64-setup.exe", "TuckPane-3.1.0-win-x64-portable.zip", "SHA256SUMS.txt" })
         assets.Add(new() { ["name"] = name, ["browser_download_url"] = prefix + name, ["size"] = 100 });

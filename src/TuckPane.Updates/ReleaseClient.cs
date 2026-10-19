@@ -10,7 +10,8 @@ public sealed record UpdateRelease(string Version, string Notes, UpdateAsset Pac
 
 public static class ReleaseRules
 {
-    public const string Repository = "ch998244353/TuckPane";
+    // This fork ships its own builds; in-app updates must never resolve to upstream releases.
+    public const string Repository = "daha1216/TuckPane";
     public const string LatestUrl = "https://api.github.com/repos/" + Repository + "/releases/latest";
     public static Version StableVersion(string value)
     {
