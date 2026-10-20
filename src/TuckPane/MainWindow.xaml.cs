@@ -59,6 +59,7 @@ public sealed partial class MainWindow : Window
     private readonly Microsoft.UI.Dispatching.DispatcherQueueTimer _longPressTimer;
     private readonly Microsoft.UI.Dispatching.DispatcherQueueTimer _externalHoverTimer;
     private readonly Microsoft.UI.Dispatching.DispatcherQueueTimer _desktopRepairTimer;
+    private readonly Microsoft.UI.Dispatching.DispatcherQueueTimer _desktopVisibilityTimer;
     private readonly Microsoft.UI.Dispatching.DispatcherQueueTimer _stationPointerTimer;
     private readonly Microsoft.UI.Dispatching.DispatcherQueueTimer _watcherDebounceTimer;
     private readonly Microsoft.UI.Dispatching.DispatcherQueueTimer _interactionSaveTimer;
@@ -337,6 +338,11 @@ public sealed partial class MainWindow : Window
             _host.State.GlobalSettings.PerformanceTuning.DesktopRepairMilliseconds);
         _desktopRepairTimer.IsRepeating = true;
         _desktopRepairTimer.Tick += DesktopRepairTimer_Tick;
+
+        _desktopVisibilityTimer = DispatcherQueue.CreateTimer();
+        _desktopVisibilityTimer.Interval = TimeSpan.FromMilliseconds(1000);
+        _desktopVisibilityTimer.IsRepeating = true;
+        _desktopVisibilityTimer.Tick += DesktopVisibilityTimer_Tick;
 
         _stationPointerTimer = DispatcherQueue.CreateTimer();
         _stationPointerTimer.Interval = TimeSpan.FromMilliseconds(
@@ -6116,6 +6122,10 @@ public sealed partial class MainWindow : Window
             (_definition.PlacementMode == OrganizerPlacementMode.Station ? _stationVisible : _runtimeVisible);
         SetTimerRunning(_desktopRepairTimer, repairDesktop);
 
+        bool watchDesktop = repairDesktop &&
+            (_definition.PlacementMode is OrganizerPlacementMode.Floating or OrganizerPlacementMode.Positioned);
+        SetTimerRunning(_desktopVisibilityTimer, watchDesktop);
+
         TimeSpan iconTransitionDuration = UseCustomAnimations ? TimeSpan.FromMilliseconds(120) : TimeSpan.Zero;
         if (CollapseDash.ScaleTransition is not null) CollapseDash.ScaleTransition.Duration = iconTransitionDuration;
         RefreshHoverAvailability();
@@ -6993,8 +7003,40 @@ public sealed partial class MainWindow : Window
                     _ = SaveStateAsync();
                 }
             }
-            _desktopLayer?.Reattach();
+            if (_desktopLayer is { } desktopLayer)
+            {
+                bool healthChecked = _definition.PlacementMode is
+                    OrganizerPlacementMode.Floating or OrganizerPlacementMode.Positioned;
+                DesktopAttachmentState attachment = healthChecked
+                    ? desktopLayer.RepairDesktopAttachment()
+                    : DesktopAttachmentState.Ok;
+                if (attachment != DesktopAttachmentState.Ok)
+                {
+                    AppLogger.Performance($"desktop repair pass fixed layer state={attachment} {desktopLayer.DescribeAttachment()}");
+                }
+                else
+                {
+                    desktopLayer.Reattach();
+                }
+            }
         }
+    }
+
+    private void DesktopVisibilityTimer_Tick(Microsoft.UI.Dispatching.DispatcherQueueTimer sender, object args)
+    {
+        if (_closing || _expanded || _animating || _pressActive || IsContained || !_runtimeVisible) return;
+        if (_definition.PlacementMode is not (OrganizerPlacementMode.Floating or OrganizerPlacementMode.Positioned)) return;
+        if (_desktopLayer is null || _desktopLayer.IsInputActivationEnabled) return;
+        if (_widgetDragging || _itemReorderSession is not null || _shellDragActive || _shellContextMenuOpen ||
+            _overlayOpenCount > 0)
+        {
+            return;
+        }
+
+        DesktopAttachmentState state = _desktopLayer.RepairDesktopAttachment();
+        if (state == DesktopAttachmentState.Ok) return;
+
+        AppLogger.Performance($"desktop layer repaired state={state} {_desktopLayer.DescribeAttachment()}");
     }
 
     private void MainWindow_Closed(object sender, WindowEventArgs args)

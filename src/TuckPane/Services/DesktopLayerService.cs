@@ -1,5 +1,13 @@
 namespace TuckPane.Services;
 
+internal enum DesktopAttachmentState
+{
+    Ok,
+    Hidden,
+    BehindDesktop,
+    OwnerLost
+}
+
 public sealed class DesktopLayerService : IDisposable
 {
     private const uint SpawnWorkerMessage = 0x052C;
@@ -103,6 +111,118 @@ public sealed class DesktopLayerService : IDisposable
             0,
             0,
             NativeMethods.SWP_NOMOVE | NativeMethods.SWP_NOSIZE | NativeMethods.SWP_NOACTIVATE | NativeMethods.SWP_SHOWWINDOW);
+    }
+
+    internal bool IsInputActivationEnabled => _allowActivation;
+
+    internal string DescribeAttachment()
+    {
+        long owner = NativeMethods.GetWindowLongPtr(_window, NativeMethods.GWLP_HWNDPARENT).ToInt64();
+        long view = _desktopIconView.ToInt64();
+        return $"hwnd=0x{_window.ToInt64():X} view=0x{view:X} owner=0x{owner:X} expanded={_expanded}";
+    }
+
+    internal DesktopAttachmentState RepairDesktopAttachment()
+    {
+        DesktopAttachmentState state = ProbeDesktopAttachment();
+        if (state == DesktopAttachmentState.Ok) return DesktopAttachmentState.Ok;
+
+        IntPtr iconView = _desktopIconView;
+        if (state == DesktopAttachmentState.OwnerLost &&
+            iconView != IntPtr.Zero &&
+            NativeMethods.IsWindow(iconView))
+        {
+            _ = NativeMethods.SetWindowLongPtr(_window, NativeMethods.GWLP_HWNDPARENT, iconView);
+        }
+
+        ReassertDesktopAttachment();
+        if (state == DesktopAttachmentState.Hidden)
+        {
+            // A window hidden by the shell misses WM_SHOWWINDOW, so WinUI keeps its last frame.
+            // Force a hide/show round trip so the frame is rebuilt before it is shown again.
+            _ = NativeMethods.SetWindowPos(
+                _window,
+                IntPtr.Zero,
+                0,
+                0,
+                0,
+                0,
+                NativeMethods.SWP_NOMOVE | NativeMethods.SWP_NOSIZE |
+                NativeMethods.SWP_NOACTIVATE | NativeMethods.SWP_HIDEWINDOW);
+            ReassertDesktopAttachment();
+        }
+
+        return state;
+    }
+
+    private void ReassertDesktopAttachment()
+    {
+        _ = NativeMethods.SetWindowPos(
+            _window,
+            NativeMethods.HWND_BOTTOM,
+            0,
+            0,
+            0,
+            0,
+            NativeMethods.SWP_NOMOVE |
+            NativeMethods.SWP_NOSIZE |
+            NativeMethods.SWP_NOACTIVATE |
+            NativeMethods.SWP_NOOWNERZORDER |
+            NativeMethods.SWP_SHOWWINDOW);
+    }
+
+    private DesktopAttachmentState ProbeDesktopAttachment()
+    {
+        if (_expanded || _window == IntPtr.Zero || !NativeMethods.IsWindow(_window))
+        {
+            return DesktopAttachmentState.Ok;
+        }
+
+        if (NativeMethods.DwmGetWindowAttribute(_window, NativeMethods.DWMWA_CLOAKED, out int cloaked, sizeof(int)) == 0 &&
+            cloaked != 0)
+        {
+            return DesktopAttachmentState.Ok;
+        }
+
+        if (_desktopIconView == IntPtr.Zero || !NativeMethods.IsWindow(_desktopIconView))
+        {
+            _desktopIconView = FindDesktopIconView(allowWorkerSpawn: false);
+        }
+
+        if (_desktopIconView == IntPtr.Zero)
+        {
+            return DesktopAttachmentState.Ok;
+        }
+
+        if (NativeMethods.GetWindowLongPtr(_window, NativeMethods.GWLP_HWNDPARENT) != _desktopIconView)
+        {
+            return DesktopAttachmentState.OwnerLost;
+        }
+
+        if (!NativeMethods.IsWindowVisible(_window))
+        {
+            return DesktopAttachmentState.Hidden;
+        }
+
+        return IsBehindDesktopLayer() ? DesktopAttachmentState.BehindDesktop : DesktopAttachmentState.Ok;
+    }
+
+    private bool IsBehindDesktopLayer()
+    {
+        IntPtr iconView = _desktopIconView;
+        if (iconView == IntPtr.Zero) return false;
+        IntPtr desktopRoot = NativeMethods.GetAncestor(iconView, NativeMethods.GA_ROOT);
+        if (desktopRoot == IntPtr.Zero) desktopRoot = iconView;
+
+        for (IntPtr walk = NativeMethods.GetTopWindow(IntPtr.Zero);
+             walk != IntPtr.Zero;
+             walk = NativeMethods.GetWindow(walk, NativeMethods.GW_HWNDNEXT))
+        {
+            if (walk == _window) return false;
+            if (walk == desktopRoot) return true;
+        }
+
+        return false;
     }
 
     public void SetTransientOwner(IntPtr owner)
