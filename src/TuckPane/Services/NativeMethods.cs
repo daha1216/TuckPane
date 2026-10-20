@@ -51,6 +51,7 @@ internal static class NativeMethods
     internal const uint SWP_HIDEWINDOW = 0x0080;
     internal const uint SWP_NOOWNERZORDER = 0x0200;
     internal const uint GW_HWNDNEXT = 2;
+    internal const uint GW_HWNDPREV = 3;
     internal const uint GA_ROOT = 2;
     internal const uint LWA_ALPHA = 0x00000002;
     internal const uint MONITOR_DEFAULTTONEAREST = 2;

@@ -67,11 +67,12 @@ public sealed class DesktopLayerService : IDisposable
 
         uint flags = NativeMethods.SWP_NOMOVE | NativeMethods.SWP_NOSIZE | NativeMethods.SWP_NOACTIVATE |
             NativeMethods.SWP_NOOWNERZORDER;
-        if (!ownerChanged) flags |= NativeMethods.SWP_NOZORDER;
+        IntPtr anchor = DesktopInsertAnchor();
+        if (!ownerChanged || anchor == IntPtr.Zero || anchor == _window) flags |= NativeMethods.SWP_NOZORDER;
         if (showWindow) flags |= NativeMethods.SWP_SHOWWINDOW;
         _ = NativeMethods.SetWindowPos(
             _window,
-            NativeMethods.HWND_BOTTOM,
+            anchor,
             0,
             0,
             0,
@@ -157,18 +158,36 @@ public sealed class DesktopLayerService : IDisposable
 
     private void ReassertDesktopAttachment()
     {
-        _ = NativeMethods.SetWindowPos(
-            _window,
-            NativeMethods.HWND_BOTTOM,
-            0,
-            0,
-            0,
-            0,
-            NativeMethods.SWP_NOMOVE |
+        IntPtr anchor = DesktopInsertAnchor();
+        uint flags = NativeMethods.SWP_NOMOVE |
             NativeMethods.SWP_NOSIZE |
             NativeMethods.SWP_NOACTIVATE |
             NativeMethods.SWP_NOOWNERZORDER |
-            NativeMethods.SWP_SHOWWINDOW);
+            NativeMethods.SWP_SHOWWINDOW;
+        if (anchor == IntPtr.Zero || anchor == _window) flags |= NativeMethods.SWP_NOZORDER;
+        _ = NativeMethods.SetWindowPos(_window, anchor, 0, 0, 0, 0, flags);
+    }
+
+    // The shell raises the desktop host above the window's bottom-most slot while the desktop is
+    // shown (Win+D, clicking the desktop), and a plain HWND_BOTTOM then buries the window behind
+    // the wallpaper for good. Placing the window directly above the host keeps it on the desktop
+    // layer while every ordinary window still stays in front of it.
+    private IntPtr DesktopInsertAnchor()
+    {
+        IntPtr root = DesktopHostRoot();
+        if (root == IntPtr.Zero) return NativeMethods.HWND_BOTTOM;
+
+        // hWndInsertAfter places the window right behind the given window, so the window just in
+        // front of the host is the right anchor for "immediately above the host".
+        IntPtr above = NativeMethods.GetWindow(root, NativeMethods.GW_HWNDPREV);
+        return above == IntPtr.Zero ? NativeMethods.HWND_TOP : above;
+    }
+
+    private IntPtr DesktopHostRoot()
+    {
+        IntPtr iconView = _desktopIconView;
+        if (iconView == IntPtr.Zero || !NativeMethods.IsWindow(iconView)) return IntPtr.Zero;
+        return NativeMethods.GetAncestor(iconView, NativeMethods.GA_ROOT);
     }
 
     private DesktopAttachmentState ProbeDesktopAttachment()
