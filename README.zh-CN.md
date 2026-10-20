@@ -71,13 +71,13 @@ TuckPane 是一款适用于 Windows 10 22H2 与 Windows 11 x64 的桌面文件�
 
 本仓库是 [ch998244353/TuckPane](https://github.com/ch998244353/TuckPane) 的个人 fork。构建、下载与应用内更新均来自本 fork（`daha1216/TuckPane`），上游维护者不对这些构建负责。
 
-当前版本：**4.2.2**。完整发布说明请查看 [4.2.2 Release](https://github.com/daha1216/TuckPane/releases/tag/v4.2.2)。
+当前版本：**4.2.3**。完整发布说明请查看 [4.2.3 Release](https://github.com/daha1216/TuckPane/releases/tag/v4.2.3)。
 
-- [TuckPane-4.2.2-win-x64-setup.exe](https://github.com/daha1216/TuckPane/releases/download/v4.2.2/TuckPane-4.2.2-win-x64-setup.exe)：推荐使用的当前用户离线安装器，创建开始菜单和桌面快捷方式。
-- [TuckPane-4.2.2-win-x64-portable.zip](https://github.com/daha1216/TuckPane/releases/download/v4.2.2/TuckPane-4.2.2-win-x64-portable.zip)：完整解压后双击 `TuckPane.exe`。也可通过 `00-启动 TuckPane.exe` 启动同目录主程序；请保留完整文件，不要重命名 `TuckPane.exe`。
-- [SHA256SUMS.txt](https://github.com/daha1216/TuckPane/releases/download/v4.2.2/SHA256SUMS.txt)：两个下载文件的 SHA-256 校验值。
+- [TuckPane-4.2.3-win-x64-setup.exe](https://github.com/daha1216/TuckPane/releases/download/v4.2.3/TuckPane-4.2.3-win-x64-setup.exe)：推荐使用的当前用户离线安装器，创建开始菜单和桌面快捷方式。
+- [TuckPane-4.2.3-win-x64-portable.zip](https://github.com/daha1216/TuckPane/releases/download/v4.2.3/TuckPane-4.2.3-win-x64-portable.zip)：完整解压后双击 `TuckPane.exe`。也可通过 `00-启动 TuckPane.exe` 启动同目录主程序；请保留完整文件，不要重命名 `TuckPane.exe`。
+- [SHA256SUMS.txt](https://github.com/daha1216/TuckPane/releases/download/v4.2.3/SHA256SUMS.txt)：两个下载文件的 SHA-256 校验值。
 
-3.0.2 尚无应用内更新入口：首次升级请运行 4.2.2 安装包覆盖原安装，或把便携包解压到独立程序目录；原有数据根继续保留。使用 4.2.2 后，可通过“设置 → 更新”获取后续版本。
+3.0.2 尚无应用内更新入口：首次升级请运行 4.2.3 安装包覆盖原安装，或把便携包解压到独立程序目录；原有数据根继续保留。使用 4.2.3 后，可通过“设置 → 更新”获取后续版本。
 
 两种版本均自带 .NET 与 Windows App SDK。离线安装器还携带 Microsoft Edge WebView2 Runtime，并仅在系统缺失时自动安装；便携版使用电脑上已有的 WebView2 Runtime，默认不注册文件夹和桌面右键菜单，手动开启后会写入当前用户注册表。当前 TuckPane 安装器未进行代码签名，Windows SmartScreen 可能显示“未知发布者”；需要时可使用 `SHA256SUMS.txt` 校验下载文件。
 
