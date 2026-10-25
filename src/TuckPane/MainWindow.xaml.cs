@@ -7071,6 +7071,7 @@ public sealed partial class MainWindow : Window
         ShutdownItemDragBoundaryHook();
         StopNativeItemMotionRendering(snapToTargets: true);
         _desktopRepairTimer.Stop();
+        _desktopVisibilityTimer.Stop();
         _watcherDebounceTimer.Stop();
         _catalogRefreshCancellation?.Cancel();
         _catalogRefreshCancellation?.Dispose();
