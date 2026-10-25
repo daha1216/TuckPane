@@ -1,0 +1,64 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 10.0.400
+
+      # Mirrors the restore/publish arguments used by scripts/build-release.ps1, so a pull request
+      # fails here instead of failing halfway through a tagged release build.
+      - name: Restore
+        shell: pwsh
+        run: dotnet restore .\src\TuckPane\TuckPane.csproj --locked-mode -p:Platform=x64
+
+      - name: Build application
+        shell: pwsh
+        run: |
+          dotnet publish .\src\TuckPane\TuckPane.csproj `
+            -c Release `
+            --no-restore `
+            -p:Platform=x64 `
+            -p:RuntimeIdentifier=win-x64 `
+            -p:SelfContained=true `
+            -p:WindowsAppSDKSelfContained=true `
+            -p:DebugSymbols=false `
+            -p:DebugType=None `
+            -o .\artifacts\ci\app
+
+      - name: Build update helper and launcher
+        shell: pwsh
+        run: |
+          dotnet build .\src\TuckPane.Updater\TuckPane.Updater.csproj -c Release
+          dotnet build .\src\TuckPane.Launcher\TuckPane.Launcher.csproj -c Release
+
+      - name: Update checks
+        shell: pwsh
+        run: dotnet run --project .\tests\TuckPane.UpdateChecks\TuckPane.UpdateChecks.csproj -c Release -- --updates
+
+      # The logic checks are pure model/service assertions, but they have only ever been run from an
+      # interactive desktop session. They are reported here without blocking the job until they are
+      # confirmed to pass on a hosted runner.
+      - name: Logic checks
+        shell: pwsh
+        continue-on-error: true
+        run: dotnet run --project .\tests\TuckPane.LogicChecks\TuckPane.LogicChecks.csproj -c Release

@@ -1307,6 +1307,7 @@ if (args is ["--performance-profile"])
         PerformanceProfile profile,
         int pointerPollMilliseconds,
         int desktopRepairMilliseconds,
+        int desktopVisibilityMilliseconds,
         bool customAnimationsEnabled)
     {
         var settings = new GlobalSettings { PerformanceProfile = profile };
@@ -1315,13 +1316,15 @@ if (args is ["--performance-profile"])
             $"{profile} 指针轮询周期错误。");
         Require(tuning.DesktopRepairMilliseconds == desktopRepairMilliseconds,
             $"{profile} 桌面修复周期错误。");
+        Require(tuning.DesktopVisibilityMilliseconds == desktopVisibilityMilliseconds,
+            $"{profile} 桌面可见性检查周期错误。");
         Require(tuning.CustomAnimationsEnabled == customAnimationsEnabled,
             $"{profile} 动画策略错误。");
     }
 
-    RequireTuning(PerformanceProfile.PowerSaver, 100, 8000, false);
-    RequireTuning(PerformanceProfile.Balanced, 50, 4000, true);
-    RequireTuning(PerformanceProfile.HighPerformance, 25, 2000, true);
+    RequireTuning(PerformanceProfile.PowerSaver, 100, 8000, 2000, false);
+    RequireTuning(PerformanceProfile.Balanced, 50, 4000, 1000, true);
+    RequireTuning(PerformanceProfile.HighPerformance, 25, 2000, 500, true);
 
     Require(!new GlobalSettings { PerformanceProfile = PerformanceProfile.PowerSaver }
             .ShouldUseCustomAnimations(systemAnimationsEnabled: true),

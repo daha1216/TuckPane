@@ -67,8 +67,8 @@ public sealed class DesktopLayerService : IDisposable
 
         uint flags = NativeMethods.SWP_NOMOVE | NativeMethods.SWP_NOSIZE | NativeMethods.SWP_NOACTIVATE |
             NativeMethods.SWP_NOOWNERZORDER;
-        IntPtr anchor = DesktopInsertAnchor();
-        if (!ownerChanged || !IsSafeAnchor(anchor)) flags |= NativeMethods.SWP_NOZORDER;
+        bool haveAnchor = TryGetDesktopInsertAnchor(out IntPtr anchor);
+        if (!ownerChanged || !haveAnchor) flags |= NativeMethods.SWP_NOZORDER;
         if (showWindow) flags |= NativeMethods.SWP_SHOWWINDOW;
         _ = NativeMethods.SetWindowPos(
             _window,
@@ -123,10 +123,17 @@ public sealed class DesktopLayerService : IDisposable
         return $"hwnd=0x{_window.ToInt64():X} view=0x{view:X} owner=0x{owner:X} expanded={_expanded}";
     }
 
-    internal DesktopAttachmentState RepairDesktopAttachment()
+    // Returns the state observed *before* repairing so the caller can log what was wrong, and
+    // reports what is observed afterwards through <paramref name="remaining"/>. A repair can be
+    // silently undone (the shell takes the owner back, the host is raised again, or the window ends
+    // up in the same broken state for a different reason), so probing afterwards is the only way to
+    // tell a real fix from a no-op. Reporting the pre-repair state alone made a failed repair look
+    // identical to a successful one.
+    internal DesktopAttachmentState RepairDesktopAttachment(out DesktopAttachmentState remaining)
     {
         DesktopAttachmentState state = ProbeDesktopAttachment();
-        if (state == DesktopAttachmentState.Ok) return DesktopAttachmentState.Ok;
+        remaining = state;
+        if (state == DesktopAttachmentState.Ok) return state;
 
         IntPtr iconView = _desktopIconView;
         if (state == DesktopAttachmentState.OwnerLost &&
@@ -153,42 +160,47 @@ public sealed class DesktopLayerService : IDisposable
             ReassertDesktopAttachment();
         }
 
+        remaining = ProbeDesktopAttachment();
         return state;
     }
 
     private void ReassertDesktopAttachment()
     {
-        IntPtr anchor = DesktopInsertAnchor();
         uint flags = NativeMethods.SWP_NOMOVE |
             NativeMethods.SWP_NOSIZE |
             NativeMethods.SWP_NOACTIVATE |
             NativeMethods.SWP_NOOWNERZORDER |
             NativeMethods.SWP_SHOWWINDOW;
-        if (!IsSafeAnchor(anchor)) flags |= NativeMethods.SWP_NOZORDER;
+        if (!TryGetDesktopInsertAnchor(out IntPtr anchor)) flags |= NativeMethods.SWP_NOZORDER;
         _ = NativeMethods.SetWindowPos(_window, anchor, 0, 0, 0, 0, flags);
     }
 
-    // HWND_BOTTOM is 1, not 0, so it passes a plain "anchor == IntPtr.Zero" check. Burying the
-    // window is the exact state this service exists to prevent, so it has to be rejected by name.
-    private bool IsSafeAnchor(IntPtr anchor) =>
-        anchor != IntPtr.Zero && anchor != NativeMethods.HWND_BOTTOM && anchor != _window;
-
+    // HWND_TOP is IntPtr.Zero, so "the host is unknown" and "the host is the top-most window" are
+    // the same value. Both callers have to tell those apart: an unknown host must leave the z-order
+    // alone (SWP_NOZORDER), while a host that really is top-most must be anchored to the top. This
+    // returns true only when the anchor can be handed to SetWindowPos as-is; callers add
+    // SWP_NOZORDER when it returns false and the anchor value is then ignored by the API.
+    //
     // The shell raises the desktop host above the window's bottom-most slot while the desktop is
     // shown (Win+D, clicking the desktop), and a plain HWND_BOTTOM then buries the window behind
     // the wallpaper for good. Placing the window directly above the host keeps it on the desktop
     // layer while every ordinary window still stays in front of it.
-    private IntPtr DesktopInsertAnchor()
+    private bool TryGetDesktopInsertAnchor(out IntPtr anchor)
     {
+        anchor = IntPtr.Zero;
         IntPtr root = DesktopHostRoot();
-        // Returning HWND_BOTTOM here would restore the very bug this method exists to fix: once the
-        // shell raises the desktop host, a bottom-most window stays buried behind the wallpaper.
-        // Zero makes both callers add SWP_NOZORDER, so an unknown host leaves the z-order untouched.
-        if (root == IntPtr.Zero) return IntPtr.Zero;
+        // Falling back to HWND_BOTTOM would restore the very bug this method exists to fix: once
+        // the shell raises the desktop host, a bottom-most window stays buried behind the
+        // wallpaper.
+        if (root == IntPtr.Zero) return false;
 
         // hWndInsertAfter places the window right behind the given window, so the window just in
         // front of the host is the right anchor for "immediately above the host".
         IntPtr above = NativeMethods.GetWindow(root, NativeMethods.GW_HWNDPREV);
-        return above == IntPtr.Zero ? NativeMethods.HWND_TOP : above;
+        anchor = above == IntPtr.Zero ? NativeMethods.HWND_TOP : above;
+        // HWND_BOTTOM is 1, not 0, so it would sail past a plain "anchor == IntPtr.Zero" check.
+        // Burying the window is the exact state this service exists to prevent.
+        return anchor != NativeMethods.HWND_BOTTOM && anchor != _window;
     }
 
     private IntPtr DesktopHostRoot()
