@@ -1,3 +1,13 @@
+## 4.2.4
+
+本版合入社区贡献的桌面层加固修复（[#1](https://github.com/daha1216/TuckPane/pull/1)，作者 [@qiao-obs](https://github.com/qiao-obs)），并保留 4.2.3 的全部改动；应用内更新只检查本 fork。
+
+- 修复兜底锚点仍会把收纳窗埋回最底层：`DesktopInsertAnchor()` 在拿不到桌面宿主根窗口时返回 `HWND_BOTTOM`，而 `HWND_BOTTOM` 的值是 `1` 不是 `0`，原来的 `anchor == IntPtr.Zero` 守卫拦不住它，`SWP_NOZORDER` 不会被加上，窗口反而被压到最底层——正是 4.2.3 想消除的状态。现在兜底返回 `IntPtr.Zero`，两个调用方都会因此加上 `SWP_NOZORDER`（即不动 z 序），并新增 `IsSafeAnchor()` 把 `HWND_BOTTOM` 按名字排除，避免以后有人把它塞回来时静默回归。
+- 修复收纳窗关闭时漏停计时器：`MainWindow_Closed` 停了 7 个计时器，唯独漏了 `_desktopVisibilityTimer`。收纳窗可被动态销毁，窗口关闭后这个 1 秒计时器仍挂在应用级 UI 队列上继续触发，并持有窗口委托，整个窗口连同可视化树都回收不掉；删掉 N 个收纳窗就是每秒 N 次空转加 N 个窗口对象常驻。现已补上 `Stop()`。
+- 版本元数据整理：`app.manifest` 的 assemblyIdentity 版本从 `4.2.1.0` 更新为 `4.2.4.0`；更新检查的 UserAgent 从 `TuckPane-Updater/4.2.0` 更新为 `TuckPane-Updater/4.2.4`。
+- 验证：Release x64 构建 0 警告 0 错误；`LogicChecks` 八个稳定性区域（storage/queue/lifecycle/drop/launch/watcher/diagnostics/diagnostics-limits）全部通过，`UpdateChecks` 4/4 通过；真机回归（构建装入正式安装目录、单实例）下展开再收起后卡片仍在壁纸之上（target z=32 vs Progman 33，卡片区域暗度 89.8 而非壁纸 143.7），等待 6 秒保持；Win+D 往返两次后四张卡片均可见。
+- 已知问题：① 抽屉处于展开态时按 Win+D，展开面板会落到桌面宿主之下并被壁纸盖住，需点击空白处收起后才恢复（`ProbeDesktopAttachment()` 在展开态直接返回 `Ok`，不参与自愈，4.2.3 及更早版本同样存在）；② 收起动画被打断时，卡片上方可能残留一块放大的名字胶囊（4.2.1 起已存在）。
+
 ## 4.2.3
 
 本版修复桌面收纳窗（抽屉）在点击展开再收起后消失的问题，并保留 4.2.2 的全部改动；应用内更新只检查本 fork。
