@@ -1674,13 +1674,13 @@ public sealed partial class MainWindow : Window
         using AnimationTraceSession? trace = BeginAnimationTrace("expand");
         if (_definition.PlacementMode == OrganizerPlacementMode.Station)
         {
-            if (!_stationReady) return;
+            if (!_stationReady) { ReleaseTransitionLock(requestVersion); return; }
             try { await (_stationContentTask ??= PrepareStationContentAsync()); }
             catch { _stationContentTask = null; throw; }
-            if (!IsCurrent() || !_stationVisible) return;
+            if (!IsCurrent() || !_stationVisible) { ReleaseTransitionLock(requestVersion); return; }
         }
         await _host.PrepareToExpandAsync(this, IsCurrent);
-        if (!IsCurrent() || _definition.PlacementMode == OrganizerPlacementMode.Station && !_stationVisible) return;
+        if (!IsCurrent() || _definition.PlacementMode == OrganizerPlacementMode.Station && !_stationVisible) { ReleaseTransitionLock(requestVersion); return; }
         bool contained = IsContained;
         NativeMethods.RECT compactOrigin = contained ? _containedAnchorBounds : _compactBounds;
         WidgetPosition? rememberedPosition = ShouldRememberExpandedPosition()
@@ -1702,7 +1702,7 @@ public sealed partial class MainWindow : Window
             await SaveStateAsync();
         }
 
-        if (!IsCurrent()) return;
+        if (!IsCurrent()) { ReleaseTransitionLock(requestVersion); return; }
         bool continuingPath = UseCustomAnimations && _collapseTransitionGeometry is not null && _transitionProgress > 0 && _transitionProgress < 1;
         CancellationTokenSource transition = StartTransition(modeCancellation);
         _expanded = true;
@@ -1844,7 +1844,7 @@ public sealed partial class MainWindow : Window
         bool IsCurrent() => IsCurrentTransitionRequest(requestVersion, modeCancellation);
         using AnimationTraceSession? trace = BeginAnimationTrace("collapse");
         await _host.CollapseContainedChildrenAsync(_definition.Id, IsCurrent);
-        if (!IsCurrent() || StaysExpanded || _changingExpansionMode && !forMode || !_runtimeVisible && _pendingExpansionModeApply) return;
+        if (!IsCurrent() || StaysExpanded || _changingExpansionMode && !forMode || !_runtimeVisible && _pendingExpansionModeApply) { ReleaseTransitionLock(requestVersion); return; }
         _outsideClickHook?.Stop();
         if (_itemReorderSession is not null) CancelItemReorder();
         ShutdownItemDragBoundaryHook();
@@ -1969,6 +1969,29 @@ public sealed partial class MainWindow : Window
         _animationTrace?.Metrics.RecordWork(AnimationTraceWork.UpdateLayout);
         WindowRoot.UpdateLayout();
         UpdateSurfaceClips();
+    }
+
+    // A transition claims its request slot (++_transitionRequestVersion) before it starts, so a
+    // newer call can supersede it while it is still preparing. The superseded call then skips its
+    // own finally block (IsCurrent() is false), and the newer call can return before it ever sets
+    // _animating -- leaving the flag stuck true. Every _animating guard would then reject input for
+    // the rest of the session, so each early exit after the version bump has to release the lock.
+    private void ReleaseTransitionLock(long requestVersion)
+    {
+        if (_closing || requestVersion != _transitionRequestVersion) return;
+        CancellationTokenSource? cancelled = _transitionCancellation;
+        _transitionCancellation = null;
+        if (cancelled is not null)
+        {
+            try { cancelled.Cancel(); }
+            catch (ObjectDisposedException) { }
+            catch (AggregateException) { }
+            cancelled.Dispose();
+        }
+        _animating = false;
+        _transitionVelocity = 0;
+        _host.NotifyDockOpenStateChanged();
+        RefreshPerformanceSettings();
     }
 
     private CancellationTokenSource StartTransition(CancellationToken modeCancellation = default)
@@ -3108,6 +3131,11 @@ public sealed partial class MainWindow : Window
             ResetHoverWave();
         if (IsDock && message is 0x02E0 or 0x007E) // WM_DPICHANGED / WM_DISPLAYCHANGE
             DispatcherQueue.TryEnqueue(() => { if (!_closing) { _dockRegionKey = null; ApplyDockLayout(); } });
+        // The station resolves its display once and then keeps it in _stationDisplay. After a
+        // topology change that cached rectangle can point at a monitor that no longer exists, so
+        // the hot zone never matches again. Drop it and let the pointer timer resolve it afresh.
+        if (!IsDock && _definition.PlacementMode == OrganizerPlacementMode.Station && message is 0x02E0 or 0x007E)
+            _stationDisplay = null;
         if (message == NativeMethods.WM_MOUSEMOVE && _shellDragActive)
         {
             DragMessageRelay.Complete(ref _itemDragOleMouseMovePending);
