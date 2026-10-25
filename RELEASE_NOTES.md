@@ -1,3 +1,25 @@
+## 4.2.5
+
+本版合入四个社区贡献的 PR（[#2](https://github.com/daha1216/TuckPane/pull/2)、[#3](https://github.com/daha1216/TuckPane/pull/3)、[#4](https://github.com/daha1216/TuckPane/pull/4)、[#5](https://github.com/daha1216/TuckPane/pull/5)），并保留 4.2.4 的全部改动；应用内更新只检查本 fork。
+
+- 托盘图标在资源管理器重启后恢复（[#3](https://github.com/daha1216/TuckPane/pull/3)，作者 [@qiao-obs](https://github.com/qiao-obs)）：托盘图标此前只在启动时添加一次，explorer.exe 重启后通知区域被重建，图标随之消失且不再回来。现在监听 `TaskbarCreated` 广播并重新添加图标。
+- 桌面层自愈的五个后续问题（[#2](https://github.com/daha1216/TuckPane/pull/2)，作者 [@qiao-obs](https://github.com/qiao-obs)）：
+  - `IsSafeAnchor()` 把“未知宿主”和“置顶锚点”混为一谈：`HWND_TOP` 的值就是 `IntPtr.Zero`，桌面宿主恰好居顶时锚点被丢弃，`SWP_NOZORDER` 让修复退化成空操作，窗口继续埋在壁纸后面。改为 `TryGetDesktopInsertAnchor(out anchor)`，用返回值区分“没有可用锚点”和“锚点是 `HWND_TOP`”。
+  - 修复定时器缺少交互守卫，收起态右键菜单打开后 2–8 秒内的修复 tick 会把 owner 改回桌面图标视图，把菜单压到后面或直接失焦（省电档 8 秒正好落在菜单还开着的时间窗里）。两条定时器的守卫集抽成 `DesktopLayerBusy`，以后只改一处。
+  - `RepairDesktopAttachment()` 返回的是修复**前**的状态，日志无法区分“修好了”和“被 shell 反抢回去”。改为 `RepairDesktopAttachment(out remaining)`，日志同时输出 `state=` 与 `remaining=`。
+  - 桌面可见性检查硬编码 1000 ms，绕过了性能档位。`PerformanceTuning` 新增 `DesktopVisibilityMilliseconds`（省电 2000 / 平衡 1000 / 高性能 500），切档立即生效。
+  - `MainWindow_Closed` 漏停 `_itemTouchHoldTimer`，长按中途关闭窗口时回调仍会落到已关闭的窗口上。
+- 文件夹右键菜单与过渡动画（[#4](https://github.com/daha1216/TuckPane/pull/4)，作者 [@qiao-obs](https://github.com/qiao-obs)）：
+  - 过渡被新请求取代时，旧的 `finally` 会因为 `IsCurrent()` 为假而跳过 `_animating = false`，新请求又可能在设置它之前就返回，导致 `_animating` 卡在 true。新增 `ReleaseTransitionLock()`，在每个早退路径上只释放当前持有者的锁。
+  - Station 的热区显示器只解析一次且从不清理，显示器拓扑变化后热区仍指向已经不存在的显示器。现在在 `WM_DPICHANGED` / `WM_DISPLAYCHANGE` 时丢弃缓存，与 Dock 路径保持一致。
+  - 驱动器根与 UNC 共享根：shell 传 `D:\` 时反斜杠转义了闭合引号，应用实际收到 `D:"`，去掉引号后剩 `D:` 不是完整路径而被拒绝。现在恢复被转义的分隔符；右键磁盘不再报参数错误，而是给出“请选择专用子目录”的明确说明（磁盘、网络盘、用户主目录、桌面、文档、下载与 TuckPane 数据根仍然不允许作为收纳窗目录）。
+  - `FolderContextMenuChecks` 的 UNC 用例用了逐字字符串，`""` 转义把闭合引号吃掉，导致测试工程编译不过。
+- 新增 `docs/audit-2026-10` 审计报告与落地指南（[#5](https://github.com/daha1216/TuckPane/pull/5)）。
+- 新增 GitHub Actions 持续集成：push 到 main、提交 PR 与手动触发都会执行 restore（`--locked-mode`）、自包含 publish 与 `UpdateChecks`，PR 阶段即可发现编译问题。`LogicChecks` 不放进 CI：测试进程在无桌面会话的托管 runner 上起不来（八个稳定性区域各给 90 秒全部零输出被杀，同样命令在桌面会话约 1 秒完成），改由发版前在本地执行。
+- 版本元数据同步到 4.2.5：应用、更新器、安装器默认值与发布脚本默认值；`app.manifest` 的 assemblyIdentity 与更新检查 UserAgent 一并更新。
+- 验证：Release x64 构建 0 警告 0 错误；`LogicChecks` 八个稳定性区域（storage/queue/lifecycle/drop/launch/watcher/diagnostics/diagnostics-limits）、`--folder-context-menu` 与 `UpdateChecks --updates` 4/4 全部通过；CI 在 6c319e8 上 2 分 13 秒通过；真机回归下 Win+D 往返后卡片仍在壁纸之上，重启资源管理器后托盘图标自行恢复。
+- 已知问题：① 抽屉处于展开态时按 Win+D，展开面板会落到桌面宿主之下并被壁纸盖住，需点击空白处收起后才恢复（`ProbeDesktopAttachment()` 在展开态直接返回 `Ok`，不参与自愈，4.2.3 及更早版本同样存在）；② 收起动画被打断时，卡片上方可能残留一块放大的名字胶囊（4.2.1 起已存在）；③ Dock 偶发短线未修复。
+
 ## 4.2.4
 
 本版合入社区贡献的桌面层加固修复（[#1](https://github.com/daha1216/TuckPane/pull/1)，作者 [@qiao-obs](https://github.com/qiao-obs)），并保留 4.2.3 的全部改动；应用内更新只检查本 fork。

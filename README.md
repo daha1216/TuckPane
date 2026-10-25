@@ -71,13 +71,13 @@ Drag files and folders directly into a pane, reveal a Station from a monitor edg
 
 This repository is a personal fork of [ch998244353/TuckPane](https://github.com/ch998244353/TuckPane). Builds, downloads, and in-app updates come from this fork (`daha1216/TuckPane`) only; upstream maintainers are not responsible for them.
 
-Current version: **4.2.4**. See the [4.2.4 release](https://github.com/daha1216/TuckPane/releases/tag/v4.2.4) for the complete release notes.
+Current version: **4.2.5**. See the [4.2.5 release](https://github.com/daha1216/TuckPane/releases/tag/v4.2.5) for the complete release notes.
 
-- [TuckPane-4.2.4-win-x64-setup.exe](https://github.com/daha1216/TuckPane/releases/download/v4.2.4/TuckPane-4.2.4-win-x64-setup.exe): recommended per-user offline installer with Start menu and desktop shortcuts.
-- [TuckPane-4.2.4-win-x64-portable.zip](https://github.com/daha1216/TuckPane/releases/download/v4.2.4/TuckPane-4.2.4-win-x64-portable.zip): extract the entire archive and run `TuckPane.exe`. The `00-启动 TuckPane.exe` launcher also starts that executable; keep all files together and do not rename `TuckPane.exe`.
-- [SHA256SUMS.txt](https://github.com/daha1216/TuckPane/releases/download/v4.2.4/SHA256SUMS.txt): SHA-256 checksums for both downloads.
+- [TuckPane-4.2.5-win-x64-setup.exe](https://github.com/daha1216/TuckPane/releases/download/v4.2.5/TuckPane-4.2.5-win-x64-setup.exe): recommended per-user offline installer with Start menu and desktop shortcuts.
+- [TuckPane-4.2.5-win-x64-portable.zip](https://github.com/daha1216/TuckPane/releases/download/v4.2.5/TuckPane-4.2.5-win-x64-portable.zip): extract the entire archive and run `TuckPane.exe`. The `00-启动 TuckPane.exe` launcher also starts that executable; keep all files together and do not rename `TuckPane.exe`.
+- [SHA256SUMS.txt](https://github.com/daha1216/TuckPane/releases/download/v4.2.5/SHA256SUMS.txt): SHA-256 checksums for both downloads.
 
-Version 3.0.2 has no in-app updater: install 4.2.4 over the existing installation, or extract the portable package into a separate program directory. Existing data roots are retained. Once on 4.2.4, use **Settings → Updates** for future releases.
+Version 3.0.2 has no in-app updater: install 4.2.5 over the existing installation, or extract the portable package into a separate program directory. Existing data roots are retained. Once on 4.2.5, use **Settings → Updates** for future releases.
 
 Both packages include .NET and the Windows App SDK. The offline installer also carries the Microsoft Edge WebView2 Runtime and installs it only when missing; the portable package uses an existing WebView2 Runtime and leaves the folder and desktop context menus unregistered until enabled. Enabling these menus writes to the current user's registry. The TuckPane installer is currently unsigned, so Windows SmartScreen may show an “Unknown publisher” warning; verify the download with `SHA256SUMS.txt` when needed.
 

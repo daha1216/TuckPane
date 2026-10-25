@@ -1,9 +1,9 @@
 [CmdletBinding()]
 param(
     [ValidatePattern('^\d+\.\d+\.\d+$')]
-    [string]$Version = '4.2.4',
+    [string]$Version = '4.2.5',
     [ValidatePattern('^[a-zA-Z0-9.-]+$')]
-    [string]$OutputName = 'v4.2.4'
+    [string]$OutputName = 'v4.2.5'
 )
 
 $ErrorActionPreference = 'Stop'
