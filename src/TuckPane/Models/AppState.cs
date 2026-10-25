@@ -37,6 +37,7 @@ public enum PerformanceProfile
 internal readonly record struct PerformanceTuning(
     int PointerPollMilliseconds,
     int DesktopRepairMilliseconds,
+    int DesktopVisibilityMilliseconds,
     bool CustomAnimationsEnabled);
 
 public enum OrganizerLayoutMode
@@ -203,11 +204,14 @@ public sealed class GlobalSettings
     public int StationActivationDistanceDip { get; set; } = DefaultStationActivationDistanceDip;
     public int StationHoverExpandDelayMs { get; set; } = DefaultStationHoverExpandDelayMs;
 
+    // The desktop visibility check is the cheapest way to notice a window the shell buried, but it
+    // is also a periodic z-order probe, so it follows the performance profile like the other two
+    // intervals instead of running at a fixed one second in every profile.
     internal PerformanceTuning PerformanceTuning => PerformanceProfile switch
     {
-        global::TuckPane.Models.PerformanceProfile.PowerSaver => new(100, 8000, false),
-        global::TuckPane.Models.PerformanceProfile.HighPerformance => new(25, 2000, true),
-        _ => new(50, 4000, true)
+        global::TuckPane.Models.PerformanceProfile.PowerSaver => new(100, 8000, 2000, false),
+        global::TuckPane.Models.PerformanceProfile.HighPerformance => new(25, 2000, 500, true),
+        _ => new(50, 4000, 1000, true)
     };
 
     internal bool ShouldUseCustomAnimations(bool systemAnimationsEnabled) =>

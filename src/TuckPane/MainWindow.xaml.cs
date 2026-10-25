@@ -340,7 +340,8 @@ public sealed partial class MainWindow : Window
         _desktopRepairTimer.Tick += DesktopRepairTimer_Tick;
 
         _desktopVisibilityTimer = DispatcherQueue.CreateTimer();
-        _desktopVisibilityTimer.Interval = TimeSpan.FromMilliseconds(1000);
+        _desktopVisibilityTimer.Interval = TimeSpan.FromMilliseconds(
+            _host.State.GlobalSettings.PerformanceTuning.DesktopVisibilityMilliseconds);
         _desktopVisibilityTimer.IsRepeating = true;
         _desktopVisibilityTimer.Tick += DesktopVisibilityTimer_Tick;
 
@@ -6098,6 +6099,7 @@ public sealed partial class MainWindow : Window
         PerformanceTuning tuning = _host.State.GlobalSettings.PerformanceTuning;
         _stationPointerTimer.Interval = TimeSpan.FromMilliseconds(tuning.PointerPollMilliseconds);
         _desktopRepairTimer.Interval = TimeSpan.FromMilliseconds(tuning.DesktopRepairMilliseconds);
+        _desktopVisibilityTimer.Interval = TimeSpan.FromMilliseconds(tuning.DesktopVisibilityMilliseconds);
 
         bool visible = _definition.PlacementMode == OrganizerPlacementMode.Station
             ? _stationVisible && _stationReady
@@ -7003,16 +7005,21 @@ public sealed partial class MainWindow : Window
                     _ = SaveStateAsync();
                 }
             }
-            if (_desktopLayer is { } desktopLayer)
+            if (!DesktopLayerBusy && _desktopLayer is { } desktopLayer)
             {
                 bool healthChecked = _definition.PlacementMode is
                     OrganizerPlacementMode.Floating or OrganizerPlacementMode.Positioned;
-                DesktopAttachmentState attachment = healthChecked
-                    ? desktopLayer.RepairDesktopAttachment()
-                    : DesktopAttachmentState.Ok;
+                DesktopAttachmentState attachment = DesktopAttachmentState.Ok;
+                DesktopAttachmentState remaining = DesktopAttachmentState.Ok;
+                if (healthChecked)
+                {
+                    attachment = desktopLayer.RepairDesktopAttachment(out remaining);
+                }
+
                 if (attachment != DesktopAttachmentState.Ok)
                 {
-                    AppLogger.Performance($"desktop repair pass fixed layer state={attachment} {desktopLayer.DescribeAttachment()}");
+                    AppLogger.Performance(
+                        $"desktop repair pass state={attachment} remaining={remaining} {desktopLayer.DescribeAttachment()}");
                 }
                 else
                 {
@@ -7026,18 +7033,28 @@ public sealed partial class MainWindow : Window
     {
         if (_closing || _expanded || _animating || _pressActive || IsContained || !_runtimeVisible) return;
         if (_definition.PlacementMode is not (OrganizerPlacementMode.Floating or OrganizerPlacementMode.Positioned)) return;
-        if (_desktopLayer is null || _desktopLayer.IsInputActivationEnabled) return;
-        if (_widgetDragging || _itemReorderSession is not null || _shellDragActive || _shellContextMenuOpen ||
-            _overlayOpenCount > 0)
-        {
-            return;
-        }
+        if (DesktopLayerBusy || _desktopLayer is not { } desktopLayer) return;
 
-        DesktopAttachmentState state = _desktopLayer.RepairDesktopAttachment();
+        DesktopAttachmentState state = desktopLayer.RepairDesktopAttachment(out DesktopAttachmentState remaining);
         if (state == DesktopAttachmentState.Ok) return;
 
-        AppLogger.Performance($"desktop layer repaired state={state} {_desktopLayer.DescribeAttachment()}");
+        AppLogger.Performance(
+            $"desktop layer repaired state={state} remaining={remaining} {desktopLayer.DescribeAttachment()}");
     }
+
+    // Both desktop-layer timers must stay off the window while the user is interacting with it, and
+    // while the layer deliberately holds activation for an open menu. The two guard sets used to be
+    // written separately and had already drifted: the visibility timer checked all of these, the
+    // repair timer checked none of them and stole activation back 2-8 seconds after a context menu
+    // opened. Keeping the predicate in one place is what stops them drifting again.
+    private bool DesktopLayerBusy =>
+        _widgetDragging ||
+        _itemReorderSession is not null ||
+        _shellDragActive ||
+        _shellContextMenuOpen ||
+        _overlayOpenCount > 0 ||
+        _desktopLayer is null ||
+        _desktopLayer.IsInputActivationEnabled;
 
     private void MainWindow_Closed(object sender, WindowEventArgs args)
     {
@@ -7083,6 +7100,7 @@ public sealed partial class MainWindow : Window
         _stationPointerTimer.Stop();
         _externalHoverTimer.Stop();
         _longPressTimer.Stop();
+        _itemTouchHoldTimer.Stop();
         StopCanvasResizeRendering();
         StopDragClock();
         CancellationTokenSource? closingTransition = _transitionCancellation;
