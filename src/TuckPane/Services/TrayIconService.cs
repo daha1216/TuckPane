@@ -23,6 +23,7 @@ public sealed class TrayIconService : IDisposable
     private readonly Action<TrayCommand> _command;
     private readonly NativeMethods.SubclassProc _subclass;
     private readonly Func<string>? _lifecycleContext;
+    private readonly uint _taskbarCreated;
     private NativeMethods.NOTIFYICONDATA _data;
     private IntPtr _icon;
 
@@ -35,6 +36,10 @@ public sealed class TrayIconService : IDisposable
         _command = command;
         _subclass = WindowProc;
         _lifecycleContext = lifecycleContext;
+        // Explorer broadcasts this registered message after the taskbar is rebuilt. Every icon
+        // registered with Shell_NotifyIcon belongs to the explorer instance that was running at
+        // registration time, so without re-adding here the icon never comes back after a crash.
+        _taskbarCreated = NativeMethods.RegisterWindowMessage("TaskbarCreated");
 
         string iconPath = Path.Combine(AppContext.BaseDirectory, "Assets", "TuckPane.ico");
         _icon = NativeMethods.LoadImage(IntPtr.Zero, iconPath, NativeMethods.IMAGE_ICON, 0, 0, NativeMethods.LR_LOADFROMFILE | NativeMethods.LR_DEFAULTSIZE);
@@ -76,6 +81,16 @@ public sealed class TrayIconService : IDisposable
                     $"wParam=0x{wParam.ToUInt64():X} lParam=0x{lParam.ToInt64():X} {_lifecycleContext?.Invoke()}");
             }
             catch { /* A diagnostic callback must never interrupt the native message chain. */ }
+        }
+        // Zero means RegisterWindowMessage failed; comparing against it would match WM_NULL and
+        // re-add the icon on every null message, so the check has to be guarded.
+        if (_taskbarCreated != 0 && message == _taskbarCreated)
+        {
+            _ = NativeMethods.Shell_NotifyIcon(NativeMethods.NIM_ADD, ref _data);
+            _ = NativeMethods.Shell_NotifyIcon(NativeMethods.NIM_SETVERSION, ref _data);
+            try { AppLogger.Lifecycle("tray-restored", $"hwnd=0x{_window:X}"); }
+            catch { /* A diagnostic callback must never interrupt the native message chain. */ }
+            return IntPtr.Zero;
         }
         if (message == CallbackMessage)
         {
