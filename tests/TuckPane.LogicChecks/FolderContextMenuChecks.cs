@@ -32,6 +32,12 @@ internal static class FolderContextMenuChecks
             Require(FolderOrganizerCreation.ParseArguments([FolderOrganizerCreation.Argument, folder]) == folder,
                 "Folder path must remain one unchanged argument.");
         }
+        // A drive root reaches the verb as D:" because its trailing separator escapes the closing
+        // quote; a UNC share root behaves the same way. Both must still resolve to the real root.
+        Require(FolderOrganizerCreation.ParseArguments([FolderOrganizerCreation.Argument, "D:\""]) == @"D:\",
+            "A drive root must survive the trailing separator escaping the closing quote.");
+        Require(FolderOrganizerCreation.ParseArguments([FolderOrganizerCreation.Argument, @"\\server\share\""]) == @"\\server\share\",
+            "A UNC share root must survive the trailing separator escaping the closing quote.");
         string exe = Path.Combine(AppContext.BaseDirectory, "TuckPane.exe");
         string command = FolderContextMenuService.BuildCommand(exe);
         string path = @"D:\资料 & 工作\One folder";

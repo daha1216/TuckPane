@@ -13,10 +13,17 @@ internal sealed class FolderOrganizerCreation
 
     internal static string ParseArguments(string[] arguments)
     {
-        if (arguments.Length != 2 || !string.Equals(arguments[0], Argument, StringComparison.OrdinalIgnoreCase) ||
-            string.IsNullOrWhiteSpace(arguments[1]) || !Path.IsPathFullyQualified(arguments[1]))
+        if (arguments.Length != 2 || !string.Equals(arguments[0], Argument, StringComparison.OrdinalIgnoreCase))
             throw new ArgumentException(AppStrings.Get("FolderMenuInvalidArguments"));
-        return arguments[1];
+        string path = arguments[1];
+        // The shell verb passes the folder as %1. For a drive root or a UNC share root the
+        // trailing separator escapes the closing quote, so the parsed value keeps a stray
+        // quote character at the end. Strip it so the root reaches the normal path validation
+        // instead of being rejected here as malformed.
+        if (path.EndsWith('"')) path = path[..^1];
+        if (string.IsNullOrWhiteSpace(path) || !Path.IsPathFullyQualified(path))
+            throw new ArgumentException(AppStrings.Get("FolderMenuInvalidArguments"));
+        return path;
     }
 
     internal static string BindExistingStorage(OrganizerDefinition draft, string path,
