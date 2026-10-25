@@ -68,7 +68,7 @@ public sealed class DesktopLayerService : IDisposable
         uint flags = NativeMethods.SWP_NOMOVE | NativeMethods.SWP_NOSIZE | NativeMethods.SWP_NOACTIVATE |
             NativeMethods.SWP_NOOWNERZORDER;
         IntPtr anchor = DesktopInsertAnchor();
-        if (!ownerChanged || anchor == IntPtr.Zero || anchor == _window) flags |= NativeMethods.SWP_NOZORDER;
+        if (!ownerChanged || !IsSafeAnchor(anchor)) flags |= NativeMethods.SWP_NOZORDER;
         if (showWindow) flags |= NativeMethods.SWP_SHOWWINDOW;
         _ = NativeMethods.SetWindowPos(
             _window,
@@ -164,9 +164,14 @@ public sealed class DesktopLayerService : IDisposable
             NativeMethods.SWP_NOACTIVATE |
             NativeMethods.SWP_NOOWNERZORDER |
             NativeMethods.SWP_SHOWWINDOW;
-        if (anchor == IntPtr.Zero || anchor == _window) flags |= NativeMethods.SWP_NOZORDER;
+        if (!IsSafeAnchor(anchor)) flags |= NativeMethods.SWP_NOZORDER;
         _ = NativeMethods.SetWindowPos(_window, anchor, 0, 0, 0, 0, flags);
     }
+
+    // HWND_BOTTOM is 1, not 0, so it passes a plain "anchor == IntPtr.Zero" check. Burying the
+    // window is the exact state this service exists to prevent, so it has to be rejected by name.
+    private bool IsSafeAnchor(IntPtr anchor) =>
+        anchor != IntPtr.Zero && anchor != NativeMethods.HWND_BOTTOM && anchor != _window;
 
     // The shell raises the desktop host above the window's bottom-most slot while the desktop is
     // shown (Win+D, clicking the desktop), and a plain HWND_BOTTOM then buries the window behind
@@ -175,7 +180,10 @@ public sealed class DesktopLayerService : IDisposable
     private IntPtr DesktopInsertAnchor()
     {
         IntPtr root = DesktopHostRoot();
-        if (root == IntPtr.Zero) return NativeMethods.HWND_BOTTOM;
+        // Returning HWND_BOTTOM here would restore the very bug this method exists to fix: once the
+        // shell raises the desktop host, a bottom-most window stays buried behind the wallpaper.
+        // Zero makes both callers add SWP_NOZORDER, so an unknown host leaves the z-order untouched.
+        if (root == IntPtr.Zero) return IntPtr.Zero;
 
         // hWndInsertAfter places the window right behind the given window, so the window just in
         // front of the host is the right anchor for "immediately above the host".
