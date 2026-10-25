@@ -17,10 +17,10 @@ internal sealed class FolderOrganizerCreation
             throw new ArgumentException(AppStrings.Get("FolderMenuInvalidArguments"));
         string path = arguments[1];
         // The shell verb passes the folder as %1. For a drive root or a UNC share root the
-        // trailing separator escapes the closing quote, so the parsed value keeps a stray
-        // quote character at the end. Strip it so the root reaches the normal path validation
-        // instead of being rejected here as malformed.
-        if (path.EndsWith('"')) path = path[..^1];
+        // trailing separator escapes the closing quote, so the parsed value ends in a bare quote
+        // and the separator itself is gone. Put it back so the root reaches the normal path
+        // validation instead of being rejected here as malformed.
+        if (path.EndsWith('"')) path = path[..^1] + "\\";
         if (string.IsNullOrWhiteSpace(path) || !Path.IsPathFullyQualified(path))
             throw new ArgumentException(AppStrings.Get("FolderMenuInvalidArguments"));
         return path;
