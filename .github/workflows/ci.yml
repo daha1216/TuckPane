@@ -55,10 +55,20 @@ jobs:
         shell: pwsh
         run: dotnet run --project .\tests\TuckPane.UpdateChecks\TuckPane.UpdateChecks.csproj -c Release -- --updates
 
-      # The logic checks are pure model/service assertions, but they have only ever been run from an
-      # interactive desktop session. They are reported here without blocking the job until they are
-      # confirmed to pass on a hosted runner.
+      # Only the named suites are run here. The parameterless entry point replays the legacy
+      # interactive checks, which expect a desktop session and never return on a hosted runner.
+      # The stability areas and the folder-menu suite build no window, start no OLE, drive no input
+      # and leave the registry alone, so they are safe to run unattended.
       - name: Logic checks
         shell: pwsh
-        continue-on-error: true
-        run: dotnet run --project .\tests\TuckPane.LogicChecks\TuckPane.LogicChecks.csproj -c Release
+        env:
+          TUCKPANE_TEST_ROOT: ${{ runner.temp }}\tuckpane-ci
+        run: |
+          dotnet build .\tests\TuckPane.LogicChecks\TuckPane.LogicChecks.csproj -c Release -p:Platform=x64
+          $areas = 'storage', 'queue', 'lifecycle', 'drop', 'launch', 'watcher', 'diagnostics', 'diagnostics-limits'
+          foreach ($area in $areas) {
+            dotnet run --project .\tests\TuckPane.LogicChecks\TuckPane.LogicChecks.csproj -c Release -p:Platform=x64 --no-build -- --stability $area
+            if ($LASTEXITCODE -ne 0) { throw "stability check '$area' failed with exit code $LASTEXITCODE" }
+          }
+          dotnet run --project .\tests\TuckPane.LogicChecks\TuckPane.LogicChecks.csproj -c Release -p:Platform=x64 --no-build -- --folder-context-menu
+          if ($LASTEXITCODE -ne 0) { throw "folder-context-menu check failed with exit code $LASTEXITCODE" }
