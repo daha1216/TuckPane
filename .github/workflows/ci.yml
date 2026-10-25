@@ -55,33 +55,11 @@ jobs:
         shell: pwsh
         run: dotnet run --project .\tests\TuckPane.UpdateChecks\TuckPane.UpdateChecks.csproj -c Release -- --updates
 
-      # The stability areas and the folder-menu suite assert on model and service behaviour only:
-      # no window, no OLE, no input, no registry. They pass on a desktop session, but on a hosted
-      # runner the test process has hung without producing a single line, so each run is bounded
-      # and the step does not block the job. Once a hosted run reports every area as passing, the
-      # continue-on-error can go away.
-      - name: Logic checks
-        shell: pwsh
-        continue-on-error: true
-        timeout-minutes: 12
-        env:
-          TUCKPANE_TEST_ROOT: ${{ runner.temp }}\tuckpane-ci
-        run: |
-          dotnet build .\tests\TuckPane.LogicChecks\TuckPane.LogicChecks.csproj -c Release -p:Platform=x64
-          if ($LASTEXITCODE -ne 0) { throw "logic checks failed to build" }
-          $exe = '.\tests\TuckPane.LogicChecks\bin\x64\Release\net10.0-windows10.0.22621.0\TuckPane.LogicChecks.exe'
-          $runs = @(
-            'storage', 'queue', 'lifecycle', 'drop', 'launch', 'watcher', 'diagnostics', 'diagnostics-limits'
-          ) | ForEach-Object { , @('--stability', $_) }
-          $runs += , @('--folder-context-menu')
-          foreach ($run in $runs) {
-            $label = $run -join ' '
-            $process = Start-Process -FilePath $exe -ArgumentList $run -PassThru -NoNewWindow
-            if ($process.WaitForExit(90000)) {
-              Write-Host "$label -> exit $($process.ExitCode)"
-            }
-            else {
-              $process.Kill()
-              Write-Host "::warning::$label did not finish within 90 seconds"
-            }
-          }
+      # The logic checks are deliberately absent. The suite builds here in about a minute, but the
+      # test executable never reaches its entry point on a hosted runner: given ninety seconds each,
+      # all eight stability areas plus the folder-menu suite were killed without printing a line,
+      # and the same commands finish in about a second on a desktop session. Its startup goes
+      # through the Windows App Runtime bootstrap, which needs an interactive session.
+      # Run them locally before a release:
+      #   dotnet run --project .\tests\TuckPane.LogicChecks\TuckPane.LogicChecks.csproj -c Release -p:Platform=x64 -- --stability storage
+      #   dotnet run --project .\tests\TuckPane.LogicChecks\TuckPane.LogicChecks.csproj -c Release -p:Platform=x64 -- --folder-context-menu
