@@ -62,7 +62,7 @@ public sealed class ReleaseClient(HttpClient http)
     private static HttpRequestMessage Request(string url)
     {
         var request = new HttpRequestMessage(HttpMethod.Get, url);
-        request.Headers.UserAgent.ParseAdd("TuckPane-Updater/4.2.5");
+        request.Headers.UserAgent.ParseAdd("TuckPane-Updater/4.2.6");
         request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/vnd.github+json"));
         return request;
     }

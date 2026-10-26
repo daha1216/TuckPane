@@ -1,3 +1,13 @@
+## 4.2.6
+
+本版修复一类“双击图标没反应”的启动失败，并保留 4.2.5 的全部改动；应用内更新只检查本 fork。
+
+- 修复从 Node 或 Electron 宿主启动时连累子进程：TuckPane 若由终端、IDE 运行配置或自动化 shell 拉起，宿主留下的 `ELECTRON_RUN_AS_NODE=1` 会随环境一路继承下去。被 TuckPane 启动的 Electron 程序于是以纯 Node 模式运行——不创建窗口、跑完立刻以退出码 0 结束，用户看到的就是“双击图标没反应”，而日志里点击链路、判定分支和 `Process.Start` 全部正常，只有进程在几十毫秒内消失。现在 `Main` 在注册任何东西之前清除 `ELECTRON_RUN_AS_NODE`、`ELECTRON_NO_ATTACH_CONSOLE`、`ELECTRON_ENABLE_LOGGING`、`ELECTRON_ENABLE_STACK_DUMPING`、`ELECTRON_DEFAULT_ERROR_MODE` 与 `NODE_OPTIONS`（`src/TuckPane/Core/LaunchEnvironment.cs`），子进程不再继承；`PATH`、`TUCKPANE_PERF_TRACE` 等无关变量原样保留，重复清理幂等。
+- 新增 `LogicChecks --launch-environment` 用例，覆盖“该清的清掉、该留的留住、重复调用无副作用”。
+- 版本元数据同步到 4.2.6：应用、更新器、安装器默认值与发布脚本默认值；`app.manifest` 的 assemblyIdentity 与更新检查 UserAgent 一并更新。
+- 验证：Release x64 构建 0 警告 0 错误；`LogicChecks` 八个稳定性区域（storage/queue/lifecycle/drop/launch/watcher/diagnostics/diagnostics-limits）与新增的 `--launch-environment` 全部通过，`UpdateChecks --updates` 4/4 通过；端到端实测在 `ELECTRON_RUN_AS_NODE=1` 且带 `NODE_OPTIONS` 的环境下启动 TuckPane，抽屉里双击 Pencil 正常拉起 5 个进程，同环境下改动前的版本启动即退出。
+- 已知问题：① 抽屉处于展开态时按 Win+D，展开面板会落到桌面宿主之下并被壁纸盖住，需点击空白处收起后才恢复（`ProbeDesktopAttachment()` 在展开态直接返回 `Ok`，不参与自愈，4.2.3 及更早版本同样存在）；② 收起动画被打断时，卡片上方可能残留一块放大的名字胶囊（4.2.1 起已存在）；③ Dock 偶发短线未修复。
+
 ## 4.2.5
 
 本版合入四个社区贡献的 PR（[#2](https://github.com/daha1216/TuckPane/pull/2)、[#3](https://github.com/daha1216/TuckPane/pull/3)、[#4](https://github.com/daha1216/TuckPane/pull/4)、[#5](https://github.com/daha1216/TuckPane/pull/5)），并保留 4.2.4 的全部改动；应用内更新只检查本 fork。
