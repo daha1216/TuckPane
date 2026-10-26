@@ -157,6 +157,12 @@ if (args is ["--expansion-mode-switch"])
     return;
 }
 
+if (args is ["--launch-environment"])
+{
+    LaunchEnvironmentChecks.Run();
+    return;
+}
+
 if (args.Length is 1 or 2 && args[0] == "--organizer-alignment-menu-name")
 {
     await OrganizerAlignmentMenuNameChecks.RunAsync(args.Length == 2 ? args[1] : null);

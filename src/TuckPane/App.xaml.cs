@@ -20,6 +20,7 @@ public static class Program
     [STAThread]
     public static int Main(string[] args)
     {
+        LaunchEnvironment.ScrubCurrentProcess();
         AppDomain.CurrentDomain.UnhandledException += (_, eventArgs) =>
         {
             AppLogger.Record(DiagnosticArea.Runtime, DiagnosticStage.Failed, exception: eventArgs.ExceptionObject as Exception);
