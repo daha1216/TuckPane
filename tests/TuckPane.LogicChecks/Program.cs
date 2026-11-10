@@ -157,6 +157,18 @@ if (args is ["--expansion-mode-switch"])
     return;
 }
 
+if (args is ["--ux-quick-actions"])
+{
+    UxQuickActionsChecks.Run();
+    return;
+}
+
+if (args is ["--organizer-search"])
+{
+    OrganizerSearchChecks.Run();
+    return;
+}
+
 if (args is ["--launch-environment"])
 {
     LaunchEnvironmentChecks.Run();

@@ -647,6 +647,26 @@
                                             <ToggleSwitch x:Name="WindowAlignmentToggle" Grid.Column="1" VerticalAlignment="Center" AutomationProperties.AutomationId="WindowAlignmentToggle" Toggled="WindowAlignmentToggle_Toggled"/>
                                         </Grid>
                                     </Border>
+                                    <Border Style="{StaticResource GeneralRow}">
+                                        <Grid ColumnSpacing="12">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="Auto"/>
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock VerticalAlignment="Center" FontSize="14" Tag="loc:QuickHideHotkeyTitle" Text="显示/隐藏全部收纳窗的快捷键" TextWrapping="Wrap" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
+                                            <ComboBox x:Name="QuickHideHotkeyCombo" Grid.Column="1" Width="190" Height="32" AutomationProperties.AutomationId="QuickHideHotkeyCombo" SelectionChanged="QuickHideHotkeyCombo_SelectionChanged"/>
+                                        </Grid>
+                                    </Border>
+                                    <Border Style="{StaticResource GeneralRow}">
+                                        <Grid ColumnSpacing="12">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="Auto"/>
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock VerticalAlignment="Center" FontSize="14" Tag="loc:SearchHotkeyTitle" Text="在全部收纳窗中查找的快捷键" TextWrapping="Wrap" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
+                                            <ComboBox x:Name="SearchHotkeyCombo" Grid.Column="1" Width="190" Height="32" AutomationProperties.AutomationId="SearchHotkeyCombo" SelectionChanged="SearchHotkeyCombo_SelectionChanged"/>
+                                        </Grid>
+                                    </Border>
                                     <Border Style="{StaticResource GeneralRow}" BorderThickness="0">
                                         <Grid ColumnSpacing="12">
                                             <Grid.ColumnDefinitions>

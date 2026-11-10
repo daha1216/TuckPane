@@ -3842,6 +3842,7 @@ public sealed partial class MainWindow : Window
         cut.Click += async (_, _) => await CutFileItemAsync(item);
         delete.Click += async (_, _) => await DeleteFileItemAsync(item);
         MenuFlyout flyout = CreateOrganizerContextMenu();
+        AddFileShellCommands(flyout, item);
         flyout.Items.Add(rename);
         flyout.Items.Add(copy);
         flyout.Items.Add(cut);

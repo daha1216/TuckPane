@@ -442,4 +442,24 @@
   <data name="NoteCopyImage" xml:space="preserve"><value>画像をコピー</value></data>
   <data name="NoteDeleteImage" xml:space="preserve"><value>画像を削除</value></data>
   <data name="NoteImagePasteError" xml:space="preserve"><value>クリップボードの画像またはテキストを読み取れません。コピーし直してください。</value></data>
+  <data name="QuickHideHotkeyTitle" xml:space="preserve"><value>すべての整理ウィンドウを表示/非表示にするショートカット</value></data>
+  <data name="QuickHideHotkeyErrorTitle" xml:space="preserve"><value>クイック非表示のショートカットを設定できません</value></data>
+  <data name="ContextSortBy" xml:space="preserve"><value>並べ替え</value></data>
+  <data name="ContextSortByName" xml:space="preserve"><value>名前</value></data>
+  <data name="ContextSortByType" xml:space="preserve"><value>種類</value></data>
+  <data name="ContextSortByDate" xml:space="preserve"><value>更新日時</value></data>
+  <data name="ContextOpenItem" xml:space="preserve"><value>開く</value></data>
+  <data name="ContextRevealItem" xml:space="preserve"><value>フォルダーに表示</value></data>
+  <data name="ContextItemProperties" xml:space="preserve"><value>プロパティ</value></data>
+  <data name="QuickHideHotkeyOff" xml:space="preserve"><value>オフ</value></data>
+  <data name="QuickHideHotkeyInUseFormat" xml:space="preserve"><value>{0} は別のプログラムで使用されています。別のショートカットを選んでください。</value></data>
+  <data name="SearchHotkeyTitle" xml:space="preserve"><value>すべての整理ウィンドウを検索するショートカット</value></data>
+  <data name="TraySearch" xml:space="preserve"><value>整理ウィンドウを検索…</value></data>
+  <data name="SearchWindowTitle" xml:space="preserve"><value>整理ウィンドウを検索</value></data>
+  <data name="SearchPlaceholder" xml:space="preserve"><value>すべての整理ウィンドウのファイルを検索</value></data>
+  <data name="SearchLoading" xml:space="preserve"><value>整理ウィンドウを読み込み中…</value></data>
+  <data name="SearchNoResults" xml:space="preserve"><value>一致する項目はありません</value></data>
+  <data name="SearchSummaryFormat" xml:space="preserve"><value>入力して {1} 個の整理ウィンドウにある {0} 個の項目を検索</value></data>
+  <data name="SearchHint" xml:space="preserve"><value>Enter 開く · Ctrl+Enter フォルダーに表示 · ↑↓ 選択 · Esc 閉じる</value></data>
+  <data name="SearchResultLocationFormat" xml:space="preserve"><value>{0} · {1}</value></data>
 </root>
