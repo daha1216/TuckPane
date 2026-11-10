@@ -787,7 +787,9 @@ public sealed partial class TodoWindow : Window
         _completionTimer.Stop();
         _chrome?.Dispose();
         _chrome = null;
-        _saveGate.Dispose();
+        // _saveGate is deliberately not disposed: a save that is still awaiting the gate would
+        // otherwise throw ObjectDisposedException from Release(). SemaphoreSlim holds no
+        // unmanaged handle unless AvailableWaitHandle is touched, which this window never does.
     }
 
     private void ShowError(string message)

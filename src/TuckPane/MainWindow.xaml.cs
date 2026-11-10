@@ -5506,7 +5506,28 @@ public sealed partial class MainWindow : Window
             shellSession.Dispose();
             shellSession = null;
 
-            if (result.Outcome == ShellDragOutcome.DesktopRequested)
+            if (result.Outcome == ShellDragOutcome.DesktopRequested && result.DesktopCopyRequested)
+            {
+                // Ctrl held at drop time: honour Explorer's copy convention and leave the source in place.
+                TransferOutcome copied = await _host.TransferQueue.RunAsync(async token =>
+                {
+                    try { return await _storage.CopyItemToDesktopAsync(dragPath, progress: null, token); }
+                    catch (OperationCanceledException) { throw; }
+                    catch (Exception ex) { return new TransferOutcome(dragPath, null, TransferStatus.Failed, ex.Message); }
+                });
+                if (copied.Status is not (TransferStatus.Copied or TransferStatus.ShortcutCreated))
+                {
+                    dragCompleted = false;
+                    ShowMessage(copied.Message, copied.Status == TransferStatus.Cancelled
+                        ? InfoBarSeverity.Informational
+                        : InfoBarSeverity.Error);
+                }
+                else if (copied.DestinationPath is { } copiedDestination)
+                {
+                    await Task.Run(() => ShellChangeNotificationService.NotifyCreated(copiedDestination));
+                }
+            }
+            else if (result.Outcome == ShellDragOutcome.DesktopRequested)
             {
                 TransferOutcome moved = await _host.TransferQueue.RunAsync(
                     token => _storage.MoveItemToDesktopAsync(dragPath, progress: null, token));
@@ -7125,6 +7146,10 @@ public sealed partial class MainWindow : Window
         _interactionSaveTimer.Stop();
         _canvasResizeInputTimer.Stop();
         StopSmoothScrollRendering();
+        // CompositionTarget.Rendering is a static event: a handler left subscribed keeps running
+        // every frame against the closed window and roots its whole visual tree.
+        StopHoverRendering();
+        StopItemBounceRendering();
         _stationPointerTimer.Stop();
         _externalHoverTimer.Stop();
         _longPressTimer.Stop();
