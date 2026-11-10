@@ -7059,9 +7059,16 @@ public sealed partial class MainWindow : Window
 
     private void DesktopVisibilityTimer_Tick(Microsoft.UI.Dispatching.DispatcherQueueTimer sender, object args)
     {
-        if (_closing || _expanded || _animating || _pressActive || IsContained || !_runtimeVisible) return;
+        if (_closing || _animating || _pressActive || IsContained || !_runtimeVisible) return;
         if (_definition.PlacementMode is not (OrganizerPlacementMode.Floating or OrganizerPlacementMode.Positioned)) return;
         if (DesktopLayerBusy || _desktopLayer is not { } desktopLayer) return;
+        if (_expanded)
+        {
+            // Win+D raises the desktop host over expanded panes; put them back on the desktop.
+            if (desktopLayer.RepairExpandedLayer())
+                AppLogger.Performance($"desktop layer expanded repair {desktopLayer.DescribeAttachment()}");
+            return;
+        }
 
         DesktopAttachmentState state = desktopLayer.RepairDesktopAttachment(out DesktopAttachmentState remaining);
         if (state == DesktopAttachmentState.Ok) return;
