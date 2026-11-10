@@ -190,6 +190,8 @@ public sealed class GlobalSettings
     public bool WindowAlignmentEnabled { get; set; }
     /// <summary>Preset id of the global quick-hide shortcut (see QuickHideHotkey); null means off.</summary>
     public string? QuickHideHotkey { get; set; }
+    /// <summary>Preset id of the "Find in organizers" shortcut (QuickHideHotkey.SearchPresets); null means off.</summary>
+    public string? SearchHotkey { get; set; }
     public bool RememberExpandedOrganizerPosition { get; set; }
     public bool UseUniformFloatingCompactScale { get; set; }
     public double UniformFloatingCompactScale { get; set; } = OrganizerLimits.DefaultCompactScale;

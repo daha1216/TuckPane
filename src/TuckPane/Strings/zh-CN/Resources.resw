@@ -453,4 +453,13 @@
   <data name="ContextItemProperties" xml:space="preserve"><value>属性</value></data>
   <data name="QuickHideHotkeyOff" xml:space="preserve"><value>关闭</value></data>
   <data name="QuickHideHotkeyInUseFormat" xml:space="preserve"><value>{0} 已被其他程序占用，请换一个快捷键。</value></data>
+  <data name="SearchHotkeyTitle" xml:space="preserve"><value>在全部收纳窗中查找的快捷键</value></data>
+  <data name="TraySearch" xml:space="preserve"><value>在收纳窗中查找…</value></data>
+  <data name="SearchWindowTitle" xml:space="preserve"><value>在收纳窗中查找</value></data>
+  <data name="SearchPlaceholder" xml:space="preserve"><value>搜索全部收纳窗中的文件</value></data>
+  <data name="SearchLoading" xml:space="preserve"><value>正在读取收纳窗…</value></data>
+  <data name="SearchNoResults" xml:space="preserve"><value>没有匹配的项目</value></data>
+  <data name="SearchSummaryFormat" xml:space="preserve"><value>输入关键字，在 {1} 个收纳窗的 {0} 个项目中查找</value></data>
+  <data name="SearchHint" xml:space="preserve"><value>Enter 打开 · Ctrl+Enter 在文件夹中显示 · ↑↓ 选择 · Esc 关闭</value></data>
+  <data name="SearchResultLocationFormat" xml:space="preserve"><value>{0} · {1}</value></data>
 </root>

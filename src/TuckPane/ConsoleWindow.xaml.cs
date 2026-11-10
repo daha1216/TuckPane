@@ -240,6 +240,7 @@ public sealed partial class ConsoleWindow : Window
         UpdateEdgeGlowToggle();
         UpdateWindowAlignmentToggle();
         UpdateQuickHideHotkeyCombo();
+        UpdateSearchHotkeyCombo();
         UpdateRememberExpandedOrganizerPositionToggle();
         UpdateUniformCompactScaleControls();
         UpdateNameScaleControls();
@@ -277,6 +278,7 @@ public sealed partial class ConsoleWindow : Window
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(FolderMenuToggle, AppStrings.Get("FolderMenuTitle"));
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(WindowAlignmentToggle, AppStrings.Get("WindowAlignmentTitle"));
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(QuickHideHotkeyCombo, AppStrings.Get("QuickHideHotkeyTitle"));
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(SearchHotkeyCombo, AppStrings.Get("SearchHotkeyTitle"));
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(UniformFloatingCompactScaleToggle, AppStrings.Get("UniformFloatingCompactScaleTitle"));
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(UniformFloatingCompactScaleSlider, AppStrings.Get("CompactScaleLabel"));
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(UniformPositionedCompactScaleToggle, AppStrings.Get("UniformPositionedCompactScaleTitle"));
@@ -1022,6 +1024,63 @@ public sealed partial class ConsoleWindow : Window
         {
             AppLogger.Error("无法更新快速隐藏快捷键设置。", ex);
             RevertQuickHideHotkeyCombo();
+            ShowError(AppStrings.Get("QuickHideHotkeyErrorTitle"), ex.Message);
+        }
+    }
+
+    private bool _loadingSearchHotkey;
+
+    // Same pattern as the quick-hide picker: items are built once, and a refused choice is reverted
+    // after SelectionChanged returns (rebuilding a ComboBox inside its own handler crashes WinUI).
+    private void UpdateSearchHotkeyCombo()
+    {
+        if (SearchHotkeyCombo is null) return;
+        _loadingSearchHotkey = true;
+        try
+        {
+            if (SearchHotkeyCombo.Items.Count != QuickHideHotkey.SearchPresets.Length + 1)
+            {
+                SearchHotkeyCombo.Items.Clear();
+                SearchHotkeyCombo.Items.Add(new ComboBoxItem { Tag = string.Empty });
+                foreach (QuickHideHotkey preset in QuickHideHotkey.SearchPresets)
+                    SearchHotkeyCombo.Items.Add(new ComboBoxItem { Content = preset.Display, Tag = preset.Id });
+            }
+            ((ComboBoxItem)SearchHotkeyCombo.Items[0]).Content = AppStrings.Get("QuickHideHotkeyOff");
+            SearchHotkeyCombo.SelectedIndex = SearchHotkeyIndex();
+        }
+        finally { _loadingSearchHotkey = false; }
+    }
+
+    private int SearchHotkeyIndex()
+    {
+        string? selected = QuickHideHotkey.NormalizeSearch(_host.State.GlobalSettings.SearchHotkey);
+        return selected is null ? 0 : Math.Max(0, 1 + Array.FindIndex(QuickHideHotkey.SearchPresets, preset => preset.Id == selected));
+    }
+
+    private void RevertSearchHotkeyCombo() => DispatcherQueue.TryEnqueue(() =>
+    {
+        if (SearchHotkeyCombo is null) return;
+        _loadingSearchHotkey = true;
+        try { SearchHotkeyCombo.SelectedIndex = SearchHotkeyIndex(); }
+        finally { _loadingSearchHotkey = false; }
+    });
+
+    private async void SearchHotkeyCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (!_componentReady || _loadingSearchHotkey || SearchHotkeyCombo.SelectedItem is not ComboBoxItem { Tag: string id }) return;
+        try
+        {
+            if (!await _host.SetSearchHotkeyAsync(id.Length == 0 ? null : id))
+            {
+                string display = QuickHideHotkey.FindSearch(id)?.Display ?? id;
+                RevertSearchHotkeyCombo();
+                ShowError(AppStrings.Get("QuickHideHotkeyErrorTitle"), AppStrings.Format("QuickHideHotkeyInUseFormat", display));
+            }
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Error("无法更新搜索快捷键设置。", ex);
+            RevertSearchHotkeyCombo();
             ShowError(AppStrings.Get("QuickHideHotkeyErrorTitle"), ex.Message);
         }
     }

@@ -163,6 +163,12 @@ if (args is ["--ux-quick-actions"])
     return;
 }
 
+if (args is ["--organizer-search"])
+{
+    OrganizerSearchChecks.Run();
+    return;
+}
+
 if (args is ["--launch-environment"])
 {
     LaunchEnvironmentChecks.Run();

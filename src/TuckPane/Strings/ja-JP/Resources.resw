@@ -453,4 +453,13 @@
   <data name="ContextItemProperties" xml:space="preserve"><value>プロパティ</value></data>
   <data name="QuickHideHotkeyOff" xml:space="preserve"><value>オフ</value></data>
   <data name="QuickHideHotkeyInUseFormat" xml:space="preserve"><value>{0} は別のプログラムで使用されています。別のショートカットを選んでください。</value></data>
+  <data name="SearchHotkeyTitle" xml:space="preserve"><value>すべての整理ウィンドウを検索するショートカット</value></data>
+  <data name="TraySearch" xml:space="preserve"><value>整理ウィンドウを検索…</value></data>
+  <data name="SearchWindowTitle" xml:space="preserve"><value>整理ウィンドウを検索</value></data>
+  <data name="SearchPlaceholder" xml:space="preserve"><value>すべての整理ウィンドウのファイルを検索</value></data>
+  <data name="SearchLoading" xml:space="preserve"><value>整理ウィンドウを読み込み中…</value></data>
+  <data name="SearchNoResults" xml:space="preserve"><value>一致する項目はありません</value></data>
+  <data name="SearchSummaryFormat" xml:space="preserve"><value>入力して {1} 個の整理ウィンドウにある {0} 個の項目を検索</value></data>
+  <data name="SearchHint" xml:space="preserve"><value>Enter 開く · Ctrl+Enter フォルダーに表示 · ↑↓ 選択 · Esc 閉じる</value></data>
+  <data name="SearchResultLocationFormat" xml:space="preserve"><value>{0} · {1}</value></data>
 </root>

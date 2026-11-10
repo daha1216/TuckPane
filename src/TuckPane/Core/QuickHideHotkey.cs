@@ -20,9 +20,24 @@ internal sealed record QuickHideHotkey(string Id, uint Modifiers, uint VirtualKe
         new("Ctrl+Alt+Backquote", ModControl | ModAlt, 0xC0, "Ctrl + Alt + `"),
     ];
 
+    /// <summary>Presets for the "Find in organizers" shortcut. Ctrl+Shift+F is avoided on purpose:
+    /// editors and browsers use it, and a global hotkey would silently steal it from them.</summary>
+    internal static readonly QuickHideHotkey[] SearchPresets =
+    [
+        new("Ctrl+Alt+F", ModControl | ModAlt, 0x46, "Ctrl + Alt + F"),
+        new("Ctrl+Alt+K", ModControl | ModAlt, 0x4B, "Ctrl + Alt + K"),
+        new("Ctrl+Alt+Space", ModControl | ModAlt, 0x20, "Ctrl + Alt + Space"),
+    ];
+
     /// <summary>Null, empty or an unknown saved value means the shortcut is off.</summary>
-    internal static QuickHideHotkey? Find(string? id) =>
-        string.IsNullOrWhiteSpace(id) ? null : Presets.FirstOrDefault(preset => preset.Id.Equals(id, StringComparison.OrdinalIgnoreCase));
+    internal static QuickHideHotkey? Find(string? id) => Find(Presets, id);
 
     internal static string? Normalize(string? id) => Find(id)?.Id;
+
+    internal static QuickHideHotkey? FindSearch(string? id) => Find(SearchPresets, id);
+
+    internal static string? NormalizeSearch(string? id) => FindSearch(id)?.Id;
+
+    private static QuickHideHotkey? Find(QuickHideHotkey[] presets, string? id) =>
+        string.IsNullOrWhiteSpace(id) ? null : presets.FirstOrDefault(preset => preset.Id.Equals(id, StringComparison.OrdinalIgnoreCase));
 }

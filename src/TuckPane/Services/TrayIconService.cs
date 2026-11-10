@@ -10,7 +10,8 @@ public enum TrayCommand
     ToggleStartup = 4,
     CancelTransfer = 5,
     Exit = 6,
-    ToggleAll = 7
+    ToggleAll = 7,
+    Search = 8
 }
 
 public sealed class TrayIconService : IDisposable
@@ -18,9 +19,11 @@ public sealed class TrayIconService : IDisposable
     private const uint CallbackMessage = NativeMethods.WM_APP + 73;
     private const uint IconId = 1;
     private const int QuickHideHotkeyId = 0x5450; // "TP"
+    private const int SearchHotkeyId = 0x5451;
     private const uint WM_HOTKEY = 0x0312;
     private const uint MOD_NOREPEAT = 0x4000;
     private QuickHideHotkey? _quickHide;
+    private QuickHideHotkey? _search;
     private static readonly UIntPtr SubclassId = new(0x47464F4CUL);
     private readonly IntPtr _window;
     private readonly Func<bool> _isStartupEnabled;
@@ -63,28 +66,35 @@ public sealed class TrayIconService : IDisposable
         _ = NativeMethods.Shell_NotifyIcon(NativeMethods.NIM_MODIFY, ref _data);
     }
 
+    /// <summary>Quick-hide shortcut; see <see cref="SetHotkey"/>.</summary>
+    internal bool SetQuickHideHotkey(QuickHideHotkey? hotkey) => SetHotkey(QuickHideHotkeyId, ref _quickHide, hotkey);
+
+    /// <summary>"Find in organizers" shortcut; see <see cref="SetHotkey"/>.</summary>
+    internal bool SetSearchHotkey(QuickHideHotkey? hotkey) => SetHotkey(SearchHotkeyId, ref _search, hotkey);
+
     /// <summary>
-    /// Registers <paramref name="hotkey"/> as the quick-hide shortcut, replacing the current one,
-    /// or releases it when null. When another program owns the new combination the previous
-    /// shortcut is restored and false is returned. Must run on the host window's thread.
+    /// Registers <paramref name="hotkey"/> under <paramref name="id"/>, replacing the current one,
+    /// or releases it when null. When another program (or TuckPane's other shortcut) owns the new
+    /// combination the previous shortcut is restored and false is returned. Must run on the host
+    /// window's thread.
     /// </summary>
-    internal bool SetQuickHideHotkey(QuickHideHotkey? hotkey)
+    private bool SetHotkey(int id, ref QuickHideHotkey? current, QuickHideHotkey? hotkey)
     {
-        if (hotkey == _quickHide) return true;
-        QuickHideHotkey? previous = _quickHide;
-        if (previous is not null) _ = NativeMethods.UnregisterHotKey(_window, QuickHideHotkeyId);
-        _quickHide = null;
+        if (hotkey == current) return true;
+        QuickHideHotkey? previous = current;
+        if (previous is not null) _ = NativeMethods.UnregisterHotKey(_window, id);
+        current = null;
         if (hotkey is null) return true;
-        if (NativeMethods.RegisterHotKey(_window, QuickHideHotkeyId, hotkey.Modifiers | MOD_NOREPEAT, hotkey.VirtualKey))
+        if (NativeMethods.RegisterHotKey(_window, id, hotkey.Modifiers | MOD_NOREPEAT, hotkey.VirtualKey))
         {
-            _quickHide = hotkey;
-            AppLogger.Lifecycle("quick-hide-hotkey", $"registered={hotkey.Id}");
+            current = hotkey;
+            AppLogger.Lifecycle("hotkey", $"id=0x{id:X} registered={hotkey.Id}");
             return true;
         }
-        AppLogger.Lifecycle("quick-hide-hotkey", $"unavailable={hotkey.Id}");
+        AppLogger.Lifecycle("hotkey", $"id=0x{id:X} unavailable={hotkey.Id}");
         if (previous is not null &&
-            NativeMethods.RegisterHotKey(_window, QuickHideHotkeyId, previous.Modifiers | MOD_NOREPEAT, previous.VirtualKey))
-            _quickHide = previous;
+            NativeMethods.RegisterHotKey(_window, id, previous.Modifiers | MOD_NOREPEAT, previous.VirtualKey))
+            current = previous;
         return false;
     }
 
@@ -92,6 +102,7 @@ public sealed class TrayIconService : IDisposable
     {
         AppLogger.Lifecycle("tray-dispose", $"hwnd=0x{_window:X}");
         _ = SetQuickHideHotkey(null);
+        _ = SetSearchHotkey(null);
         _ = NativeMethods.Shell_NotifyIcon(NativeMethods.NIM_DELETE, ref _data);
         _ = NativeMethods.RemoveWindowSubclass(_window, _subclass, SubclassId);
         if (_icon != IntPtr.Zero)
@@ -128,6 +139,11 @@ public sealed class TrayIconService : IDisposable
             _command(TrayCommand.ToggleAll);
             return IntPtr.Zero;
         }
+        if (message == WM_HOTKEY && wParam.ToUInt64() == SearchHotkeyId)
+        {
+            _command(TrayCommand.Search);
+            return IntPtr.Zero;
+        }
         if (message == CallbackMessage)
         {
             int mouseMessage = unchecked((int)((long)lParam & 0xFFFF));
@@ -150,6 +166,7 @@ public sealed class TrayIconService : IDisposable
         try
         {
             _ = NativeMethods.AppendMenu(menu, NativeMethods.MF_STRING, (UIntPtr)TrayCommand.OpenConsole, AppStrings.Get("TrayOpenConsole"));
+            _ = NativeMethods.AppendMenu(menu, NativeMethods.MF_STRING, (UIntPtr)TrayCommand.Search, AppStrings.Get("TraySearch"));
             _ = NativeMethods.AppendMenu(menu, NativeMethods.MF_STRING, (UIntPtr)TrayCommand.ShowAll, AppStrings.Get("TrayShowAll"));
             _ = NativeMethods.AppendMenu(menu, NativeMethods.MF_STRING, (UIntPtr)TrayCommand.HideAll, AppStrings.Get("TrayHideAll"));
             _ = NativeMethods.AppendMenu(menu, NativeMethods.MF_SEPARATOR, UIntPtr.Zero, null);

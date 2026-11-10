@@ -234,6 +234,13 @@ public partial class App : Application
             await _host!.CreateDesktopOrganizerAsync();
             return;
         }
+        // "TuckPane.exe --search" opens Find in organizers, so launchers, taskbar shortcuts or
+        // PowerToys keyboard remaps can reach it without TuckPane's own global shortcut.
+        if (values.Contains("--search", StringComparer.OrdinalIgnoreCase))
+        {
+            _host!.ShowSearch();
+            return;
+        }
         if (redirected && !values.Contains("--startup", StringComparer.OrdinalIgnoreCase)) _host!.OpenConsole();
     }
 

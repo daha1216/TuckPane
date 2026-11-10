@@ -453,4 +453,13 @@ Storage path: {2}</value></data>
   <data name="ContextItemProperties" xml:space="preserve"><value>Properties</value></data>
   <data name="QuickHideHotkeyOff" xml:space="preserve"><value>Off</value></data>
   <data name="QuickHideHotkeyInUseFormat" xml:space="preserve"><value>{0} is already used by another program. Choose a different shortcut.</value></data>
+  <data name="SearchHotkeyTitle" xml:space="preserve"><value>Shortcut to find in all organizers</value></data>
+  <data name="TraySearch" xml:space="preserve"><value>Find in organizers…</value></data>
+  <data name="SearchWindowTitle" xml:space="preserve"><value>Find in organizers</value></data>
+  <data name="SearchPlaceholder" xml:space="preserve"><value>Search files in all organizers</value></data>
+  <data name="SearchLoading" xml:space="preserve"><value>Reading organizers…</value></data>
+  <data name="SearchNoResults" xml:space="preserve"><value>No matching items</value></data>
+  <data name="SearchSummaryFormat" xml:space="preserve"><value>Type to search {0} items in {1} organizers</value></data>
+  <data name="SearchHint" xml:space="preserve"><value>Enter open · Ctrl+Enter show in folder · ↑↓ select · Esc close</value></data>
+  <data name="SearchResultLocationFormat" xml:space="preserve"><value>{0} · {1}</value></data>
 </root>
