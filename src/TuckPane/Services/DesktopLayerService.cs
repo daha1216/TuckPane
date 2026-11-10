@@ -164,6 +164,37 @@ public sealed class DesktopLayerService : IDisposable
         return state;
     }
 
+    /// <summary>
+    /// Expanded (non-topmost) panes leave the desktop owner, so the collapsed repair above does not
+    /// apply to them. When the shell raises the desktop host (Win+D, "Show desktop", clicking the
+    /// desktop peek), an expanded pane ends up behind the wallpaper and nothing brings it back until
+    /// the desktop is toggled again; permanently expanded panes never collapse, so they stay lost.
+    /// This puts the pane directly above the desktop host: visible on the desktop, still behind
+    /// every ordinary window. Returns true when a repair was applied.
+    /// </summary>
+    internal bool RepairExpandedLayer()
+    {
+        if (!_expanded || _stayTopmost || _window == IntPtr.Zero || !NativeMethods.IsWindow(_window)) return false;
+        if (!NativeMethods.IsWindowVisible(_window)) return false;
+        if (NativeMethods.DwmGetWindowAttribute(_window, NativeMethods.DWMWA_CLOAKED, out int cloaked, sizeof(int)) == 0 &&
+            cloaked != 0)
+            return false;
+        if (_desktopIconView == IntPtr.Zero || !NativeMethods.IsWindow(_desktopIconView))
+            _desktopIconView = FindDesktopIconView(allowWorkerSpawn: false);
+        if (!IsBehindDesktopLayer()) return false;
+        if (!TryGetDesktopInsertAnchor(out IntPtr anchor)) return false;
+        _ = NativeMethods.SetWindowPos(
+            _window,
+            anchor,
+            0,
+            0,
+            0,
+            0,
+            NativeMethods.SWP_NOMOVE | NativeMethods.SWP_NOSIZE | NativeMethods.SWP_NOACTIVATE |
+            NativeMethods.SWP_NOOWNERZORDER);
+        return true;
+    }
+
     private void ReassertDesktopAttachment()
     {
         uint flags = NativeMethods.SWP_NOMOVE |

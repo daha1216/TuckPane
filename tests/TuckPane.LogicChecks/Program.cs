@@ -157,6 +157,12 @@ if (args is ["--expansion-mode-switch"])
     return;
 }
 
+if (args is ["--expanded-desktop-layer"])
+{
+    ExpandedDesktopLayerChecks.Run();
+    return;
+}
+
 if (args is ["--launch-environment"])
 {
     LaunchEnvironmentChecks.Run();
