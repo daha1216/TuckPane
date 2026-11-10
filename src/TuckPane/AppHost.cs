@@ -128,6 +128,8 @@ public sealed partial class AppHost : IDisposable
         Console.InitializeHostWindow();
         _tray = new TrayIconService(Console.Hwnd, () => State.GlobalSettings.StartWithWindows, () => TransferQueue.IsActive,
             HandleTrayCommand, LifecycleWindowCounts);
+        if (QuickHideHotkey.Find(State.GlobalSettings.QuickHideHotkey) is { } quickHide && !_tray.SetQuickHideHotkey(quickHide))
+            AppLogger.Info($"快速隐藏快捷键 {quickHide.Display} 已被其他程序占用，本次未启用。");
         TransferQueue.StateChanged += (_, _) => _dispatcher.TryEnqueue(() => Console.UpdateTransferState());
 
         if (NormalizePositionedPlacementsOnStartup() | NormalizeStationPlacementsOnStartup()) await SaveStateAsync();
@@ -2515,6 +2517,83 @@ public sealed partial class AppHost : IDisposable
         }
     }
 
+    // Tray "Show all"/"Hide all" and the quick-hide hotkey share one notion of "the user hid
+    // everything", so the hotkey always toggles relative to the last explicit choice.
+    private bool _allHiddenByUser;
+
+    private void ShowAllWindows()
+    {
+        _allHiddenByUser = false;
+        foreach (MainWindow window in _windows.Values) window.SetVisible(true);
+        foreach (Guid noteId in _trayHiddenNotes.ToArray())
+        {
+            if (_noteWindows.TryGetValue(noteId, out NoteWindow? noteWindow)) noteWindow.RestoreFromTray();
+        }
+        _trayHiddenNotes.Clear();
+        foreach (string path in _trayHiddenExternalNotes.ToArray())
+        {
+            if (_externalNoteWindows.TryGetValue(path, out NoteWindow? noteWindow)) noteWindow.RestoreFromTray();
+        }
+        _trayHiddenExternalNotes.Clear();
+        foreach (string path in _trayHiddenExternalTodos.ToArray())
+        {
+            if (_externalTodoWindows.TryGetValue(path, out TodoWindow? todoWindow)) todoWindow.RestoreFromTray();
+        }
+        _trayHiddenExternalTodos.Clear();
+    }
+
+    private void HideAllWindows()
+    {
+        _allHiddenByUser = true;
+        foreach (MainWindow window in _windows.Values) window.SetVisible(false);
+        _trayHiddenNotes.Clear();
+        foreach ((Guid noteId, NoteWindow noteWindow) in _noteWindows)
+        {
+            if (!noteWindow.IsVisible) continue;
+            _trayHiddenNotes.Add(noteId);
+            noteWindow.HideForTray();
+        }
+        _trayHiddenExternalNotes.Clear();
+        foreach ((string path, NoteWindow noteWindow) in _externalNoteWindows)
+        {
+            if (!noteWindow.IsVisible) continue;
+            _trayHiddenExternalNotes.Add(path);
+            noteWindow.HideForTray();
+        }
+        _trayHiddenExternalTodos.Clear();
+        foreach ((string path, TodoWindow todoWindow) in _externalTodoWindows)
+        {
+            if (!todoWindow.IsVisible) continue;
+            _trayHiddenExternalTodos.Add(path);
+            todoWindow.HideForTray();
+        }
+    }
+
+    /// <summary>
+    /// Switches the quick-hide shortcut to the preset <paramref name="hotkeyId"/> (null turns it
+    /// off). The shortcut is registered before the choice is saved, so a combination owned by
+    /// another program is refused (returns false) and the previous choice stays in effect.
+    /// </summary>
+    public async Task<bool> SetQuickHideHotkeyAsync(string? hotkeyId)
+    {
+        string? next = QuickHideHotkey.Normalize(hotkeyId);
+        string? previous = QuickHideHotkey.Normalize(State.GlobalSettings.QuickHideHotkey);
+        if (string.Equals(next, previous, StringComparison.Ordinal)) return true;
+        if (_tray is not null && !_tray.SetQuickHideHotkey(QuickHideHotkey.Find(next))) return false;
+        State.GlobalSettings.QuickHideHotkey = next;
+        try
+        {
+            await SaveStateAsync();
+        }
+        catch
+        {
+            State.GlobalSettings.QuickHideHotkey = previous;
+            _ = _tray?.SetQuickHideHotkey(QuickHideHotkey.Find(previous));
+            throw;
+        }
+        return true;
+    }
+
     private void HandleTrayCommand(TrayCommand command)
     {
         _ = _dispatcher.TryEnqueue(async () =>
@@ -2528,46 +2607,14 @@ public sealed partial class AppHost : IDisposable
                         OpenConsole();
                         break;
                     case TrayCommand.ShowAll:
-                        foreach (MainWindow window in _windows.Values) window.SetVisible(true);
-                    foreach (Guid noteId in _trayHiddenNotes.ToArray())
-                    {
-                        if (_noteWindows.TryGetValue(noteId, out NoteWindow? noteWindow)) noteWindow.RestoreFromTray();
-                    }
-                    _trayHiddenNotes.Clear();
-                    foreach (string path in _trayHiddenExternalNotes.ToArray())
-                    {
-                        if (_externalNoteWindows.TryGetValue(path, out NoteWindow? noteWindow)) noteWindow.RestoreFromTray();
-                    }
-                    _trayHiddenExternalNotes.Clear();
-                    foreach (string path in _trayHiddenExternalTodos.ToArray())
-                    {
-                        if (_externalTodoWindows.TryGetValue(path, out TodoWindow? todoWindow)) todoWindow.RestoreFromTray();
-                    }
-                    _trayHiddenExternalTodos.Clear();
+                        ShowAllWindows();
                         break;
                     case TrayCommand.HideAll:
-                        foreach (MainWindow window in _windows.Values) window.SetVisible(false);
-                    _trayHiddenNotes.Clear();
-                    foreach ((Guid noteId, NoteWindow noteWindow) in _noteWindows)
-                    {
-                        if (!noteWindow.IsVisible) continue;
-                        _trayHiddenNotes.Add(noteId);
-                        noteWindow.HideForTray();
-                    }
-                    _trayHiddenExternalNotes.Clear();
-                    foreach ((string path, NoteWindow noteWindow) in _externalNoteWindows)
-                    {
-                        if (!noteWindow.IsVisible) continue;
-                        _trayHiddenExternalNotes.Add(path);
-                        noteWindow.HideForTray();
-                    }
-                    _trayHiddenExternalTodos.Clear();
-                    foreach ((string path, TodoWindow todoWindow) in _externalTodoWindows)
-                    {
-                        if (!todoWindow.IsVisible) continue;
-                        _trayHiddenExternalTodos.Add(path);
-                        todoWindow.HideForTray();
-                    }
+                        HideAllWindows();
+                        break;
+                    case TrayCommand.ToggleAll:
+                        if (_allHiddenByUser) ShowAllWindows();
+                        else HideAllWindows();
                         break;
                     case TrayCommand.ToggleStartup:
                         await SetStartupAsync(!State.GlobalSettings.StartWithWindows);

@@ -188,6 +188,8 @@ public sealed class GlobalSettings
     public bool ExpandOnHover { get; set; }
     public bool CollapseOnPointerLeave { get; set; }
     public bool WindowAlignmentEnabled { get; set; }
+    /// <summary>Preset id of the global quick-hide shortcut (see QuickHideHotkey); null means off.</summary>
+    public string? QuickHideHotkey { get; set; }
     public bool RememberExpandedOrganizerPosition { get; set; }
     public bool UseUniformFloatingCompactScale { get; set; }
     public double UniformFloatingCompactScale { get; set; } = OrganizerLimits.DefaultCompactScale;
