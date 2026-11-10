@@ -239,6 +239,7 @@ public sealed partial class ConsoleWindow : Window
         UpdateNoteAlwaysOnTopToggle();
         UpdateEdgeGlowToggle();
         UpdateWindowAlignmentToggle();
+        UpdateQuickHideHotkeyCombo();
         UpdateRememberExpandedOrganizerPositionToggle();
         UpdateUniformCompactScaleControls();
         UpdateNameScaleControls();
@@ -275,6 +276,7 @@ public sealed partial class ConsoleWindow : Window
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(DesktopMenuToggle, AppStrings.Get("DesktopMenuTitle"));
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(FolderMenuToggle, AppStrings.Get("FolderMenuTitle"));
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(WindowAlignmentToggle, AppStrings.Get("WindowAlignmentTitle"));
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(QuickHideHotkeyCombo, AppStrings.Get("QuickHideHotkeyTitle"));
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(UniformFloatingCompactScaleToggle, AppStrings.Get("UniformFloatingCompactScaleTitle"));
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(UniformFloatingCompactScaleSlider, AppStrings.Get("CompactScaleLabel"));
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(UniformPositionedCompactScaleToggle, AppStrings.Get("UniformPositionedCompactScaleTitle"));
@@ -961,6 +963,67 @@ public sealed partial class ConsoleWindow : Window
         _loadingWindowAlignment = true;
         WindowAlignmentToggle.IsOn = _host.State.GlobalSettings.WindowAlignmentEnabled;
         _loadingWindowAlignment = false;
+    }
+
+    private bool _loadingQuickHideHotkey;
+
+    /// <summary>
+    /// Selects the saved shortcut in the picker. Items are created once and only their text is
+    /// refreshed afterwards: clearing a ComboBox's items from inside its own SelectionChanged
+    /// (which a refused choice would otherwise do) crashes WinUI.
+    /// </summary>
+    private void UpdateQuickHideHotkeyCombo()
+    {
+        if (QuickHideHotkeyCombo is null) return;
+        _loadingQuickHideHotkey = true;
+        try
+        {
+            if (QuickHideHotkeyCombo.Items.Count != QuickHideHotkey.Presets.Length + 1)
+            {
+                QuickHideHotkeyCombo.Items.Clear();
+                QuickHideHotkeyCombo.Items.Add(new ComboBoxItem { Tag = string.Empty });
+                foreach (QuickHideHotkey preset in QuickHideHotkey.Presets)
+                    QuickHideHotkeyCombo.Items.Add(new ComboBoxItem { Content = preset.Display, Tag = preset.Id });
+            }
+            ((ComboBoxItem)QuickHideHotkeyCombo.Items[0]).Content = AppStrings.Get("QuickHideHotkeyOff");
+            QuickHideHotkeyCombo.SelectedIndex = QuickHideHotkeyIndex();
+        }
+        finally { _loadingQuickHideHotkey = false; }
+    }
+
+    private int QuickHideHotkeyIndex()
+    {
+        string? selected = QuickHideHotkey.Normalize(_host.State.GlobalSettings.QuickHideHotkey);
+        return selected is null ? 0 : Math.Max(0, 1 + Array.FindIndex(QuickHideHotkey.Presets, preset => preset.Id == selected));
+    }
+
+    /// <summary>Puts the picker back on the saved choice after the current selection event finishes.</summary>
+    private void RevertQuickHideHotkeyCombo() => DispatcherQueue.TryEnqueue(() =>
+    {
+        if (QuickHideHotkeyCombo is null) return;
+        _loadingQuickHideHotkey = true;
+        try { QuickHideHotkeyCombo.SelectedIndex = QuickHideHotkeyIndex(); }
+        finally { _loadingQuickHideHotkey = false; }
+    });
+
+    private async void QuickHideHotkeyCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (!_componentReady || _loadingQuickHideHotkey || QuickHideHotkeyCombo.SelectedItem is not ComboBoxItem { Tag: string id }) return;
+        try
+        {
+            if (!await _host.SetQuickHideHotkeyAsync(id.Length == 0 ? null : id))
+            {
+                string display = QuickHideHotkey.Find(id)?.Display ?? id;
+                RevertQuickHideHotkeyCombo();
+                ShowError(AppStrings.Get("QuickHideHotkeyErrorTitle"), AppStrings.Format("QuickHideHotkeyInUseFormat", display));
+            }
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Error("无法更新快速隐藏快捷键设置。", ex);
+            RevertQuickHideHotkeyCombo();
+            ShowError(AppStrings.Get("QuickHideHotkeyErrorTitle"), ex.Message);
+        }
     }
 
     private async void WindowAlignmentToggle_Toggled(object sender, RoutedEventArgs e)

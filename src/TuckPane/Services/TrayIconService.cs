@@ -9,13 +9,18 @@ public enum TrayCommand
     HideAll = 3,
     ToggleStartup = 4,
     CancelTransfer = 5,
-    Exit = 6
+    Exit = 6,
+    ToggleAll = 7
 }
 
 public sealed class TrayIconService : IDisposable
 {
     private const uint CallbackMessage = NativeMethods.WM_APP + 73;
     private const uint IconId = 1;
+    private const int QuickHideHotkeyId = 0x5450; // "TP"
+    private const uint WM_HOTKEY = 0x0312;
+    private const uint MOD_NOREPEAT = 0x4000;
+    private QuickHideHotkey? _quickHide;
     private static readonly UIntPtr SubclassId = new(0x47464F4CUL);
     private readonly IntPtr _window;
     private readonly Func<bool> _isStartupEnabled;
@@ -58,9 +63,35 @@ public sealed class TrayIconService : IDisposable
         _ = NativeMethods.Shell_NotifyIcon(NativeMethods.NIM_MODIFY, ref _data);
     }
 
+    /// <summary>
+    /// Registers <paramref name="hotkey"/> as the quick-hide shortcut, replacing the current one,
+    /// or releases it when null. When another program owns the new combination the previous
+    /// shortcut is restored and false is returned. Must run on the host window's thread.
+    /// </summary>
+    internal bool SetQuickHideHotkey(QuickHideHotkey? hotkey)
+    {
+        if (hotkey == _quickHide) return true;
+        QuickHideHotkey? previous = _quickHide;
+        if (previous is not null) _ = NativeMethods.UnregisterHotKey(_window, QuickHideHotkeyId);
+        _quickHide = null;
+        if (hotkey is null) return true;
+        if (NativeMethods.RegisterHotKey(_window, QuickHideHotkeyId, hotkey.Modifiers | MOD_NOREPEAT, hotkey.VirtualKey))
+        {
+            _quickHide = hotkey;
+            AppLogger.Lifecycle("quick-hide-hotkey", $"registered={hotkey.Id}");
+            return true;
+        }
+        AppLogger.Lifecycle("quick-hide-hotkey", $"unavailable={hotkey.Id}");
+        if (previous is not null &&
+            NativeMethods.RegisterHotKey(_window, QuickHideHotkeyId, previous.Modifiers | MOD_NOREPEAT, previous.VirtualKey))
+            _quickHide = previous;
+        return false;
+    }
+
     public void Dispose()
     {
         AppLogger.Lifecycle("tray-dispose", $"hwnd=0x{_window:X}");
+        _ = SetQuickHideHotkey(null);
         _ = NativeMethods.Shell_NotifyIcon(NativeMethods.NIM_DELETE, ref _data);
         _ = NativeMethods.RemoveWindowSubclass(_window, _subclass, SubclassId);
         if (_icon != IntPtr.Zero)
@@ -90,6 +121,11 @@ public sealed class TrayIconService : IDisposable
             _ = NativeMethods.Shell_NotifyIcon(NativeMethods.NIM_SETVERSION, ref _data);
             try { AppLogger.Lifecycle("tray-restored", $"hwnd=0x{_window:X}"); }
             catch { /* A diagnostic callback must never interrupt the native message chain. */ }
+            return IntPtr.Zero;
+        }
+        if (message == WM_HOTKEY && wParam.ToUInt64() == QuickHideHotkeyId)
+        {
+            _command(TrayCommand.ToggleAll);
             return IntPtr.Zero;
         }
         if (message == CallbackMessage)

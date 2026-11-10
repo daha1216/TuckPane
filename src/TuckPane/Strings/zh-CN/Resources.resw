@@ -442,4 +442,15 @@
   <data name="NoteCopyImage" xml:space="preserve"><value>复制图片</value></data>
   <data name="NoteDeleteImage" xml:space="preserve"><value>删除图片</value></data>
   <data name="NoteImagePasteError" xml:space="preserve"><value>无法读取剪贴板中的图片或文字，请重新复制后再试。</value></data>
+  <data name="QuickHideHotkeyTitle" xml:space="preserve"><value>显示/隐藏全部收纳窗的快捷键</value></data>
+  <data name="QuickHideHotkeyErrorTitle" xml:space="preserve"><value>无法设置快速隐藏快捷键</value></data>
+  <data name="ContextSortBy" xml:space="preserve"><value>排序方式</value></data>
+  <data name="ContextSortByName" xml:space="preserve"><value>名称</value></data>
+  <data name="ContextSortByType" xml:space="preserve"><value>类型</value></data>
+  <data name="ContextSortByDate" xml:space="preserve"><value>修改日期</value></data>
+  <data name="ContextOpenItem" xml:space="preserve"><value>打开</value></data>
+  <data name="ContextRevealItem" xml:space="preserve"><value>在文件夹中显示</value></data>
+  <data name="ContextItemProperties" xml:space="preserve"><value>属性</value></data>
+  <data name="QuickHideHotkeyOff" xml:space="preserve"><value>关闭</value></data>
+  <data name="QuickHideHotkeyInUseFormat" xml:space="preserve"><value>{0} 已被其他程序占用，请换一个快捷键。</value></data>
 </root>

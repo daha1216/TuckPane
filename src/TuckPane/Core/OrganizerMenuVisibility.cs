@@ -8,7 +8,7 @@ internal static class OrganizerMenuVisibility
     internal static readonly string[] Actions =
     [
         "ContextAddItem", "ContextNewFolder", "ContextNewNote", "ContextNewTodo",
-        "ContextPaste", "ContextDeleteWindow", "ContextOpenStorage", "ContextRename",
+        "ContextPaste", "ContextDeleteWindow", "ContextOpenStorage", "ContextRename", "ContextSortBy",
         "ContextManage", "ContextDuplicate", "ContextSwitchPlacement", "ContextSwitchContent",
         "ContextSwitchExpansion", "ContextHideName"
     ];
@@ -31,6 +31,10 @@ internal static class OrganizerMenuVisibility
     internal static string[] VisibleActions(GlobalSettings settings, OrganizerPlacementMode mode) =>
         Actions.Where(key => IsVisible(settings, key, mode)).ToArray();
 
+    // Item commands (add, create, paste, storage, sort) come before the separator; window
+    // commands (settings, duplicate, mode switches) after it.
+    private const int FirstGroupCount = 9;
+
     internal static bool ShowSeparator(IReadOnlyCollection<string> visible) =>
-        Actions.Take(8).Any(visible.Contains) && Actions.Skip(8).Any(visible.Contains);
+        Actions.Take(FirstGroupCount).Any(visible.Contains) && Actions.Skip(FirstGroupCount).Any(visible.Contains);
 }
