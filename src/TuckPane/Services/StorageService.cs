@@ -200,7 +200,15 @@ public sealed class StorageService
         if (!Directory.Exists(_itemsRoot)) return new(_itemsRoot, null, TransferStatus.Moved, AppStrings.Get("StorageMissingDeleted"));
         if (!_exportEmptyDirectory && !Directory.EnumerateFileSystemEntries(_itemsRoot).Any())
         {
-            Directory.Delete(_itemsRoot);
+            // A file can appear between the emptiness check and the delete (or the folder can be
+            // held open by Explorer); report that as a normal failure instead of throwing past
+            // the caller's outcome handling.
+            try { Directory.Delete(_itemsRoot); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                AppLogger.Error($"删除空收纳目录失败：{_itemsRoot}", ex);
+                return new(_itemsRoot, null, TransferStatus.Failed, ex.Message);
+            }
             return PublishedMoveCompletion.Complete(_itemsRoot, _itemsRoot, () => { }, DeleteEmptyParent)
                 with { DestinationPath = null, Message = AppStrings.Get("EmptyDeleted") };
         }
@@ -264,7 +272,7 @@ public sealed class StorageService
         bool isDirectory = Directory.Exists(source);
         if (!isDirectory && !File.Exists(source))
             return new(source, null, TransferStatus.Failed, AppStrings.Get("ShellDragMissing"));
-        string desktop = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
+        string desktop = AppPaths.DesktopRoot; // Honours TUCKPANE_TEST_ROOT like ExportToDesktopAsync.
         if (string.IsNullOrWhiteSpace(desktop))
             return new(source, null, TransferStatus.Failed, AppStrings.Get("DesktopUnavailable"));
         return await Task.Run(
@@ -277,7 +285,7 @@ public sealed class StorageService
         IProgress<TransferProgress>? progress,
         CancellationToken cancellationToken)
     {
-        string desktop = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
+        string desktop = AppPaths.DesktopRoot; // Honours TUCKPANE_TEST_ROOT like ExportToDesktopAsync.
         if (string.IsNullOrWhiteSpace(desktop))
             return new(sourcePath, null, TransferStatus.Failed, AppStrings.Get("DesktopUnavailable"));
         IReadOnlyList<TransferOutcome> outcomes = await new StorageService(desktop)
@@ -320,12 +328,17 @@ public sealed class StorageService
         {
             string source = Path.GetFullPath(sourcePath);
             string destination = GetUniquePath(Path.Combine(_itemsRoot, Path.GetFileNameWithoutExtension(source) + ".lnk"), isDirectory: false);
-            Type shellType = Type.GetTypeFromProgID("WScript.Shell") ?? throw new InvalidOperationException(AppStrings.Get("ShellUnavailable"));
-            dynamic shell = Activator.CreateInstance(shellType)!;
-            dynamic shortcut = shell.CreateShortcut(destination);
-            shortcut.TargetPath = source;
-            shortcut.WorkingDirectory = Path.GetDirectoryName(source)!;
-            shortcut.Save();
+            // Same IShellLinkW path as AddItemShortcut. The previous late-bound Windows Script Host
+            // version leaked two RCWs per drop and depended on Windows Script Host being enabled.
+            object instance = new NativeMethods.ShellLink();
+            try
+            {
+                var link = (NativeMethods.IShellLinkW)instance;
+                Marshal.ThrowExceptionForHR(link.SetPath(source));
+                Marshal.ThrowExceptionForHR(link.SetWorkingDirectory(Path.GetDirectoryName(source)!));
+                ((IPersistFile)instance).Save(destination, true);
+            }
+            finally { Marshal.FinalReleaseComObject(instance); }
             return new(source, destination, TransferStatus.ShortcutCreated, AppStrings.Get("ShortcutCreated"));
         }
         catch (Exception ex)

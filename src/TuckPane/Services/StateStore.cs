@@ -40,7 +40,7 @@ public sealed class StateStore
             Directory.CreateDirectory(Path.GetDirectoryName(_statePath)!);
             string temporary = _statePath + ".tmp";
             string json = JsonSerializer.Serialize(Normalize(state), JsonOptions);
-            await File.WriteAllTextAsync(temporary, json);
+            await WriteDurableAsync(temporary, json);
             if (File.Exists(_statePath)) File.Copy(_statePath, _backupPath, overwrite: true);
             await MoveIntoPlaceAsync(temporary, _statePath);
         }
@@ -60,13 +60,27 @@ public sealed class StateStore
             {
                 File.Copy(legacyPath, _backupPath, overwrite: true);
             }
-            await File.WriteAllTextAsync(temporary, JsonSerializer.Serialize(state, JsonOptions));
+            await WriteDurableAsync(temporary, JsonSerializer.Serialize(state, JsonOptions));
             await MoveIntoPlaceAsync(temporary, _statePath);
         }
         finally
         {
             _saveGate.Release();
         }
+    }
+
+    /// <summary>
+    /// Writes the temporary state file and flushes it to the device before the atomic rename.
+    /// Without the flush, a power loss shortly after the rename can leave a zero-length or
+    /// truncated state.json even though the rename itself was atomic.
+    /// </summary>
+    internal static async Task WriteDurableAsync(string path, string contents)
+    {
+        byte[] bytes = new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false).GetBytes(contents);
+        await using var stream = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.None,
+            bufferSize: 4096, FileOptions.Asynchronous);
+        await stream.WriteAsync(bytes);
+        stream.Flush(flushToDisk: true);
     }
 
     private static async Task MoveIntoPlaceAsync(string temporary, string destination)

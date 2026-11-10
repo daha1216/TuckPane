@@ -95,16 +95,19 @@ internal sealed class AppUpdateService : IDisposable
         _operation = CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token);
         _operation.CancelAfter(TimeSpan.FromMinutes(30));
         Changed?.Invoke();
+        string? session = null;
+        bool helperStarted = false;
+        bool exited = false;
         try
         {
-            string session = Path.Combine(_root, "sessions", Guid.NewGuid().ToString("N"));
+            session = Path.Combine(_root, "sessions", Guid.NewGuid().ToString("N"));
             UpdateFiles.NoLinks(session);
             string package = await new ReleaseClient(_http).DownloadAsync(release, session,
                 new Progress<double>(value => { Progress = value; Changed?.Invoke(); }), _operation.Token);
             Downloading = false;
             StatusKey = "UpdatePreparing";
             Changed?.Invoke();
-            bool exited = await exitWithHandoff(async () =>
+            exited = await exitWithHandoff(async () =>
             {
                 BackupPath = UpdateFiles.BackupConfiguration(AppPaths.StatePath, Path.Combine(_root, "config-backups"), CurrentVersion);
                 string helper = Path.Combine(session, "TuckPane.Updater.exe");
@@ -118,6 +121,7 @@ internal sealed class AppUpdateService : IDisposable
                 var start = new ProcessStartInfo(helper) { UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = session };
                 start.ArgumentList.Add(Path.Combine(session, "request.json"));
                 using Process process = Process.Start(start) ?? throw new IOException("Updater did not start.");
+                helperStarted = true;
                 using var readyTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(90));
                 try
                 {
@@ -140,6 +144,10 @@ internal sealed class AppUpdateService : IDisposable
         catch (Exception ex) { StatusKey = "UpdateFailed"; Error = ex.Message; }
         finally
         {
+            // A cancelled or failed attempt used to leave the full download (up to a few hundred MB)
+            // until the next startup sweep. Reclaim it now, but only while no updater process has
+            // been started from it: once started, the helper owns the session directory.
+            if (!exited && !helperStarted && session is not null) TryDeleteSession(session);
             Downloading = false;
             _busy = false;
             _operation?.Dispose();
@@ -178,6 +186,18 @@ internal sealed class AppUpdateService : IDisposable
                 catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
             }
             if (removed > 0) AppLogger.Performance($"update-sessions cleanup removed={removed}");
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+    }
+
+    private static void TryDeleteSession(string session)
+    {
+        try
+        {
+            if (!Directory.Exists(session)) return;
+            if ((new DirectoryInfo(session).Attributes & FileAttributes.ReparsePoint) != 0) return;
+            UpdateFiles.NoLinks(session);
+            DeleteSessionEntry(session);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
     }

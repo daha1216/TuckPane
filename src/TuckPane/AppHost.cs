@@ -121,7 +121,11 @@ public sealed partial class AppHost : IDisposable
         catch (Exception ex) { AppLogger.Error("无法初始化桌面右键菜单。", ex); }
         RefreshFolderContextMenuLabel();
         await MigrateLegacyOrganizerNotesAsync();
-        StartupService.Apply(State.GlobalSettings.StartWithWindows);
+        // Reapplying the Run key is a convenience; on locked-down machines the registry write can
+        // be denied, and that must not stop TuckPane from starting (the neighbouring registry
+        // initialisations above are guarded the same way).
+        try { StartupService.Apply(State.GlobalSettings.StartWithWindows); }
+        catch (Exception ex) { AppLogger.Error("无法同步开机启动设置。", ex); }
 
         Updates = new AppUpdateService();
         Console = new ConsoleWindow(this);
@@ -2459,6 +2463,14 @@ public sealed partial class AppHost : IDisposable
         {
             await SaveStateAsync();
             await handoff();
+        }
+        else
+        {
+            // Position, wheel-scale and resize changes are applied to State immediately but
+            // persisted by per-window debounce timers (350 ms). Exiting inside that window used
+            // to drop the last move. A failed final save keeps the previous exit behaviour.
+            try { await SaveStateAsync(); }
+            catch (Exception ex) { AppLogger.Error("退出前保存配置失败。", ex); }
         }
         AppLogger.Lifecycle("exit-commit", $"source={source} {LifecycleWindowCounts()}");
         attempt.Commit();

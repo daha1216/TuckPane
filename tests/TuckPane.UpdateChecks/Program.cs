@@ -136,6 +136,29 @@ static void CheckBackup()
     File.WriteAllText(blockedRoot, "a file blocks the backup directory");
     Throws<IOException>(() => UpdateFiles.BackupConfiguration(state, blockedRoot, "3.0.2"));
     Require(File.ReadAllText(state) == "later state", "A failed backup modified the original configuration.");
+
+    // A fresh profile that never saved state.json must still be able to update.
+    string freshState = Path.Combine(scratch.Root, "fresh", "state.json");
+    Directory.CreateDirectory(Path.GetDirectoryName(freshState)!);
+    string freshBackup = UpdateFiles.BackupConfiguration(freshState, Path.Combine(scratch.Root, "fresh-backups"), "3.0.2");
+    Require(!File.Exists(Path.Combine(freshBackup, "state.json")), "A missing state file was fabricated.");
+    Require(File.ReadAllText(Path.Combine(freshBackup, "backup.json")).Contains("\"statePresent\": false"), "Missing state was not recorded.");
+
+    // Retention keeps the newest backups, ignores unrelated folders and never removes the current one.
+    string retentionRoot = Path.Combine(scratch.Root, "retention");
+    string unrelated = Path.Combine(retentionRoot, "user-notes");
+    Directory.CreateDirectory(unrelated);
+    var created = new List<string>();
+    for (int index = 0; index < UpdateFiles.BackupRetentionCount + 3; index++)
+    {
+        string next = UpdateFiles.BackupConfiguration(state, retentionRoot, "3.0.2");
+        Directory.SetCreationTimeUtc(next, new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc).AddMinutes(index));
+        created.Add(next);
+    }
+    UpdateFiles.PruneBackups(retentionRoot, created[^1], UpdateFiles.BackupRetentionCount);
+    Require(Directory.Exists(unrelated), "Retention removed a folder that is not a configuration backup.");
+    Require(created.TakeLast(UpdateFiles.BackupRetentionCount).All(Directory.Exists), "Retention removed a recent backup.");
+    Require(created.Take(3).All(path => !Directory.Exists(path)), "Retention kept stale backups.");
 }
 
 static void CheckPortable()

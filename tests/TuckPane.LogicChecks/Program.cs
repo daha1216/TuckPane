@@ -157,6 +157,12 @@ if (args is ["--expansion-mode-switch"])
     return;
 }
 
+if (args is ["--audit-reliability"])
+{
+    await AuditReliabilityChecks.RunAsync();
+    return;
+}
+
 if (args is ["--launch-environment"])
 {
     LaunchEnvironmentChecks.Run();
