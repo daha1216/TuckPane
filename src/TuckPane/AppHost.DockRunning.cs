@@ -110,5 +110,6 @@ public sealed partial class AppHost
         _dockSnapshotVersion.Invalidate();
         _dockRunningTimer?.Stop();
         _dockOpenPaths.Clear();
+        _dockRunningService.Dispose();
     }
 }

@@ -54,7 +54,7 @@ public sealed partial class MainWindow : Window
     private readonly DesktopAttachmentCoordinator _desktopCoordinator;
     private readonly OrganizerCatalogController _catalogController;
     private readonly ExternalItemDragCoordinator _externalDragCoordinator;
-    private readonly IconCacheService _iconCache = new();
+    private readonly IconCacheService _iconCache;
     private readonly Microsoft.UI.Dispatching.DispatcherQueueTimer _longPressTimer;
     private readonly Microsoft.UI.Dispatching.DispatcherQueueTimer _externalHoverTimer;
     private readonly Microsoft.UI.Dispatching.DispatcherQueueTimer _interactionSaveTimer;
@@ -264,6 +264,7 @@ public sealed partial class MainWindow : Window
     public MainWindow(AppHost host, OrganizerDefinition definition)
     {
         _host = host;
+        _iconCache = host.SharedIconCache;
         _definition = definition;
         _expandedBackdrop = new(ThemeTarget.Organizer, "expanded", useRoundedMask: IsDock);
         _storage = new StorageService(AppPaths.ResolveStoragePath(definition), createIfMissing: false);

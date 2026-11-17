@@ -16,7 +16,7 @@ using Windows.UI.Text;
 
 namespace TuckPane;
 
-public sealed partial class TodoWindow : Window
+public sealed partial class TodoWindow : Window, IPortableDocumentWindow
 {
     private readonly AppHost _host;
     private readonly NoteStore _store;
@@ -89,6 +89,25 @@ public sealed partial class TodoWindow : Window
 
     internal bool IsVisible => _windowChrome.IsVisible;
     internal string ExternalPath => _externalPath;
+
+    PortableDocumentKind IPortableDocumentWindow.Kind => PortableDocumentKind.Todo;
+    object IPortableDocumentWindow.UnderlyingWindow => this;
+    string? IPortableDocumentWindow.ExternalPath => ExternalPath;
+    bool IPortableDocumentWindow.IsVisible => IsVisible;
+    void IPortableDocumentWindow.ShowAndActivate() => ShowAndActivate();
+    void IPortableDocumentWindow.HideForTray() => HideForTray();
+    void IPortableDocumentWindow.RestoreFromTray() => RestoreFromTray();
+    Task<bool> IPortableDocumentWindow.FlushForExitAsync() => FlushForExitAsync();
+    Task<bool> IPortableDocumentWindow.FlushAndHideForDragAsync() => FlushAndHideForDragAsync();
+    void IPortableDocumentWindow.RestoreAfterDrag() => RestoreAfterDrag();
+    Task IPortableDocumentWindow.BeginDirectoryRenameAsync() => BeginDirectoryRenameAsync();
+    void IPortableDocumentWindow.EndDirectoryRename() => EndDirectoryRename();
+    void IPortableDocumentWindow.RebindExternalPath(string path) => RebindExternalPath(path);
+    void IPortableDocumentWindow.ClosePermanentlyWithoutSave() => ClosePermanentlyWithoutSave();
+    Task IPortableDocumentWindow.ClosePermanentlyAsync() => ClosePermanentlyAsync();
+    Task IPortableDocumentWindow.ApplyGlobalThemeAsync(NoteTheme theme) => ApplyGlobalThemeAsync(theme);
+    void IPortableDocumentWindow.ApplyLanguage() => ApplyLanguage();
+    void IPortableDocumentWindow.ApplyAlwaysOnTopSetting() => ApplyAlwaysOnTopSetting();
 
     internal void InitializeHostWindow() => _windowChrome.InitializeHostWindow();
     internal void ShowAndActivate() => _windowChrome.ShowAndActivate();

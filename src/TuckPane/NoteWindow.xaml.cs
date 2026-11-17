@@ -10,7 +10,7 @@ using Windows.ApplicationModel.DataTransfer;
 
 namespace TuckPane;
 
-public sealed partial class NoteWindow : Window
+public sealed partial class NoteWindow : Window, IPortableDocumentWindow
 {
     private readonly AppHost _host;
     private readonly NoteDefinition _definition;
@@ -93,6 +93,25 @@ public sealed partial class NoteWindow : Window
     internal Guid Id => _definition.Id;
     internal bool IsVisible => _windowChrome.IsVisible;
     internal string? ExternalPath => _externalPath;
+
+    PortableDocumentKind IPortableDocumentWindow.Kind => PortableDocumentKind.Note;
+    object IPortableDocumentWindow.UnderlyingWindow => this;
+    string? IPortableDocumentWindow.ExternalPath => ExternalPath;
+    bool IPortableDocumentWindow.IsVisible => IsVisible;
+    void IPortableDocumentWindow.ShowAndActivate() => ShowAndActivate();
+    void IPortableDocumentWindow.HideForTray() => HideForTray();
+    void IPortableDocumentWindow.RestoreFromTray() => RestoreFromTray();
+    Task<bool> IPortableDocumentWindow.FlushForExitAsync() => FlushForExitAsync();
+    Task<bool> IPortableDocumentWindow.FlushAndHideForDragAsync() => FlushAndHideForDragAsync();
+    void IPortableDocumentWindow.RestoreAfterDrag() => RestoreAfterDrag();
+    Task IPortableDocumentWindow.BeginDirectoryRenameAsync() => BeginDirectoryRenameAsync();
+    void IPortableDocumentWindow.EndDirectoryRename() => EndDirectoryRename();
+    void IPortableDocumentWindow.RebindExternalPath(string path) => RebindExternalPath(path);
+    void IPortableDocumentWindow.ClosePermanentlyWithoutSave() => ClosePermanentlyWithoutSave();
+    Task IPortableDocumentWindow.ClosePermanentlyAsync() => ClosePermanentlyAsync();
+    Task IPortableDocumentWindow.ApplyGlobalThemeAsync(NoteTheme theme) => ApplyGlobalThemeAsync(theme);
+    void IPortableDocumentWindow.ApplyLanguage() => ApplyLanguage();
+    void IPortableDocumentWindow.ApplyAlwaysOnTopSetting() => ApplyAlwaysOnTopSetting();
 
     internal async Task ApplyGlobalThemeAsync(NoteTheme theme)
     {

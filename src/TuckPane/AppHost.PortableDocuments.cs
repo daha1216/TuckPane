@@ -9,55 +9,9 @@ public sealed partial class AppHost
 {
     private readonly PortableDocumentCoordinator _portableDocuments = new();
 
-    private sealed class NotePortableWindowAdapter(NoteWindow window) : IPortableDocumentWindow
-    {
-        public PortableDocumentKind Kind => PortableDocumentKind.Note;
-        public object UnderlyingWindow => window;
-        public string? ExternalPath => window.ExternalPath;
-        public bool IsVisible => window.IsVisible;
-        public void ShowAndActivate() => window.ShowAndActivate();
-        public void HideForTray() => window.HideForTray();
-        public void RestoreFromTray() => window.RestoreFromTray();
-        public Task<bool> FlushForExitAsync() => window.FlushForExitAsync();
-        public Task<bool> FlushAndHideForDragAsync() => window.FlushAndHideForDragAsync();
-        public void RestoreAfterDrag() => window.RestoreAfterDrag();
-        public Task BeginDirectoryRenameAsync() => window.BeginDirectoryRenameAsync();
-        public void EndDirectoryRename() => window.EndDirectoryRename();
-        public void RebindExternalPath(string path) => window.RebindExternalPath(path);
-        public void ClosePermanentlyWithoutSave() => window.ClosePermanentlyWithoutSave();
-        public Task ClosePermanentlyAsync() => window.ClosePermanentlyAsync();
-        public Task ApplyGlobalThemeAsync(NoteTheme theme) => window.ApplyGlobalThemeAsync(theme);
-        public void ApplyLanguage() => window.ApplyLanguage();
-        public void ApplyAlwaysOnTopSetting() => window.ApplyAlwaysOnTopSetting();
-    }
+    internal static IPortableDocumentWindow WrapPortableWindow(NoteWindow window) => window;
 
-    private sealed class TodoPortableWindowAdapter(TodoWindow window) : IPortableDocumentWindow
-    {
-        public PortableDocumentKind Kind => PortableDocumentKind.Todo;
-        public object UnderlyingWindow => window;
-        public string? ExternalPath => window.ExternalPath;
-        public bool IsVisible => window.IsVisible;
-        public void ShowAndActivate() => window.ShowAndActivate();
-        public void HideForTray() => window.HideForTray();
-        public void RestoreFromTray() => window.RestoreFromTray();
-        public Task<bool> FlushForExitAsync() => window.FlushForExitAsync();
-        public Task<bool> FlushAndHideForDragAsync() => window.FlushAndHideForDragAsync();
-        public void RestoreAfterDrag() => window.RestoreAfterDrag();
-        public Task BeginDirectoryRenameAsync() => window.BeginDirectoryRenameAsync();
-        public void EndDirectoryRename() => window.EndDirectoryRename();
-        public void RebindExternalPath(string path) => window.RebindExternalPath(path);
-        public void ClosePermanentlyWithoutSave() => window.ClosePermanentlyWithoutSave();
-        public Task ClosePermanentlyAsync() => window.ClosePermanentlyAsync();
-        public Task ApplyGlobalThemeAsync(NoteTheme theme) => window.ApplyGlobalThemeAsync(theme);
-        public void ApplyLanguage() => window.ApplyLanguage();
-        public void ApplyAlwaysOnTopSetting() => window.ApplyAlwaysOnTopSetting();
-    }
-
-    internal static IPortableDocumentWindow WrapPortableWindow(NoteWindow window) =>
-        (object)window as IPortableDocumentWindow ?? new NotePortableWindowAdapter(window);
-
-    internal static IPortableDocumentWindow WrapPortableWindow(TodoWindow window) =>
-        (object)window as IPortableDocumentWindow ?? new TodoPortableWindowAdapter(window);
+    internal static IPortableDocumentWindow WrapPortableWindow(TodoWindow window) => window;
 
     private IEnumerable<NoteWindow> OpenExternalNoteWindows =>
         _portableDocuments.NoteWindows.Select(item => (NoteWindow)item.UnderlyingWindow);

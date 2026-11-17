@@ -2100,6 +2100,7 @@ public sealed partial class AppHost : IDisposable
         AppLogger.Lifecycle("exit-commit", $"source={source} {LifecycleWindowCounts()}");
         attempt.Commit();
         Updates.Dispose();
+        DisposeDockRunningState();
         ShellLauncher.Dispose();
         foreach (NoteWindow window in noteWindows) window.ClosePermanentlyWithoutSave();
         foreach (TodoWindow window in todoWindows) window.ClosePermanentlyWithoutSave();
