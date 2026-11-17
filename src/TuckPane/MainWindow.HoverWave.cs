@@ -93,10 +93,7 @@ public sealed partial class MainWindow
         ExpandedView.Visibility == Visibility.Visible &&
         (_definition.PlacementMode == OrganizerPlacementMode.Station ? _stationVisible : _runtimeVisible || IsContained);
 
-    private bool HoverInteractionBusy => _changingExpansionMode || _pressActive || _widgetDragging ||
-        _canvasResize is not null || _itemReorderSession is not null || _shellDragActive || _shellDropFinalizing ||
-        _shellPromotionPending || _itemDragLanding || _nativeItemMotionRenderingSubscribed ||
-        _dragHasLocalFile || _shellContextMenuOpen || _contextMenuActivated || _overlayOpenCount > 0 || _addingItem;
+    private bool HoverInteractionBusy => CaptureInteractionState().BlocksHoverInteraction;
 
     private void RefreshHoverAvailability()
     {

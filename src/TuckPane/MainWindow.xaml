@@ -93,6 +93,32 @@
                     </Setter.Value>
                 </Setter>
             </Style>
+            <MenuFlyout
+                x:Name="OrganizerContextMenu"
+                Closed="ContextMenu_Closed"
+                MenuFlyoutPresenterStyle="{StaticResource OrganizerMenuPresenterStyle}"
+                Opened="ContextMenu_Opened"
+                Opening="ContextMenu_Opening"
+                ShouldConstrainToRootBounds="False">
+                <MenuFlyoutSubItem x:Name="AddItemMenuItem" Tag="ContextAddItem" Text="添加项目">
+                    <MenuFlyoutItem Click="AddFileMenuItem_Click" Tag="ContextAddFile" Text="文件…" />
+                    <MenuFlyoutItem Click="AddFolderMenuItem_Click" Tag="ContextAddFolder" Text="文件夹…" />
+                </MenuFlyoutSubItem>
+                <MenuFlyoutItem x:Name="NewFolderMenuItem" Click="NewFolderMenuItem_Click" Tag="ContextNewFolder" Text="新建文件夹" />
+                <MenuFlyoutItem x:Name="NewNoteMenuItem" Click="NewNoteMenuItem_Click" Tag="ContextNewNote" Text="新建便签" />
+                <MenuFlyoutItem x:Name="NewTodoMenuItem" Click="NewTodoMenuItem_Click" Tag="ContextNewTodo" Text="新建待办" />
+                <MenuFlyoutItem x:Name="PasteMenuItem" Click="PasteMenuItem_Click" IsEnabled="False" Tag="ContextPaste" Text="粘贴" />
+                <MenuFlyoutItem x:Name="DeleteWindowMenuItem" Click="DeleteWindowMenuItem_Click" Tag="ContextDeleteWindow" Text="删除" />
+                <MenuFlyoutItem x:Name="OpenStorageMenuItem" Click="OpenStorageMenuItem_Click" Tag="ContextOpenStorage" Text="打开收纳目录" />
+                <MenuFlyoutItem x:Name="RenameMenuItem" Click="RenameMenuItem_Click" Tag="ContextRename" Text="重命名" />
+                <MenuFlyoutSeparator />
+                <MenuFlyoutItem x:Name="ManageMenuItem" Click="ManageMenuItem_Click" Tag="ContextManage" Text="设置" />
+                <MenuFlyoutItem x:Name="DuplicateMenuItem" Click="DuplicateWindowMenuItem_Click" Tag="ContextDuplicate" Text="窗口复制" />
+                <MenuFlyoutItem x:Name="ToggleModeMenuItem" Tag="ContextSwitchPlacement" Click="ToggleModeMenuItem_Click" Text="改为定位" />
+                <MenuFlyoutItem x:Name="ToggleContentModeMenuItem" Tag="ContextSwitchContent" Click="ToggleContentModeMenuItem_Click" Text="改为精简" />
+                <MenuFlyoutItem x:Name="ToggleExpansionModeMenuItem" Tag="ContextSwitchExpansion" Click="ToggleExpansionModeMenuItem_Click" Text="改为展开" />
+                <ToggleMenuFlyoutItem x:Name="HideNameMenuItem" Tag="ContextHideName" Style="{StaticResource OrganizerHideNameMenuStyle}" Click="HideNameMenuItem_Click" Text="隐藏名称" />
+            </MenuFlyout>
         </Grid.Resources>
 
         <Grid
@@ -102,33 +128,6 @@
             Height="68"
             HorizontalAlignment="Center"
             VerticalAlignment="Center">
-            <Grid.ContextFlyout>
-                <MenuFlyout
-                    x:Name="CompactTileContextMenu"
-                    Closed="ContextMenu_Closed"
-                    MenuFlyoutPresenterStyle="{StaticResource OrganizerMenuPresenterStyle}"
-                    Opened="ContextMenu_Opened"
-                    Opening="ContextMenu_Opening">
-                    <MenuFlyoutSubItem x:Name="CompactAddItemMenuItem" Tag="ContextAddItem" Text="添加项目">
-                        <MenuFlyoutItem Click="AddFileMenuItem_Click" Tag="ContextAddFile" Text="文件…" />
-                        <MenuFlyoutItem Click="AddFolderMenuItem_Click" Tag="ContextAddFolder" Text="文件夹…" />
-                    </MenuFlyoutSubItem>
-                    <MenuFlyoutItem x:Name="CompactNewFolderMenuItem" Click="NewFolderMenuItem_Click" Tag="ContextNewFolder" Text="新建文件夹" />
-                    <MenuFlyoutItem x:Name="CompactNewNoteMenuItem" Click="NewNoteMenuItem_Click" Tag="ContextNewNote" Text="新建便签" />
-                    <MenuFlyoutItem x:Name="CompactNewTodoMenuItem" Click="NewTodoMenuItem_Click" Tag="ContextNewTodo" Text="新建待办" />
-                    <MenuFlyoutItem x:Name="CompactPasteMenuItem" Click="PasteMenuItem_Click" IsEnabled="False" Tag="ContextPaste" Text="粘贴" />
-                    <MenuFlyoutItem x:Name="CompactDeleteWindowMenuItem" Click="DeleteWindowMenuItem_Click" Tag="ContextDeleteWindow" Text="删除" />
-                    <MenuFlyoutItem x:Name="CompactOpenStorageMenuItem" Click="OpenStorageMenuItem_Click" Tag="ContextOpenStorage" Text="打开收纳目录" />
-                    <MenuFlyoutItem x:Name="CompactRenameMenuItem" Click="RenameMenuItem_Click" Tag="ContextRename" Text="重命名" />
-                    <MenuFlyoutSeparator />
-                    <MenuFlyoutItem x:Name="CompactManageMenuItem" Click="ManageMenuItem_Click" Tag="ContextManage" Text="设置" />
-                    <MenuFlyoutItem x:Name="CompactDuplicateMenuItem" Click="DuplicateWindowMenuItem_Click" Tag="ContextDuplicate" Text="窗口复制" />
-                    <MenuFlyoutItem x:Name="CompactToggleModeMenuItem" Tag="ContextSwitchPlacement" Click="ToggleModeMenuItem_Click" Text="改为定位" />
-                    <MenuFlyoutItem x:Name="CompactToggleContentModeMenuItem" Tag="ContextSwitchContent" Click="ToggleContentModeMenuItem_Click" Text="改为精简" />
-                    <MenuFlyoutItem x:Name="CompactToggleExpansionModeMenuItem" Tag="ContextSwitchExpansion" Click="ToggleExpansionModeMenuItem_Click" Text="改为展开" />
-                    <ToggleMenuFlyoutItem x:Name="CompactHideNameMenuItem" Tag="ContextHideName" Style="{StaticResource OrganizerHideNameMenuStyle}" Click="HideNameMenuItem_Click" Text="隐藏名称" />
-                </MenuFlyout>
-            </Grid.ContextFlyout>
             <Grid.RowDefinitions>
                 <RowDefinition Height="39" />
                 <RowDefinition Height="4" />
@@ -229,34 +228,6 @@
             Opacity="0"
             UseLayoutRounding="True"
             Visibility="Collapsed">
-            <Grid.ContextFlyout>
-                <MenuFlyout
-                    x:Name="ExpandedViewContextMenu"
-                    Closed="ContextMenu_Closed"
-                    MenuFlyoutPresenterStyle="{StaticResource OrganizerMenuPresenterStyle}"
-                    Opened="ContextMenu_Opened"
-                    Opening="ContextMenu_Opening"
-                    ShouldConstrainToRootBounds="True">
-                    <MenuFlyoutSubItem x:Name="ExpandedAddItemMenuItem" Tag="ContextAddItem" Text="添加项目">
-                        <MenuFlyoutItem Click="AddFileMenuItem_Click" Tag="ContextAddFile" Text="文件…" />
-                        <MenuFlyoutItem Click="AddFolderMenuItem_Click" Tag="ContextAddFolder" Text="文件夹…" />
-                    </MenuFlyoutSubItem>
-                    <MenuFlyoutItem x:Name="NewFolderMenuItem" Click="NewFolderMenuItem_Click" Tag="ContextNewFolder" Text="新建文件夹" />
-                    <MenuFlyoutItem x:Name="NewNoteMenuItem" Click="NewNoteMenuItem_Click" Tag="ContextNewNote" Text="新建便签" />
-                    <MenuFlyoutItem x:Name="NewTodoMenuItem" Click="NewTodoMenuItem_Click" Tag="ContextNewTodo" Text="新建待办" />
-                    <MenuFlyoutItem x:Name="PasteMenuItem" Click="PasteMenuItem_Click" IsEnabled="False" Tag="ContextPaste" Text="粘贴" />
-                    <MenuFlyoutItem x:Name="ExpandedDeleteWindowMenuItem" Click="DeleteWindowMenuItem_Click" Tag="ContextDeleteWindow" Text="删除" />
-                    <MenuFlyoutItem x:Name="ExpandedOpenStorageMenuItem" Click="OpenStorageMenuItem_Click" Tag="ContextOpenStorage" Text="打开收纳目录" />
-                    <MenuFlyoutItem x:Name="ExpandedRenameMenuItem" Click="RenameMenuItem_Click" Tag="ContextRename" Text="重命名" />
-                    <MenuFlyoutSeparator />
-                    <MenuFlyoutItem x:Name="ExpandedManageMenuItem" Click="ManageMenuItem_Click" Tag="ContextManage" Text="设置" />
-                    <MenuFlyoutItem x:Name="ExpandedDuplicateMenuItem" Click="DuplicateWindowMenuItem_Click" Tag="ContextDuplicate" Text="窗口复制" />
-                    <MenuFlyoutItem x:Name="ExpandedToggleModeMenuItem" Tag="ContextSwitchPlacement" Click="ToggleModeMenuItem_Click" Text="改为定位" />
-                    <MenuFlyoutItem x:Name="ExpandedToggleContentModeMenuItem" Tag="ContextSwitchContent" Click="ToggleContentModeMenuItem_Click" Text="改为精简" />
-                    <MenuFlyoutItem x:Name="ExpandedToggleExpansionModeMenuItem" Tag="ContextSwitchExpansion" Click="ToggleExpansionModeMenuItem_Click" Text="改为展开" />
-                    <ToggleMenuFlyoutItem x:Name="ExpandedHideNameMenuItem" Tag="ContextHideName" Style="{StaticResource OrganizerHideNameMenuStyle}" Click="HideNameMenuItem_Click" Text="隐藏名称" />
-                </MenuFlyout>
-            </Grid.ContextFlyout>
             <Grid.RowDefinitions>
                 <RowDefinition x:Name="ExpandedTitleRow" Height="56" />
                 <RowDefinition Height="*" />

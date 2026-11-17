@@ -109,7 +109,7 @@ public sealed partial class MainWindow
         BeginHoverLayoutChange();
         _dockGeometry = DockLayoutMath.Calculate(_items.Count, _definition.DockIconSizeDip,
             _definition.DockOrientation, _definition.DockSpacingFactor);
-        ExpandedViewContextMenu.ShouldConstrainToRootBounds = false;
+        OrganizerContextMenu.ShouldConstrainToRootBounds = false;
         ExpandedTitleRow.Height = new GridLength(0);
         ExpandedNameText.Visibility = Visibility.Collapsed;
         CollapseButton.Visibility = Visibility.Collapsed;

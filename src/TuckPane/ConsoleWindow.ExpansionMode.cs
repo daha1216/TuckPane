@@ -15,7 +15,7 @@ public sealed partial class ConsoleWindow
         _loadingEditor = true;
         try
         {
-            ManageExpansionModeCombo.SelectedIndex = (int)_host.GetRequestedExpansionMode(id);
+            ManageForm.ExpansionCombo.SelectedIndex = (int)_host.GetRequestedExpansionMode(id);
             UpdateManageControls();
         }
         finally { _loadingEditor = loading; }
@@ -24,13 +24,11 @@ public sealed partial class ConsoleWindow
     private async void ManageExpansionMode_Changed(object sender, SelectionChangedEventArgs e)
     {
         if (_loadingEditor || _adjustingManageControls ||
-            _selectedId is not Guid id || ManageExpansionModeCombo.SelectedIndex < 0) return;
-        var mode = (OrganizerExpansionMode)ManageExpansionModeCombo.SelectedIndex;
+            _selectedId is not Guid id || ManageForm.ExpansionCombo.SelectedIndex < 0) return;
+        var mode = (OrganizerExpansionMode)ManageForm.ExpansionCombo.SelectedIndex;
         long version = ++_manageExpansionVersion;
         try
         {
-            // Register before flushing: a later menu choice must supersede this selection
-            // even when the editor's previous save has not finished yet.
             string? error = await _host.SetOrganizerExpansionModeAsync(id, mode,
                 token => FlushPendingManageChangesAsync().WaitAsync(token));
             if (error is not null && _selectedId == id && version == _manageExpansionVersion)

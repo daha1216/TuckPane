@@ -1,0 +1,288 @@
+<UserControl
+    x:Class="TuckPane.OrganizerSettingsForm"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:controls="using:TuckPane.Controls">
+    <UserControl.Resources>
+        <SolidColorBrush x:Key="FormCardSurfaceBrush" Color="#FFFFFF" />
+        <SolidColorBrush x:Key="FormRowBorderBrush" Color="#E5E5EA" />
+        <SolidColorBrush x:Key="FormPrimaryTextBrush" Color="#1D1D1F" />
+        <SolidColorBrush x:Key="FormInputSurfaceBrush" Color="#F5F5F7" />
+        <SolidColorBrush x:Key="FormSliderActiveBrush" Color="#007AFF" />
+        <SolidColorBrush x:Key="FormSliderInactiveBrush" Color="#D1D1D6" />
+        <SolidColorBrush x:Key="FormSliderFocusPrimaryBrush" Color="#007AFF" />
+        <SolidColorBrush x:Key="FormSliderFocusSecondaryBrush" Color="#FFFFFF" />
+        <Style x:Key="Row" TargetType="Border">
+            <Setter Property="MinHeight" Value="48" />
+            <Setter Property="Padding" Value="16,8" />
+            <Setter Property="Margin" Value="0" />
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderBrush" Value="{StaticResource FormRowBorderBrush}" />
+            <Setter Property="BorderThickness" Value="0,0,0,1" />
+            <Setter Property="CornerRadius" Value="0" />
+        </Style>
+        <Style x:Key="SettingsGroup" TargetType="Border">
+            <Setter Property="Background" Value="{StaticResource FormCardSurfaceBrush}" />
+            <Setter Property="CornerRadius" Value="12" />
+            <Setter Property="Padding" Value="0,4" />
+            <Setter Property="HorizontalAlignment" Value="Stretch" />
+        </Style>
+        <Style x:Key="FlatTextBoxStyle" TargetType="TextBox">
+            <Setter Property="Background" Value="{StaticResource FormInputSurfaceBrush}" />
+            <Setter Property="BorderBrush" Value="{ThemeResource TextControlBorderBrush}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="CornerRadius" Value="8" />
+            <Setter Property="MinHeight" Value="32" />
+        </Style>
+        <Style TargetType="Button">
+            <Setter Property="CornerRadius" Value="8" />
+            <Setter Property="MinHeight" Value="32" />
+            <Setter Property="Padding" Value="12,5" />
+        </Style>
+        <Style TargetType="ComboBox">
+            <Setter Property="Background" Value="{StaticResource FormInputSurfaceBrush}" />
+            <Setter Property="CornerRadius" Value="8" />
+            <Setter Property="MinHeight" Value="32" />
+        </Style>
+        <Style TargetType="ComboBoxItem">
+            <Setter Property="CornerRadius" Value="6" />
+        </Style>
+        <Style x:Key="BaseConsoleSliderStyle" TargetType="controls:ConsoleSlider">
+            <Setter Property="Background" Value="{StaticResource FormSliderInactiveBrush}" />
+            <Setter Property="Foreground" Value="{StaticResource FormSliderActiveBrush}" />
+            <Setter Property="FocusVisualPrimaryBrush" Value="{StaticResource FormSliderFocusPrimaryBrush}" />
+            <Setter Property="FocusVisualSecondaryBrush" Value="{StaticResource FormSliderFocusSecondaryBrush}" />
+        </Style>
+        <Style TargetType="controls:ConsoleSlider" BasedOn="{StaticResource BaseConsoleSliderStyle}" />
+        <Style x:Key="Pct" TargetType="controls:ConsoleSlider" BasedOn="{StaticResource BaseConsoleSliderStyle}">
+            <Setter Property="StepFrequency" Value="0.01" />
+            <Setter Property="SmallChange" Value="0.01" />
+        </Style>
+        <Style TargetType="TextBlock">
+            <Setter Property="FontSize" Value="14" />
+            <Setter Property="TextWrapping" Value="Wrap" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+        </Style>
+        <Style TargetType="ToggleSwitch">
+            <Setter Property="MinWidth" Value="40" />
+            <Setter Property="OnContent" Value="" />
+            <Setter Property="OffContent" Value="" />
+            <Setter Property="HorizontalAlignment" Value="Right" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+        </Style>
+        <Style TargetType="ToggleButton">
+            <Setter Property="MinHeight" Value="32" />
+            <Setter Property="CornerRadius" Value="8" />
+        </Style>
+    </UserControl.Resources>
+
+    <StackPanel Spacing="20" HorizontalAlignment="Stretch">
+        <Border x:Name="IdentityGroup" Style="{StaticResource SettingsGroup}" Loaded="SettingsGroup_Loaded">
+            <StackPanel x:Name="IdentityPanel" Spacing="0">
+                <Border x:Name="NameCard" Style="{StaticResource Row}">
+                    <Grid ColumnSpacing="12">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock VerticalAlignment="Center" Tag="loc:NameLabel" Text="名称" TextWrapping="Wrap" Foreground="{StaticResource FormPrimaryTextBrush}" />
+                        <TextBox x:Name="NameBox" Grid.Column="1" Width="180" Height="32" HorizontalAlignment="Right" Style="{StaticResource FlatTextBoxStyle}" />
+                    </Grid>
+                </Border>
+                <TextBlock x:Name="NameErrorText" Margin="12,-4,0,6" Foreground="#FFC42B1C" FontSize="12" Tag="loc:NameRequired" Text="名称不能为空" Visibility="Collapsed" TextWrapping="Wrap" />
+                <Border x:Name="CreationStorageCard" Style="{StaticResource Row}" Visibility="Collapsed">
+                    <Grid ColumnSpacing="12">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="92" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock VerticalAlignment="Center" Tag="loc:StorageLocationLabel" Text="保存位置" TextWrapping="Wrap" Foreground="{StaticResource FormPrimaryTextBrush}" />
+                        <StackPanel Grid.Column="1" Spacing="5">
+                            <TextBox x:Name="CreationStoragePathBox" Height="32" IsReadOnly="True" Style="{StaticResource FlatTextBoxStyle}" />
+                            <StackPanel Orientation="Horizontal" Spacing="6">
+                                <Button x:Name="ChooseStorageButton" Height="30" Content="选择目录" Tag="loc:ChooseFolder" />
+                                <Button x:Name="ResetStorageButton" Height="30" Content="恢复默认" Tag="loc:UseDefaultLocation" />
+                            </StackPanel>
+                        </StackPanel>
+                    </Grid>
+                </Border>
+                <Border x:Name="PlacementModeCard" Style="{StaticResource Row}" BorderThickness="0">
+                    <Grid ColumnSpacing="12">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock VerticalAlignment="Center" Tag="loc:ModeLabel" Text="模式" TextWrapping="Wrap" Foreground="{StaticResource FormPrimaryTextBrush}" />
+                        <ComboBox x:Name="PlacementModeCombo" Grid.Column="1" Width="180" Height="32" HorizontalAlignment="Right" SelectedIndex="0" SelectionChanged="FormControl_Changed">
+                            <ComboBoxItem x:Name="FloatingModeItem" Tag="loc:ModeFloating" Content="悬浮窗模式" />
+                            <ComboBoxItem x:Name="PositionedModeItem" Tag="loc:ModePositioned" Content="定位模式" />
+                        </ComboBox>
+                    </Grid>
+                </Border>
+            </StackPanel>
+        </Border>
+
+        <Border x:Name="ParametersGroup" Style="{StaticResource SettingsGroup}" Loaded="SettingsGroup_Loaded">
+            <StackPanel x:Name="ParametersPanel" Spacing="0">
+                <Border x:Name="DockSettingsCard" Style="{StaticResource Row}" Visibility="Collapsed">
+                    <StackPanel Spacing="8">
+                        <Grid ColumnSpacing="12">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock VerticalAlignment="Center" Tag="loc:DockOrientationLabel" Text="排列方向" TextWrapping="Wrap" Foreground="{StaticResource FormPrimaryTextBrush}" />
+                            <ComboBox x:Name="DockOrientationCombo" Grid.Column="1" Width="170" HorizontalAlignment="Right" SelectedIndex="0" SelectionChanged="FormControl_Changed">
+                                <ComboBoxItem Tag="loc:DockHorizontal" Content="横向" />
+                                <ComboBoxItem Tag="loc:DockVertical" Content="纵向" />
+                            </ComboBox>
+                        </Grid>
+                        <TextBlock x:Name="DockSizeLabelText" Tag="loc:DockSizeLabel" Text="Dock 大小" TextWrapping="Wrap" Foreground="{StaticResource FormPrimaryTextBrush}" />
+                        <Grid ColumnSpacing="10">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="60" />
+                            </Grid.ColumnDefinitions>
+                            <controls:ConsoleSlider x:Name="DockIconSizeSlider" Style="{StaticResource Pct}" Minimum="32" Maximum="128" StepFrequency="4" Value="64" ValueChanged="FormControl_Changed" />
+                            <TextBlock x:Name="DockIconSizeValue" Grid.Column="1" VerticalAlignment="Center" Text="64 DIP" Foreground="{StaticResource FormPrimaryTextBrush}" />
+                        </Grid>
+                        <TextBlock Tag="loc:DockSpacingLabel" Text="图标间隔" TextWrapping="Wrap" Foreground="{StaticResource FormPrimaryTextBrush}" />
+                        <Grid ColumnSpacing="10">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="60" />
+                            </Grid.ColumnDefinitions>
+                            <controls:ConsoleSlider x:Name="DockSpacingSlider" Style="{StaticResource Pct}" Minimum="0.5" Maximum="2" StepFrequency="0.05" Value="0.75" ValueChanged="FormControl_Changed" />
+                            <TextBlock x:Name="DockSpacingValue" Grid.Column="1" VerticalAlignment="Center" Text="0.75" Foreground="{StaticResource FormPrimaryTextBrush}" />
+                        </Grid>
+                    </StackPanel>
+                </Border>
+                <Border x:Name="ExpansionModeCard" Style="{StaticResource Row}">
+                    <Grid ColumnSpacing="12">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="92" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock VerticalAlignment="Center" Tag="loc:ExpansionModeLabel" Text="展开行为" TextWrapping="Wrap" Foreground="{StaticResource FormPrimaryTextBrush}" />
+                        <ComboBox x:Name="ExpansionModeCombo" Grid.Column="1" Width="180" Height="32" HorizontalAlignment="Right" SelectedIndex="0" SelectionChanged="ExpansionModeCombo_SelectionChanged">
+                            <ComboBoxItem Tag="loc:ExpansionModeCollapsible" Content="收缩模式" />
+                            <ComboBoxItem Tag="loc:ExpansionModeAlwaysExpanded" Content="展开模式" />
+                        </ComboBox>
+                    </Grid>
+                </Border>
+                <Border x:Name="ExpandedContentModeCard" Style="{StaticResource Row}">
+                    <Grid ColumnSpacing="12">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock VerticalAlignment="Center" Tag="loc:ExpandedContentModeLabel" Text="内容展开方式" TextWrapping="Wrap" Foreground="{StaticResource FormPrimaryTextBrush}" />
+                        <ComboBox x:Name="ExpandedContentModeCombo" Grid.Column="1" Width="180" Height="32" HorizontalAlignment="Right" SelectedIndex="0" SelectionChanged="FormControl_Changed">
+                            <ComboBoxItem Tag="loc:ExpandedContentModeIcon" Content="图标模式" />
+                            <ComboBoxItem Tag="loc:ExpandedContentModeCompactList" Content="精简模式" />
+                        </ComboBox>
+                    </Grid>
+                </Border>
+                <Border x:Name="DisplayCard" Style="{StaticResource Row}" Visibility="Collapsed">
+                    <Grid ColumnSpacing="12">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock VerticalAlignment="Center" Tag="loc:DisplayLabel" Text="显示器" TextWrapping="Wrap" Foreground="{StaticResource FormPrimaryTextBrush}" />
+                        <ComboBox x:Name="DisplayCombo" Grid.Column="1" Width="270" Height="32" HorizontalAlignment="Right" SelectionChanged="FormControl_Changed" />
+                    </Grid>
+                </Border>
+                <Border x:Name="DockEdgeCard" Style="{StaticResource Row}" Visibility="Collapsed">
+                    <Grid ColumnSpacing="12">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock VerticalAlignment="Center" Tag="loc:DockEdgeLabel" Text="贴靠边" TextWrapping="Wrap" Foreground="{StaticResource FormPrimaryTextBrush}" />
+                        <ComboBox x:Name="DockEdgeCombo" Grid.Column="1" Width="180" Height="32" HorizontalAlignment="Right" SelectedIndex="2" SelectionChanged="FormControl_Changed">
+                            <ComboBoxItem Tag="loc:DockLeft" Content="左侧" />
+                            <ComboBoxItem Tag="loc:DockTop" Content="顶部" />
+                            <ComboBoxItem Tag="loc:DockRight" Content="右侧" />
+                            <ComboBoxItem Tag="loc:DockBottom" Content="底部" />
+                        </ComboBox>
+                    </Grid>
+                </Border>
+                <Border x:Name="RowsCard" Style="{StaticResource Row}">
+                    <Grid ColumnSpacing="12">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="92" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock VerticalAlignment="Center" Tag="loc:RowsLabel" Text="行数" TextWrapping="Wrap" Foreground="{StaticResource FormPrimaryTextBrush}" />
+                        <controls:ConsoleSlider x:Name="RowsSlider" Grid.Column="1" Minimum="2" Maximum="6" StepFrequency="1" Value="3" ValueChanged="FormControl_Changed" />
+                    </Grid>
+                </Border>
+                <Border x:Name="ColumnsCard" Style="{StaticResource Row}">
+                    <Grid ColumnSpacing="12">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="92" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock VerticalAlignment="Center" Tag="loc:ColumnsLabel" Text="列数" TextWrapping="Wrap" Foreground="{StaticResource FormPrimaryTextBrush}" />
+                        <controls:ConsoleSlider x:Name="ColumnsSlider" Grid.Column="1" Minimum="2" Maximum="6" StepFrequency="1" Value="3" ValueChanged="FormControl_Changed" />
+                    </Grid>
+                </Border>
+                <Border x:Name="CompactScaleCard" Style="{StaticResource Row}">
+                    <Grid ColumnSpacing="12">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="92" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="48" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock VerticalAlignment="Center" Tag="loc:CompactScaleLabel" Text="入口整体" TextWrapping="Wrap" Foreground="{StaticResource FormPrimaryTextBrush}" />
+                        <controls:ConsoleSlider x:Name="CompactScaleSlider" Grid.Column="1" Style="{StaticResource Pct}" Minimum="1.2" Maximum="3" Value="1.56" ValueChanged="FormControl_Changed" />
+                        <TextBlock x:Name="CompactPercent" Grid.Column="2" VerticalAlignment="Center" TextAlignment="Right" Foreground="{StaticResource FormPrimaryTextBrush}" />
+                    </Grid>
+                </Border>
+                <Border x:Name="CanvasScaleCard" Style="{StaticResource Row}" Visibility="Collapsed">
+                    <Grid ColumnSpacing="12">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="92" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="48" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock VerticalAlignment="Center" Tag="loc:CanvasScaleLabel" Text="画布大小" TextWrapping="Wrap" Foreground="{StaticResource FormPrimaryTextBrush}" />
+                        <controls:ConsoleSlider x:Name="CanvasScaleSlider" Grid.Column="1" Style="{StaticResource Pct}" Minimum=".1" Maximum="1.2" Value="1" ValueChanged="FormControl_Changed" />
+                        <TextBlock x:Name="CanvasPercent" Grid.Column="2" VerticalAlignment="Center" TextAlignment="Right" Foreground="{StaticResource FormPrimaryTextBrush}" />
+                    </Grid>
+                </Border>
+                <Border x:Name="ItemScaleCard" Style="{StaticResource Row}" Visibility="Collapsed" BorderThickness="0">
+                    <Grid ColumnSpacing="12">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="92" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="48" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock VerticalAlignment="Center" Tag="loc:ItemScaleLabel" Text="内容比例" TextWrapping="Wrap" Foreground="{StaticResource FormPrimaryTextBrush}" />
+                        <controls:ConsoleSlider x:Name="ItemScaleSlider" Grid.Column="1" Style="{StaticResource Pct}" Minimum=".5" Maximum="1.65" Value="1" ValueChanged="FormControl_Changed" />
+                        <TextBlock x:Name="ItemPercent" Grid.Column="2" VerticalAlignment="Center" TextAlignment="Right" Foreground="{StaticResource FormPrimaryTextBrush}" />
+                    </Grid>
+                </Border>
+            </StackPanel>
+        </Border>
+
+        <Border x:Name="ManageStorageGroup" Style="{StaticResource SettingsGroup}" Loaded="SettingsGroup_Loaded">
+            <StackPanel Spacing="0">
+                <Border Style="{StaticResource Row}" BorderThickness="0">
+                    <Grid ColumnSpacing="12">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock VerticalAlignment="Center" Tag="loc:ActualLocation" Text="实际位置" TextWrapping="Wrap" Foreground="{StaticResource FormPrimaryTextBrush}" />
+                        <StackPanel Grid.Column="1" HorizontalAlignment="Right" Orientation="Horizontal" Spacing="6">
+                            <TextBox x:Name="ManagePathBox" Width="210" Height="32" IsReadOnly="True" Style="{StaticResource FlatTextBoxStyle}" />
+                            <Button x:Name="OpenManagedFolderButton" Height="32" Content="打开" Tag="loc:Open" />
+                        </StackPanel>
+                    </Grid>
+                </Border>
+            </StackPanel>
+        </Border>
+    </StackPanel>
+</UserControl>

@@ -26,6 +26,7 @@ public sealed partial class ConsoleWindow : Window
 {
     private const double ConsoleCornerRadiusDip = 18;
     private readonly AppHost _host;
+    private readonly ConsoleSettingBinder _settingBinder = new();
     private readonly Windows.UI.ViewManagement.UISettings _uiSettings = new();
     private readonly Windows.UI.ViewManagement.AccessibilitySettings _accessibilitySettings = new();
     private readonly OptionalEventSubscription? _accessibilitySubscription;
@@ -52,23 +53,7 @@ public sealed partial class ConsoleWindow : Window
     private bool _componentReady;
     private bool _initialized;
     private bool _loadingEditor;
-    private bool _loadingStartup;
-    private bool _loadingFolderMenu;
-    private bool _loadingOutsideClick;
-    private bool _loadingNoteAlwaysOnTop;
-    private bool _loadingEdgeGlow;
-    private bool _loadingWindowAlignment;
-    private bool _loadingRememberExpandedOrganizerPosition;
-    private bool _loadingUniformCompactScales;
     private bool _changingUniformCompactScaleToggle;
-    private bool _loadingNameScales;
-    private bool _loadingPerformanceProfile;
-    private bool _loadingExpandOnHover;
-    private bool _loadingCollapseOnPointerLeave;
-    private bool _loadingHoverDelays;
-    private bool _loadingExclusiveExpansion;
-    private bool _loadingLanguage;
-    private bool _loadingTheme;
     private bool _loadingDefaultName;
     private bool _addNameWasEdited;
     private bool _adjustingAddControls;
@@ -104,6 +89,7 @@ public sealed partial class ConsoleWindow : Window
     {
         _host = host;
         InitializeComponent();
+        WireOrganizerSettingsForms();
         SystemBackdrop = new TransparentWindowBackdrop();
         _themeBackdrop.Attach(ConsoleSurfaceHost);
         _themeSurface = new ThemeSurface(ConsoleSurfaceHost);
@@ -122,9 +108,6 @@ public sealed partial class ConsoleWindow : Window
         _accessibilitySubscription = OptionalEventSubscription.TryCreate(
             () => _accessibilitySettings.HighContrastChanged += SettingsHighContrastChanged,
             () => _accessibilitySettings.HighContrastChanged -= SettingsHighContrastChanged,
-            // Some Win10/Win11 builds refuse this subscription with ERROR_NOT_FOUND (0x80070490).
-            // That is an expected environment difference, not a runtime failure: themes are
-            // re-checked when settings open, so keep it out of the failure log.
             ex =>
             {
                 AppLogger.Info("高对比度事件不可用；将在设置窗口激活时检查外观。");
@@ -135,7 +118,7 @@ public sealed partial class ConsoleWindow : Window
         _componentReady = true;
         _defaultAddName = AppStrings.DefaultOrganizerName;
         _loadingDefaultName = true;
-        AddNameBox.Text = _defaultAddName;
+        AddForm.NameInput.Text = _defaultAddName;
         _loadingDefaultName = false;
         UpdateAddStoragePath();
         UpdateDefaultStorageDirectory();
@@ -186,6 +169,21 @@ public sealed partial class ConsoleWindow : Window
         InitializeUpdates();
     }
 
+    private void WireOrganizerSettingsForms()
+    {
+        ManageForm.NameInput.TextChanged += ManageNameBox_TextChanged;
+        ManageForm.NameInput.KeyDown += ManageNameBox_KeyDown;
+        ManageForm.NameInput.LostFocus += ManageNameBox_LostFocus;
+        ManageForm.ControlValueChanged += (sender, e) => ManageEditor_Changed(sender!, e);
+        ManageForm.ExpansionModeSelectionChanged += ManageExpansionMode_Changed;
+        ManageForm.OpenManagedFolder.Click += OpenManagedFolderButton_Click;
+
+        AddForm.NameInput.TextChanged += AddNameBox_TextChanged;
+        AddForm.ControlValueChanged += (sender, e) => AddControl_Changed(sender!, e);
+        AddForm.ChooseStorage.Click += ChooseAddStorageButton_Click;
+        AddForm.ResetStorage.Click += ResetAddStorageButton_Click;
+    }
+
     public IntPtr Hwnd { get; private set; }
 
     public void InitializeHostWindow()
@@ -201,9 +199,6 @@ public sealed partial class ConsoleWindow : Window
             presenter.IsMaximizable = false;
             presenter.IsMinimizable = true;
         }
-        // The theme backdrop owns all desktop sampling and blur.  Keep the
-        // native chrome from extending any frame into the client area so DWM
-        // cannot add an independent sheet-of-glass blur.
         _chrome = new NativeWindowChromeController(Hwnd, DispatcherQueue, extendClientFrame: false, applyBorderLast: true);
         Activated += ConsoleWindow_Activated;
         Closed += ConsoleWindow_Closed;
@@ -262,7 +257,7 @@ public sealed partial class ConsoleWindow : Window
         if (replaceDefaultName)
         {
             _loadingDefaultName = true;
-            AddNameBox.Text = _defaultAddName;
+            AddForm.NameInput.Text = _defaultAddName;
             _loadingDefaultName = false;
         }
 
@@ -311,9 +306,7 @@ public sealed partial class ConsoleWindow : Window
             control.FontFamily = new FontFamily(AppStrings.FontFamily);
             control.CharacterSpacing = AppStrings.CharacterSpacing;
         }
-        _loadingLanguage = true;
-        LanguageCombo.SelectedIndex = (int)_host.State.GlobalSettings.Language;
-        _loadingLanguage = false;
+        _settingBinder.SetComboIndex(LanguageCombo, (int)_host.State.GlobalSettings.Language);
         UpdateAddStoragePath();
         _errorInfoBarTimer.Stop();
         ConsoleInfoBar.IsOpen = false;
@@ -327,7 +320,8 @@ public sealed partial class ConsoleWindow : Window
 
     public void UpdateTransferState()
     {
-        if (DeleteOrganizerButton is not null) DeleteOrganizerButton.IsEnabled = _selectedId is not null && !_host.TransferQueue.IsActive;
+        if (DeleteOrganizerButton is not null)
+            DeleteOrganizerButton.IsEnabled = _selectedId is not null && !_host.TransferQueue.IsActive;
     }
 
     public void HideToTray() => _ = HideToTrayAsync();
@@ -384,7 +378,7 @@ public sealed partial class ConsoleWindow : Window
 
     private void SetCloseButtonState(bool hovered, bool pressed)
     {
-        bool highContrast = new Windows.UI.ViewManagement.AccessibilitySettings().HighContrast;
+        bool highContrast = _accessibilitySettings.HighContrast;
         ConsoleCloseButton.Background = new SolidColorBrush(hovered
             ? highContrast
                 ? _uiSettings.GetColorValue(Windows.UI.ViewManagement.UIColorType.Accent)
@@ -438,10 +432,7 @@ public sealed partial class ConsoleWindow : Window
         ConsoleInfoBar.Severity = InfoBarSeverity.Warning;
     }
 
-    internal async Task<bool> FlushPendingThemeSaveAsync()
-    {
-        return await FlushPendingSliderSavesAsync();
-    }
+    internal Task<bool> FlushPendingThemeSaveAsync() => FlushPendingSliderSavesAsync();
 
     private void AppWindow_Closing(AppWindow sender, AppWindowClosingEventArgs args)
     {
@@ -488,6 +479,19 @@ public sealed partial class ConsoleWindow : Window
 
     private void ConsoleWindow_Closed(object sender, WindowEventArgs args)
     {
+        if (_uniformCompactScaleApplyScheduled)
+        {
+            CompositionTarget.Rendering -= ApplyPendingUniformCompactScaleChanges;
+            _uniformCompactScaleApplyScheduled = false;
+        }
+        if (_runtimeApplyScheduled)
+        {
+            CompositionTarget.Rendering -= ApplyPendingRuntimeChanges;
+            _runtimeApplyScheduled = false;
+        }
+        _pageTransition?.Cancel();
+        _pageTransition?.Dispose();
+        _pageTransition = null;
         ConsoleContentLayer.Loaded -= ConsoleContentLayer_Loaded;
         ConsoleContentLayer.SizeChanged -= ConsoleContentLayer_SizeChanged;
         AttachConsoleXamlRoot(null);
@@ -504,6 +508,9 @@ public sealed partial class ConsoleWindow : Window
         foreach (var (row, token) in _settingRowVisibilityTokens)
             row.UnregisterPropertyChangedCallback(UIElement.VisibilityProperty, token);
         _settingRowVisibilityTokens.Clear();
+        ManageForm.UnregisterCallbacks();
+        AddForm.UnregisterCallbacks();
+        _errorInfoBarTimer.Stop();
         _placementTimer.Stop();
         _themeSaveTimer.Stop();
         _stateSaveTimer.Stop();
@@ -564,10 +571,7 @@ public sealed partial class ConsoleWindow : Window
 
     private void ApplyNativeWindowChrome(bool refreshFrame = false)
     {
-        if (Hwnd == IntPtr.Zero) return;
-        if (_appWindow is null) return;
-        // Configure AppWindow first, and only when a value changes. Apply the
-        // native border policy after WinUI has finished this event turn.
+        if (Hwnd == IntPtr.Zero || _appWindow is null) return;
         if (_appWindow.TitleBar.ButtonBackgroundColor != Colors.Transparent)
             _appWindow.TitleBar.ButtonBackgroundColor = Colors.Transparent;
         if (_appWindow.TitleBar.ButtonInactiveBackgroundColor != Colors.Transparent)
@@ -641,6 +645,10 @@ public sealed partial class ConsoleWindow : Window
         SetSurfaceBrush("SliderTrackValueFillPointerOver", sliderActive);
         SetSurfaceBrush("SliderTrackValueFillPressed", sliderActive);
         SetSurfaceBrush("SliderTrackValueFillDisabled", ColorHelper.FromArgb(115, sliderActive.R, sliderActive.G, sliderActive.B));
+
+        ManageForm.ApplySurfacePalette(card, generalRowBorder, primaryText, input, sliderActive, sliderInactive, sliderFocusSecondary);
+        AddForm.ApplySurfacePalette(card, generalRowBorder, primaryText, input, sliderActive, sliderInactive, sliderFocusSecondary);
+
         if (_componentReady)
         {
             VisitTree(ConsoleRoot, element =>
@@ -657,7 +665,10 @@ public sealed partial class ConsoleWindow : Window
 
     private void SetSurfaceBrush(string key, Windows.UI.Color color)
     {
-        if (ConsoleRoot.Resources[key] is SolidColorBrush brush) brush.Color = color;
+        if (ConsoleRoot.Resources.TryGetValue(key, out object? existing) && existing is SolidColorBrush brush)
+            brush.Color = color;
+        else
+            ConsoleRoot.Resources[key] = new SolidColorBrush(color);
     }
 
     private SolidColorBrush GetSurfaceBrush(string key) => (SolidColorBrush)ConsoleRoot.Resources[key];
@@ -753,30 +764,25 @@ public sealed partial class ConsoleWindow : Window
             PopulateManageList(_selectedId);
             UpdateCreationAvailability();
         }
-        // The new category must own the controls before animation makes them interactive.
         await ShowPageAsync(page);
     }
 
     private void ShowPage(FrameworkElement page)
     {
-        foreach (FrameworkElement candidate in new FrameworkElement[] { SystemPage, DisplayPage, MenuPage, InteractionPage, ThemePage, ManagePage, UpdatePage }) candidate.Visibility = ReferenceEquals(candidate, page) ? Visibility.Visible : Visibility.Collapsed;
+        foreach (FrameworkElement candidate in new FrameworkElement[] { SystemPage, DisplayPage, MenuPage, InteractionPage, ThemePage, ManagePage, UpdatePage })
+            candidate.Visibility = ReferenceEquals(candidate, page) ? Visibility.Visible : Visibility.Collapsed;
         page.Opacity = 1;
         page.Translation = Vector3.Zero;
     }
 
-    private void UpdateStartupToggle()
-    {
-        if (StartupToggle is null) return;
-        _loadingStartup = true;
-        StartupToggle.IsOn = _host.State.GlobalSettings.StartWithWindows;
-        _loadingStartup = false;
-    }
+    private void UpdateStartupToggle() =>
+        _settingBinder.SetToggle(StartupToggle, _host.State.GlobalSettings.StartWithWindows);
 
     private void UpdateFolderMenuControls(string? error = null)
     {
         UpdateDesktopMenuControls();
         if (!_componentReady) return;
-        _loadingFolderMenu = true;
+        using var _ = _settingBinder.Suppress();
         try
         {
             FolderContextMenuState state = _host.FolderContextMenu.ReadState();
@@ -799,13 +805,12 @@ public sealed partial class ConsoleWindow : Window
         finally
         {
             FolderMenuStatusText.Visibility = string.IsNullOrEmpty(FolderMenuStatusText.Text) ? Visibility.Collapsed : Visibility.Visible;
-            _loadingFolderMenu = false;
         }
     }
 
     private void FolderMenuToggle_Toggled(object sender, RoutedEventArgs e)
     {
-        if (!_componentReady || _loadingFolderMenu) return;
+        if (!_componentReady || _settingBinder.IsSuppressed) return;
         SetFolderMenuEnabled(FolderMenuToggle.IsOn);
     }
 
@@ -828,20 +833,14 @@ public sealed partial class ConsoleWindow : Window
         UpdateFolderMenuControls(error);
     }
 
-    private async void StartupToggle_Toggled(object sender, RoutedEventArgs e)
-    {
-        if (!_componentReady || _loadingStartup) return;
-        try
-        {
-            await _host.SetStartupAsync(StartupToggle.IsOn);
-        }
-        catch (Exception ex)
-        {
-            AppLogger.Error("无法更新开机启动设置。", ex);
-            UpdateStartupToggle();
-            ShowError(AppStrings.Get("StartupErrorTitle"), ex.Message);
-        }
-    }
+    private async void StartupToggle_Toggled(object sender, RoutedEventArgs e) =>
+        await _settingBinder.RunToggleAsync(
+            _componentReady,
+            () => _host.SetStartupAsync(StartupToggle.IsOn),
+            UpdateStartupToggle,
+            "无法更新开机启动设置。",
+            "StartupErrorTitle",
+            ShowError);
 
     private void UpdateDefaultStorageDirectory()
     {
@@ -875,10 +874,7 @@ public sealed partial class ConsoleWindow : Window
 
     private async void ResetDefaultStorageDirectoryButton_Click(object sender, RoutedEventArgs e)
     {
-        try
-        {
-            await _host.SetDefaultStorageDirectoryAsync(null);
-        }
+        try { await _host.SetDefaultStorageDirectoryAsync(null); }
         catch (Exception ex)
         {
             AppLogger.Error("无法恢复默认存储目录。", ex);
@@ -886,109 +882,60 @@ public sealed partial class ConsoleWindow : Window
         }
     }
 
-    private void UpdateOutsideClickToggle()
-    {
-        if (CollapseOutsideToggle is null) return;
-        _loadingOutsideClick = true;
-        CollapseOutsideToggle.IsOn = _host.State.GlobalSettings.CollapseOnOutsideClick;
-        _loadingOutsideClick = false;
-    }
+    private void UpdateOutsideClickToggle() =>
+        _settingBinder.SetToggle(CollapseOutsideToggle, _host.State.GlobalSettings.CollapseOnOutsideClick);
 
-    private async void CollapseOutsideToggle_Toggled(object sender, RoutedEventArgs e)
-    {
-        if (!_componentReady || _loadingOutsideClick) return;
-        try
-        {
-            await _host.SetCollapseOnOutsideClickAsync(CollapseOutsideToggle.IsOn);
-        }
-        catch (Exception ex)
-        {
-            AppLogger.Error("无法更新外部点击收缩设置。", ex);
-            UpdateOutsideClickToggle();
-            ShowError(AppStrings.Get("CollapseOutsideErrorTitle"), ex.Message);
-        }
-    }
+    private async void CollapseOutsideToggle_Toggled(object sender, RoutedEventArgs e) =>
+        await _settingBinder.RunToggleAsync(
+            _componentReady,
+            () => _host.SetCollapseOnOutsideClickAsync(CollapseOutsideToggle.IsOn),
+            UpdateOutsideClickToggle,
+            "无法更新外部点击收缩设置。",
+            "CollapseOutsideErrorTitle",
+            ShowError);
 
-    private void UpdateNoteAlwaysOnTopToggle()
-    {
-        if (NoteAlwaysOnTopToggle is null) return;
-        _loadingNoteAlwaysOnTop = true;
-        NoteAlwaysOnTopToggle.IsOn = _host.State.GlobalSettings.NoteAlwaysOnTop;
-        _loadingNoteAlwaysOnTop = false;
-    }
+    private void UpdateNoteAlwaysOnTopToggle() =>
+        _settingBinder.SetToggle(NoteAlwaysOnTopToggle, _host.State.GlobalSettings.NoteAlwaysOnTop);
 
-    private async void NoteAlwaysOnTopToggle_Toggled(object sender, RoutedEventArgs e)
-    {
-        if (!_componentReady || _loadingNoteAlwaysOnTop) return;
-        try
-        {
-            await _host.SetNoteAlwaysOnTopAsync(NoteAlwaysOnTopToggle.IsOn);
-        }
-        catch (Exception ex)
-        {
-            AppLogger.Error("无法更新便签置顶设置。", ex);
-            UpdateNoteAlwaysOnTopToggle();
-            ShowError(AppStrings.Get("NoteAlwaysOnTopErrorTitle"), ex.Message);
-        }
-    }
+    private async void NoteAlwaysOnTopToggle_Toggled(object sender, RoutedEventArgs e) =>
+        await _settingBinder.RunToggleAsync(
+            _componentReady,
+            () => _host.SetNoteAlwaysOnTopAsync(NoteAlwaysOnTopToggle.IsOn),
+            UpdateNoteAlwaysOnTopToggle,
+            "无法更新便签置顶设置。",
+            "NoteAlwaysOnTopErrorTitle",
+            ShowError);
 
-    private void UpdateEdgeGlowToggle()
-    {
-        if (EdgeGlowToggle is null) return;
-        _loadingEdgeGlow = true;
-        EdgeGlowToggle.IsOn = _host.State.GlobalSettings.EdgeGlowEnabled;
-        _loadingEdgeGlow = false;
-    }
+    private void UpdateEdgeGlowToggle() =>
+        _settingBinder.SetToggle(EdgeGlowToggle, _host.State.GlobalSettings.EdgeGlowEnabled);
 
-    private async void EdgeGlowToggle_Toggled(object sender, RoutedEventArgs e)
-    {
-        if (!_componentReady || _loadingEdgeGlow) return;
-        try
-        {
-            await _host.SetEdgeGlowEnabledAsync(EdgeGlowToggle.IsOn);
-        }
-        catch (Exception ex)
-        {
-            AppLogger.Error("无法更新边缘弧光设置。", ex);
-            UpdateEdgeGlowToggle();
-            ShowError(AppStrings.Get("EdgeGlowErrorTitle"), ex.Message);
-        }
-    }
+    private async void EdgeGlowToggle_Toggled(object sender, RoutedEventArgs e) =>
+        await _settingBinder.RunToggleAsync(
+            _componentReady,
+            () => _host.SetEdgeGlowEnabledAsync(EdgeGlowToggle.IsOn),
+            UpdateEdgeGlowToggle,
+            "无法更新边缘弧光设置。",
+            "EdgeGlowErrorTitle",
+            ShowError);
 
-    private void UpdateWindowAlignmentToggle()
-    {
-        if (WindowAlignmentToggle is null) return;
-        _loadingWindowAlignment = true;
-        WindowAlignmentToggle.IsOn = _host.State.GlobalSettings.WindowAlignmentEnabled;
-        _loadingWindowAlignment = false;
-    }
+    private void UpdateWindowAlignmentToggle() =>
+        _settingBinder.SetToggle(WindowAlignmentToggle, _host.State.GlobalSettings.WindowAlignmentEnabled);
 
-    private async void WindowAlignmentToggle_Toggled(object sender, RoutedEventArgs e)
-    {
-        if (!_componentReady || _loadingWindowAlignment) return;
-        try
-        {
-            await _host.SetWindowAlignmentEnabledAsync(WindowAlignmentToggle.IsOn);
-        }
-        catch (Exception ex)
-        {
-            AppLogger.Error("无法更新窗口拖动对齐设置。", ex);
-            UpdateWindowAlignmentToggle();
-            ShowError(AppStrings.Get("WindowAlignmentErrorTitle"), ex.Message);
-        }
-    }
+    private async void WindowAlignmentToggle_Toggled(object sender, RoutedEventArgs e) =>
+        await _settingBinder.RunToggleAsync(
+            _componentReady,
+            () => _host.SetWindowAlignmentEnabledAsync(WindowAlignmentToggle.IsOn),
+            UpdateWindowAlignmentToggle,
+            "无法更新窗口拖动对齐设置。",
+            "WindowAlignmentErrorTitle",
+            ShowError);
 
-    private void UpdateRememberExpandedOrganizerPositionToggle()
-    {
-        if (RememberExpandedOrganizerPositionToggle is null) return;
-        _loadingRememberExpandedOrganizerPosition = true;
-        RememberExpandedOrganizerPositionToggle.IsOn = _host.State.GlobalSettings.RememberExpandedOrganizerPosition;
-        _loadingRememberExpandedOrganizerPosition = false;
-    }
+    private void UpdateRememberExpandedOrganizerPositionToggle() =>
+        _settingBinder.SetToggle(RememberExpandedOrganizerPositionToggle, _host.State.GlobalSettings.RememberExpandedOrganizerPosition);
 
     private async void RememberExpandedOrganizerPositionToggle_Toggled(object sender, RoutedEventArgs e)
     {
-        if (!_componentReady || _loadingRememberExpandedOrganizerPosition) return;
+        if (!_componentReady || _settingBinder.IsSuppressed) return;
         bool previous = _host.State.GlobalSettings.RememberExpandedOrganizerPosition;
         _host.State.GlobalSettings.RememberExpandedOrganizerPosition = RememberExpandedOrganizerPositionToggle.IsOn;
         try { await _host.SaveStateAsync(); }
@@ -1005,29 +952,29 @@ public sealed partial class ConsoleWindow : Window
     {
         if (UniformFloatingCompactScaleSlider is null || UniformPositionedCompactScaleSlider is null) return;
         GlobalSettings settings = _host.State.GlobalSettings;
-        _loadingUniformCompactScales = true;
-        if (UniformFloatingCompactScaleToggle.IsEnabled) UniformFloatingCompactScaleToggle.IsOn = settings.UseUniformFloatingCompactScale;
-        UniformFloatingCompactScaleSlider.SetModelValue(settings.UniformFloatingCompactScale);
-        UniformFloatingCompactScaleSlider.IsEnabled = settings.UseUniformFloatingCompactScale && !_changingUniformCompactScaleToggle;
-        SetPercent(UniformFloatingCompactScalePercent, settings.UniformFloatingCompactScale);
-        if (UniformPositionedCompactScaleToggle.IsEnabled) UniformPositionedCompactScaleToggle.IsOn = settings.UseUniformPositionedCompactScale;
-        UniformPositionedCompactScaleSlider.SetModelValue(settings.UniformPositionedCompactScale);
-        UniformPositionedCompactScaleSlider.IsEnabled = settings.UseUniformPositionedCompactScale && !_changingUniformCompactScaleToggle;
-        SetPercent(UniformPositionedCompactScalePercent, settings.UniformPositionedCompactScale);
-        _loadingUniformCompactScales = false;
+        using (_settingBinder.Suppress())
+        {
+            if (UniformFloatingCompactScaleToggle.IsEnabled) UniformFloatingCompactScaleToggle.IsOn = settings.UseUniformFloatingCompactScale;
+            UniformFloatingCompactScaleSlider.SetModelValue(settings.UniformFloatingCompactScale);
+            UniformFloatingCompactScaleSlider.IsEnabled = settings.UseUniformFloatingCompactScale && !_changingUniformCompactScaleToggle;
+            SetPercent(UniformFloatingCompactScalePercent, settings.UniformFloatingCompactScale);
+            if (UniformPositionedCompactScaleToggle.IsEnabled) UniformPositionedCompactScaleToggle.IsOn = settings.UseUniformPositionedCompactScale;
+            UniformPositionedCompactScaleSlider.SetModelValue(settings.UniformPositionedCompactScale);
+            UniformPositionedCompactScaleSlider.IsEnabled = settings.UseUniformPositionedCompactScale && !_changingUniformCompactScaleToggle;
+            SetPercent(UniformPositionedCompactScalePercent, settings.UniformPositionedCompactScale);
+        }
         UpdateAddControls();
         UpdateManageControls();
     }
 
     private async void UniformCompactScaleToggle_Toggled(object sender, RoutedEventArgs e)
     {
-        if (!_componentReady || _loadingUniformCompactScales ||
+        if (!_componentReady || _settingBinder.IsSuppressed ||
             !UniformFloatingCompactScaleToggle.IsEnabled || !UniformPositionedCompactScaleToggle.IsEnabled) return;
         OrganizerPlacementMode mode = ReferenceEquals(sender, UniformFloatingCompactScaleToggle)
             ? OrganizerPlacementMode.Floating : OrganizerPlacementMode.Positioned;
         bool enabled = mode == OrganizerPlacementMode.Floating
             ? UniformFloatingCompactScaleToggle.IsOn : UniformPositionedCompactScaleToggle.IsOn;
-        // Capture the user's intent before a pending slider completion can refresh the UI.
         _changingUniformCompactScaleToggle = true;
         UniformFloatingCompactScaleSlider.IsEnabled = false;
         UniformPositionedCompactScaleSlider.IsEnabled = false;
@@ -1058,7 +1005,7 @@ public sealed partial class ConsoleWindow : Window
 
     private void UniformCompactScaleSlider_ValueChanged(object sender, object e)
     {
-        if (!_componentReady || _loadingUniformCompactScales || _uniformCompactScaleSaveTimer is null) return;
+        if (!_componentReady || _settingBinder.IsSuppressed || _uniformCompactScaleSaveTimer is null) return;
         OrganizerPlacementMode mode = ReferenceEquals(sender, UniformFloatingCompactScaleSlider)
             ? OrganizerPlacementMode.Floating
             : OrganizerPlacementMode.Positioned;
@@ -1096,7 +1043,6 @@ public sealed partial class ConsoleWindow : Window
             if (error is null)
             {
                 applied = true;
-
                 continue;
             }
             if (startedBatch)
@@ -1130,17 +1076,16 @@ public sealed partial class ConsoleWindow : Window
     {
         if (CompactNameScaleSlider is null || ExpandedNameScaleSlider is null) return;
         GlobalSettings settings = _host.State.GlobalSettings;
-        _loadingNameScales = true;
+        using var _ = _settingBinder.Suppress();
         CompactNameScaleSlider.SetModelValue(settings.UniformFloatingCompactNameScale);
         ExpandedNameScaleSlider.SetModelValue(settings.ExpandedNameScale);
         SetPercent(CompactNameScalePercent, settings.UniformFloatingCompactNameScale);
         SetPercent(ExpandedNameScalePercent, settings.ExpandedNameScale);
-        _loadingNameScales = false;
     }
 
     private void NameScaleSlider_ValueChanged(object sender, object e)
     {
-        if (!_componentReady || _loadingNameScales) return;
+        if (!_componentReady || _settingBinder.IsSuppressed) return;
         _nameSliderSave.Changed();
         _host.ApplyNameScales(CompactNameScaleSlider.Value, ExpandedNameScaleSlider.Value);
         SetPercent(CompactNameScalePercent, CompactNameScaleSlider.Value);
@@ -1149,10 +1094,8 @@ public sealed partial class ConsoleWindow : Window
         _nameScaleSaveTimer.Start();
     }
 
-    private async void NameScaleSaveTimer_Tick(Microsoft.UI.Dispatching.DispatcherQueueTimer sender, object args)
-    {
+    private async void NameScaleSaveTimer_Tick(Microsoft.UI.Dispatching.DispatcherQueueTimer sender, object args) =>
         await SaveNameSlidersAsync();
-    }
 
     private void CaptureSavedNameScales()
     {
@@ -1163,12 +1106,6 @@ public sealed partial class ConsoleWindow : Window
 
     private void RestoreSavedNameScales() =>
         _host.ApplyNameScales(_savedCompactNameScale, _savedExpandedNameScale);
-
-    private void SetNameScaleControlsEnabled(bool enabled)
-    {
-        CompactNameScaleSlider.IsEnabled = enabled;
-        ExpandedNameScaleSlider.IsEnabled = enabled;
-    }
 
     private void RestoreSavedUniformCompactScales()
     {
@@ -1186,60 +1123,44 @@ public sealed partial class ConsoleWindow : Window
         _savedUniformPositionedSnapshots = null;
     }
 
-    private void UpdateExpandOnHoverToggle()
-    {
-        if (ExpandOnHoverToggle is null) return;
-        _loadingExpandOnHover = true;
-        ExpandOnHoverToggle.IsOn = _host.State.GlobalSettings.ExpandOnHover;
-        _loadingExpandOnHover = false;
-    }
+    private void UpdateExpandOnHoverToggle() =>
+        _settingBinder.SetToggle(ExpandOnHoverToggle, _host.State.GlobalSettings.ExpandOnHover);
 
-    private async void ExpandOnHoverToggle_Toggled(object sender, RoutedEventArgs e)
-    {
-        if (!_componentReady || _loadingExpandOnHover) return;
-        try
-        {
-            await _host.SetExpandOnHoverAsync(ExpandOnHoverToggle.IsOn);
-            UpdateHoverDelayControls();
-        }
-        catch (Exception ex)
-        {
-            AppLogger.Error("无法更新悬浮展开设置。", ex);
-            UpdateExpandOnHoverToggle();
-            ShowError(AppStrings.Get("ExpandOnHoverErrorTitle"), ex.Message);
-        }
-    }
+    private async void ExpandOnHoverToggle_Toggled(object sender, RoutedEventArgs e) =>
+        await _settingBinder.RunToggleAsync(
+            _componentReady,
+            async () =>
+            {
+                await _host.SetExpandOnHoverAsync(ExpandOnHoverToggle.IsOn);
+                UpdateHoverDelayControls();
+            },
+            UpdateExpandOnHoverToggle,
+            "无法更新悬浮展开设置。",
+            "ExpandOnHoverErrorTitle",
+            ShowError);
 
-    private void UpdateCollapseOnPointerLeaveToggle()
-    {
-        if (CollapseOnPointerLeaveToggle is null) return;
-        _loadingCollapseOnPointerLeave = true;
-        CollapseOnPointerLeaveToggle.IsOn = _host.State.GlobalSettings.CollapseOnPointerLeave;
-        _loadingCollapseOnPointerLeave = false;
-    }
+    private void UpdateCollapseOnPointerLeaveToggle() =>
+        _settingBinder.SetToggle(CollapseOnPointerLeaveToggle, _host.State.GlobalSettings.CollapseOnPointerLeave);
 
-    private async void CollapseOnPointerLeaveToggle_Toggled(object sender, RoutedEventArgs e)
-    {
-        if (!_componentReady || _loadingCollapseOnPointerLeave) return;
-        try
-        {
-            await _host.SetCollapseOnPointerLeaveAsync(CollapseOnPointerLeaveToggle.IsOn);
-            UpdateHoverDelayControls();
-        }
-        catch (Exception ex)
-        {
-            AppLogger.Error("无法更新鼠标离开收缩设置。", ex);
-            UpdateCollapseOnPointerLeaveToggle();
-            ShowError(AppStrings.Get("CollapseOnPointerLeaveErrorTitle"), ex.Message);
-        }
-    }
+    private async void CollapseOnPointerLeaveToggle_Toggled(object sender, RoutedEventArgs e) =>
+        await _settingBinder.RunToggleAsync(
+            _componentReady,
+            async () =>
+            {
+                await _host.SetCollapseOnPointerLeaveAsync(CollapseOnPointerLeaveToggle.IsOn);
+                UpdateHoverDelayControls();
+            },
+            UpdateCollapseOnPointerLeaveToggle,
+            "无法更新鼠标离开收缩设置。",
+            "CollapseOnPointerLeaveErrorTitle",
+            ShowError);
 
     private void UpdateHoverDelayControls()
     {
         if (HoverExpandDelaySlider is null || PointerLeaveCollapseDelaySlider is null ||
             StationPointerLeaveCollapseDelaySlider is null || StationActivationDistanceSlider is null ||
             StationHoverExpandDelaySlider is null) return;
-        _loadingHoverDelays = true;
+        using var _ = _settingBinder.Suppress();
         HoverExpandDelaySlider.SetModelValue(_host.State.GlobalSettings.HoverExpandDelayMs);
         PointerLeaveCollapseDelaySlider.SetModelValue(_host.State.GlobalSettings.PointerLeaveCollapseDelayMs);
         StationPointerLeaveCollapseDelaySlider.SetModelValue(_host.State.GlobalSettings.StationPointerLeaveCollapseDelayMs);
@@ -1258,12 +1179,11 @@ public sealed partial class ConsoleWindow : Window
         StationHoverExpandDelayValue.Text = AppStrings.Format(
             "MillisecondsFormat",
             _host.State.GlobalSettings.StationHoverExpandDelayMs);
-        _loadingHoverDelays = false;
     }
 
     private void HoverDelaySlider_ValueChanged(object sender, object e)
     {
-        if (!_componentReady || _loadingHoverDelays || _hoverDelaySaveTimer is null) return;
+        if (!_componentReady || _settingBinder.IsSuppressed || _hoverDelaySaveTimer is null) return;
         _delaySliderSave.Changed();
         _host.SetHoverDelays(
             (int)HoverExpandDelaySlider.Value,
@@ -1277,72 +1197,43 @@ public sealed partial class ConsoleWindow : Window
         _hoverDelaySaveTimer.Start();
     }
 
-    private async void HoverDelaySaveTimer_Tick(Microsoft.UI.Dispatching.DispatcherQueueTimer sender, object args)
-    {
+    private async void HoverDelaySaveTimer_Tick(Microsoft.UI.Dispatching.DispatcherQueueTimer sender, object args) =>
         await SaveDelaySlidersAsync();
-    }
 
-    private void UpdateExclusiveExpansionToggle()
-    {
-        if (ExclusiveExpansionToggle is null) return;
-        _loadingExclusiveExpansion = true;
-        ExclusiveExpansionToggle.IsOn = _host.State.GlobalSettings.ExclusiveExpansion;
-        _loadingExclusiveExpansion = false;
-    }
+    private void UpdateExclusiveExpansionToggle() =>
+        _settingBinder.SetToggle(ExclusiveExpansionToggle, _host.State.GlobalSettings.ExclusiveExpansion);
 
-    private async void ExclusiveExpansionToggle_Toggled(object sender, RoutedEventArgs e)
-    {
-        if (!_componentReady || _loadingExclusiveExpansion) return;
-        try
-        {
-            await _host.SetExclusiveExpansionAsync(ExclusiveExpansionToggle.IsOn);
-        }
-        catch (Exception ex)
-        {
-            AppLogger.Error("无法更新单窗展开设置。", ex);
-            UpdateExclusiveExpansionToggle();
-            ShowError(AppStrings.Get("ExclusiveExpansionErrorTitle"), ex.Message);
-        }
-    }
+    private async void ExclusiveExpansionToggle_Toggled(object sender, RoutedEventArgs e) =>
+        await _settingBinder.RunToggleAsync(
+            _componentReady,
+            () => _host.SetExclusiveExpansionAsync(ExclusiveExpansionToggle.IsOn),
+            UpdateExclusiveExpansionToggle,
+            "无法更新单窗展开设置。",
+            "ExclusiveExpansionErrorTitle",
+            ShowError);
 
-    private void UpdatePerformanceProfileControls()
-    {
-        if (PerformanceProfileCombo is null) return;
-        _loadingPerformanceProfile = true;
-        PerformanceProfileCombo.SelectedIndex = (int)_host.State.GlobalSettings.PerformanceProfile;
-        _loadingPerformanceProfile = false;
-    }
+    private void UpdatePerformanceProfileControls() =>
+        _settingBinder.SetComboIndex(PerformanceProfileCombo, (int)_host.State.GlobalSettings.PerformanceProfile);
 
-    private async void PerformanceProfileCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
-    {
-        if (!_componentReady || _loadingPerformanceProfile || PerformanceProfileCombo.SelectedIndex < 0) return;
-        try
-        {
-            await _host.SetPerformanceProfileAsync((PerformanceProfile)PerformanceProfileCombo.SelectedIndex);
-        }
-        catch (Exception ex)
-        {
-            AppLogger.Error("无法更新性能档位。", ex);
-            UpdatePerformanceProfileControls();
-            ShowError(AppStrings.Get("PerformanceProfileErrorTitle"), ex.Message);
-        }
-    }
+    private async void PerformanceProfileCombo_SelectionChanged(object sender, SelectionChangedEventArgs e) =>
+        await _settingBinder.RunComboAsync(
+            _componentReady,
+            PerformanceProfileCombo,
+            index => _host.SetPerformanceProfileAsync((PerformanceProfile)index),
+            UpdatePerformanceProfileControls,
+            "无法更新性能档位。",
+            "PerformanceProfileErrorTitle",
+            ShowError);
 
-    private async void LanguageCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
-    {
-        if (!_componentReady || _loadingLanguage || LanguageCombo.SelectedIndex < 0) return;
-        try
-        {
-            await _host.SetLanguageAsync((AppLanguage)LanguageCombo.SelectedIndex);
-        }
-        catch (Exception ex)
-        {
-            _loadingLanguage = true;
-            LanguageCombo.SelectedIndex = (int)_host.State.GlobalSettings.Language;
-            _loadingLanguage = false;
-            ShowError(AppStrings.Get("LanguageErrorTitle"), ex.Message);
-        }
-    }
+    private async void LanguageCombo_SelectionChanged(object sender, SelectionChangedEventArgs e) =>
+        await _settingBinder.RunComboAsync(
+            _componentReady,
+            LanguageCombo,
+            index => _host.SetLanguageAsync((AppLanguage)index),
+            () => _settingBinder.SetComboIndex(LanguageCombo, (int)_host.State.GlobalSettings.Language),
+            logMessage: null,
+            "LanguageErrorTitle",
+            ShowError);
 
     private static void ApplyLocalizedTree(DependencyObject root)
     {
@@ -1422,19 +1313,19 @@ public sealed partial class ConsoleWindow : Window
 
     private void ThemeColorSwatch_Click(object sender, RoutedEventArgs e)
     {
-        if (!_componentReady || _loadingTheme || sender is not FrameworkElement { Tag: string hex }) return;
+        if (!_componentReady || _settingBinder.IsSuppressed || sender is not FrameworkElement { Tag: string hex }) return;
         ApplyThemeChange(colorArgb: ParseThemeColor(hex));
     }
 
     private void ThemeColorPicker_ColorChanged(ColorPicker sender, ColorChangedEventArgs args)
     {
-        if (!_componentReady || _loadingTheme) return;
+        if (!_componentReady || _settingBinder.IsSuppressed) return;
         ApplyThemeChange(colorArgb: ToArgb(args.NewColor));
     }
 
     private void ThemeTransparencySlider_ValueChanged(object sender, object e)
     {
-        if (!_componentReady || _loadingTheme) return;
+        if (!_componentReady || _settingBinder.IsSuppressed) return;
         ThemeValues theme = _host.State.GlobalSettings.GetTheme(_themeTarget);
         if (theme.SolidColorMode)
             ApplyThemeChange(solidOpacity: ThemeTransparencySlider.Value);
@@ -1444,13 +1335,13 @@ public sealed partial class ConsoleWindow : Window
 
     private void ThemeBlurStrengthSlider_ValueChanged(object sender, object e)
     {
-        if (!_componentReady || _loadingTheme) return;
+        if (!_componentReady || _settingBinder.IsSuppressed) return;
         ApplyThemeChange(blurStrength: ThemeBlurStrengthSlider.Value);
     }
 
     private void ThemeModeButton_Click(object sender, RoutedEventArgs e)
     {
-        if (!_componentReady || _loadingTheme || sender is not FrameworkElement { Tag: string mode }) return;
+        if (!_componentReady || _settingBinder.IsSuppressed || sender is not FrameworkElement { Tag: string mode }) return;
         bool transparent = _themeTarget == ThemeTarget.Dock && mode == "Transparent";
         ApplyThemeChange(solidColorMode: transparent ? null : mode == "Solid", fullyTransparent: transparent);
         UpdateThemeControls();
@@ -1481,7 +1372,7 @@ public sealed partial class ConsoleWindow : Window
 
     private void ThemeTargetButton_Click(object sender, RoutedEventArgs e)
     {
-        if (!_componentReady || _loadingTheme || sender is not FrameworkElement { Tag: string name } ||
+        if (!_componentReady || _settingBinder.IsSuppressed || sender is not FrameworkElement { Tag: string name } ||
             !Enum.TryParse(name, out ThemeTarget target) || target == ThemeTarget.Settings) return;
         _themeTarget = target;
         UpdateThemeControls();
@@ -1491,7 +1382,7 @@ public sealed partial class ConsoleWindow : Window
     {
         if (ColorSwatchesPanel is null) return;
         ThemeValues theme = _host.State.GlobalSettings.GetTheme(_themeTarget);
-        _loadingTheme = true;
+        using var _ = _settingBinder.Suppress();
         OrganizerThemeTargetButton.IsChecked = _themeTarget == ThemeTarget.Organizer;
         StationThemeTargetButton.IsChecked = _themeTarget == ThemeTarget.Station;
         DockThemeTargetButton.IsChecked = _themeTarget == ThemeTarget.Dock;
@@ -1517,23 +1408,17 @@ public sealed partial class ConsoleWindow : Window
         ThemeBlurStrengthValue.Text = $"{Math.Round(theme.BlurStrength * 100):0}%";
         ThemeGlassModeButton.IsChecked = !theme.FullyTransparent && !theme.SolidColorMode;
         ThemeSolidModeButton.IsChecked = !theme.FullyTransparent && theme.SolidColorMode;
-        // Opacity is independent of the material mode: solid colour can be
-        // translucent, while Glass keeps the same 0-100% surface control.
         ThemeTransparencyRow.Visibility = theme.FullyTransparent ? Visibility.Collapsed : Visibility.Visible;
         ThemeBlurStrengthRow.Visibility = theme.FullyTransparent || theme.SolidColorMode ? Visibility.Collapsed : Visibility.Visible;
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(ThemeColorPicker, AppStrings.Get("ThemeCustomColor"));
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(ThemeTransparencySlider, AppStrings.Get("ThemeTransparencyLabel"));
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(ThemeBlurStrengthSlider, AppStrings.Get("ThemeBlurStrengthLabel"));
-        _loadingTheme = false;
     }
 
     private async void ThemeSaveTimer_Tick(Microsoft.UI.Dispatching.DispatcherQueueTimer sender, object args) =>
         await SaveThemeAsync();
 
-    private async Task<bool> SaveThemeAsync()
-    {
-        return await SaveThemeSlidersAsync();
-    }
+    private Task<bool> SaveThemeAsync() => SaveThemeSlidersAsync();
 
     private void Host_ThemeChanged(object? sender, EventArgs e) => ApplyTheme();
 
@@ -1597,111 +1482,77 @@ public sealed partial class ConsoleWindow : Window
 
     private void UpdateAddStoragePath()
     {
-        if (AddStoragePathBox is not null)
+        if (AddForm is not null)
         {
             string path = _addStoragePath ?? AppPaths.CreateDefaultOrganizerStoragePath(
                 AppPaths.ResolveDefaultStorageDirectory(_host.State.GlobalSettings),
                 _addOrganizerId);
-            AddStoragePathBox.Text = _addStoragePath ?? AppStrings.Format("AutomaticStoragePathFormat", path);
+            AddForm.StoragePathInput.Text = _addStoragePath ?? AppStrings.Format("AutomaticStoragePathFormat", path);
         }
     }
 
     private void UpdateAddControls()
     {
-        if (!_componentReady || AddRowsCard is null || _adjustingAddControls || _loadingCreation) return;
+        if (!_componentReady || AddForm is null || _adjustingAddControls || _loadingCreation) return;
         _adjustingAddControls = true;
-        AddPlacementModeCard.Visibility = _creationCategory == ThemeTarget.Organizer ? Visibility.Visible : Visibility.Collapsed;
-        if (UpdateDockAddControls()) { _adjustingAddControls = false; UpdateCreationAvailability(); return; }
-        bool positioned = AddedPlacementMode == OrganizerPlacementMode.Positioned;
-        bool station = AddedPlacementMode == OrganizerPlacementMode.Station;
-        if (station) AddExpansionModeCombo.SelectedIndex = 0;
-        AddExpansionModeCard.Visibility = station ? Visibility.Collapsed : Visibility.Visible;
-        if (station) AddExpandedContentModeCombo.SelectedIndex = (int)OrganizerExpandedContentMode.Icon;
-        AddExpandedContentModeCombo.IsEnabled = !station;
-        AddExpandedContentModeCard.Visibility = station ? Visibility.Collapsed : Visibility.Visible;
-        bool compactList = !station &&
-            AddExpandedContentModeCombo.SelectedIndex == (int)OrganizerExpandedContentMode.CompactList;
-        AddNameCard.Visibility = station ? Visibility.Collapsed : Visibility.Visible;
-        AddDisplayCard.Visibility = station ? Visibility.Visible : Visibility.Collapsed;
-        AddDockEdgeCard.Visibility = station ? Visibility.Visible : Visibility.Collapsed;
-        AddCompactScaleCard.Visibility = station ? Visibility.Collapsed : Visibility.Visible;
-        AddRowsCard.Visibility = compactList ? Visibility.Collapsed : Visibility.Visible;
-        AddColumnsCard.Visibility = compactList ? Visibility.Collapsed : Visibility.Visible;
-        AddCompactScaleSlider.Maximum = positioned
-            ? OrganizerLimits.MaximumPositionedCompactScale
-            : OrganizerLimits.MaximumCompactScale;
-        OrganizerPlacementMode placementMode = AddedPlacementMode;
-        bool compactScaleConstrained = _host.State.GlobalSettings.UsesUniformCompactScale(placementMode);
-        AddCompactScaleCard.Visibility = station || compactScaleConstrained ? Visibility.Collapsed : Visibility.Visible;
-        if (compactScaleConstrained)
-            AddCompactScaleSlider.SetModelValue(_host.State.GlobalSettings.ResolveCompactScale(placementMode, AddCompactScaleSlider.Value));
-        AddCompactScaleSlider.IsEnabled = !compactScaleConstrained;
-        AddCompactScaleSlider.SetModelValue(Math.Clamp(
-            AddCompactScaleSlider.Value,
-            OrganizerLimits.MinimumCompactScale,
-            AddCompactScaleSlider.Maximum));
-        ConfigureGridSliders(AddRowsSlider, AddColumnsSlider, station);
-        (int rows, int columns) = ReadGridDimensions(AddRowsSlider, AddColumnsSlider, station);
-        var layout = new OrganizerLayout
+        try
         {
-            Mode = OrganizerLayoutMode.Grid,
-            Rows = rows,
-            Columns = columns
-        };
-        DisplayInfo display = station
-            ? DisplayPlacementService.GetDisplay(SelectedDisplayDevice(AddDisplayCombo))
-            : GetPrimaryDisplay();
-        if (station)
-        {
-            AddItemScaleSlider.Maximum = DisplayPlacementService.CalculateMaximumStationItemScale(display, layout);
+            if (UpdateDockAddControls())
+            {
+                UpdateCreationAvailability();
+                return;
+            }
+            OrganizerPlacementMode placementMode = AddedPlacementMode;
+            bool station = placementMode == OrganizerPlacementMode.Station;
+            _ = AddForm.UpdateNonDockConstraints(
+                placementMode,
+                editingSource: null,
+                _host.State.GlobalSettings,
+                canChangeExpansionMode: true,
+                GetPrimaryDisplay);
+
+            bool available = station
+                ? _host.State.Organizers.Count(item => item.PlacementMode == OrganizerPlacementMode.Station) < OrganizerLimits.MaximumStations &&
+                  !_host.State.Organizers.Any(item => item.PlacementMode == OrganizerPlacementMode.Station &&
+                      item.DockEdge == (OrganizerDockEdge)Math.Clamp(AddForm.DockEdgeSelector.SelectedIndex, 0, 3))
+                : OrganizerKinds.CanCreate(placementMode, _host.State.Organizers);
+            CreateOrganizerButton.IsEnabled = available;
+            CreateLimitText.Text = station ? AppStrings.Get("StationEdgeOccupiedError") : string.Empty;
+            CreateLimitText.Visibility = available ? Visibility.Collapsed : Visibility.Visible;
+            UpdateCreationAvailability();
         }
-        else
+        finally
         {
-            AddCanvasScaleSlider.Minimum = DisplayPlacementService.CalculateMinimumCanvasScale(display, layout);
-            if (AddCanvasScaleSlider.Value < AddCanvasScaleSlider.Minimum) AddCanvasScaleSlider.SetModelValue(AddCanvasScaleSlider.Minimum);
-            AddItemScaleSlider.Maximum = DisplayPlacementService.CalculateMaximumItemScale(display, layout, AddCanvasScaleSlider.Value);
+            _adjustingAddControls = false;
         }
-        if (AddItemScaleSlider.Value > AddItemScaleSlider.Maximum) AddItemScaleSlider.SetModelValue(AddItemScaleSlider.Maximum);
-        SetPercent(AddCompactPercent, AddCompactScaleSlider.Value);
-        SetPercent(AddCanvasPercent, AddCanvasScaleSlider.Value);
-        SetPercent(AddItemPercent, AddItemScaleSlider.Value);
-        bool available = station
-            ? _host.State.Organizers.Count(item => item.PlacementMode == OrganizerPlacementMode.Station) < OrganizerLimits.MaximumStations &&
-                !_host.State.Organizers.Any(item => item.PlacementMode == OrganizerPlacementMode.Station &&
-                    item.DockEdge == (OrganizerDockEdge)Math.Clamp(AddDockEdgeCombo.SelectedIndex, 0, 3))
-            : OrganizerKinds.CanCreate(AddedPlacementMode, _host.State.Organizers);
-        CreateOrganizerButton.IsEnabled = available;
-        CreateLimitText.Text = station ? AppStrings.Get("StationEdgeOccupiedError") : string.Empty;
-        CreateLimitText.Visibility = available ? Visibility.Collapsed : Visibility.Visible;
-        _adjustingAddControls = false;
-        UpdateCreationAvailability();
     }
 
     private SettingsCreationDraft ReadCreationDraft()
     {
-        bool station = AddedPlacementMode == OrganizerPlacementMode.Station;
-        (int rows, int columns) = ReadGridDimensions(AddRowsSlider, AddColumnsSlider, station);
+        OrganizerPlacementMode placementMode = AddedPlacementMode;
+        bool station = placementMode == OrganizerPlacementMode.Station;
+        (int rows, int columns) = AddForm.ReadGridDimensions(station);
         var definition = new OrganizerDefinition
         {
             Id = _addOrganizerId,
-            Name = AddedPlacementMode == OrganizerPlacementMode.Station
+            Name = station
                 ? AppStrings.Get("StationDefaultName")
-                : string.IsNullOrWhiteSpace(AddNameBox.Text) ? AppStrings.DefaultOrganizerName : AddNameBox.Text.Trim(),
-            PlacementMode = AddedPlacementMode,
-            DockOrientation = (DockOrientation)Math.Clamp(AddDockOrientationCombo.SelectedIndex, 0, 1),
-            DockIconSizeDip = DockLayoutMath.NormalizeIconSize(AddDockIconSizeSlider.Value),
-            DockSpacingFactor = DockLayoutMath.NormalizeSpacing(AddDockSpacingSlider.Value),
+                : string.IsNullOrWhiteSpace(AddForm.NameInput.Text) ? AppStrings.DefaultOrganizerName : AddForm.NameInput.Text.Trim(),
+            PlacementMode = placementMode,
+            DockOrientation = (DockOrientation)Math.Clamp(AddForm.DockOrientation.SelectedIndex, 0, 1),
+            DockIconSizeDip = DockLayoutMath.NormalizeIconSize(AddForm.DockIconSize.Value),
+            DockSpacingFactor = DockLayoutMath.NormalizeSpacing(AddForm.DockSpacing.Value),
             ExpansionMode = station ? OrganizerExpansionMode.Collapsible :
-                (OrganizerExpansionMode)Math.Clamp(AddExpansionModeCombo.SelectedIndex, 0, 1),
-            DockEdge = (OrganizerDockEdge)Math.Clamp(AddDockEdgeCombo.SelectedIndex, 0, 3),
-            Position = new WidgetPosition { MonitorDevice = SelectedDisplayDevice(AddDisplayCombo) ?? string.Empty },
+                (OrganizerExpansionMode)Math.Clamp(AddForm.ExpansionCombo.SelectedIndex, 0, 1),
+            DockEdge = (OrganizerDockEdge)Math.Clamp(AddForm.DockEdgeSelector.SelectedIndex, 0, 3),
+            Position = new WidgetPosition { MonitorDevice = AddForm.SelectedDisplayDevice ?? string.Empty },
             Layout = new OrganizerLayout { Mode = OrganizerLayoutMode.Grid, Rows = rows, Columns = columns },
-            CompactScale = AddCompactScaleSlider.Value,
-            CanvasScale = AddCanvasScaleSlider.Value,
-            ItemScale = AddItemScaleSlider.Value,
+            CompactScale = AddForm.CompactScale.Value,
+            CanvasScale = AddForm.CanvasScale.Value,
+            ItemScale = AddForm.ItemScale.Value,
             ExpandedContentMode = station
                 ? OrganizerExpandedContentMode.Icon
-                : (OrganizerExpandedContentMode)Math.Clamp(AddExpandedContentModeCombo.SelectedIndex, 0, 1)
+                : (OrganizerExpandedContentMode)Math.Clamp(AddForm.ExpandedContentCombo.SelectedIndex, 0, 1)
         };
         return new SettingsCreationDraft(definition, _addStoragePath, _addNameWasEdited);
     }
@@ -1798,32 +1649,29 @@ public sealed partial class ConsoleWindow : Window
 
     private void LoadManageEditor(Guid id)
     {
-        OrganizerDefinition source = _host.State.Organizers.First(item => item.Id == id);
+        OrganizerDefinition? source = _host.State.Organizers.FirstOrDefault(item => item.Id == id);
+        if (source is null) return;
         _selectedId = id;
         _editing = Clone(source);
         _loadingEditor = true;
         _manageNameDirty = false;
-        ManageNameBox.Text = source.Name;
-        SelectManagePlacementMode(source.PlacementMode);
-        ManageExpansionModeCombo.SelectedIndex = (int)_host.GetRequestedExpansionMode(id);
-        ManageExpandedContentModeCombo.SelectedIndex = (int)source.ExpandedContentMode;
-        SelectDisplay(ManageDisplayCombo, source.Position?.MonitorDevice);
-        ManageDockEdgeCombo.SelectedIndex = (int)source.DockEdge;
-        ManageDockOrientationCombo.SelectedIndex = (int)source.DockOrientation;
-        ManageDockIconSizeSlider.SetModelValue(source.DockIconSizeDip);
-        ManageDockSpacingSlider.SetModelValue(source.DockSpacingFactor);
-        ManageRowsSlider.SetModelValue(source.Layout.Rows);
-        ManageColumnsSlider.SetModelValue(source.Layout.Columns);
-        ManageCompactScaleSlider.SetModelValue(source.CompactScale);
-        ManageCanvasScaleSlider.SetModelValue(source.CanvasScale);
-        ManageItemScaleSlider.SetModelValue(source.ItemScale);
-        string path = AppPaths.ResolveStoragePath(source);
-        ManagePathBox.Text = path;
-        bool missing = !Directory.Exists(path);
-        MissingStorageInfo.IsOpen = missing;
-        RecreateStorageButton.Visibility = missing ? Visibility.Visible : Visibility.Collapsed;
-        UpdateManageControls();
-        _loadingEditor = false;
+        try
+        {
+            ManageForm.LoadFromDefinition(
+                source,
+                _host.GetRequestedExpansionMode(id),
+                source.PlacementMode == OrganizerPlacementMode.Station);
+            string path = AppPaths.ResolveStoragePath(source);
+            ManageForm.StoragePathInput.Text = path;
+            bool missing = !Directory.Exists(path);
+            MissingStorageInfo.IsOpen = missing;
+            RecreateStorageButton.Visibility = missing ? Visibility.Visible : Visibility.Collapsed;
+            UpdateManageControls();
+        }
+        finally
+        {
+            _loadingEditor = false;
+        }
         UpdateTransferState();
     }
 
@@ -1831,114 +1679,53 @@ public sealed partial class ConsoleWindow : Window
     {
         if (_loadingEditor || _adjustingManageControls || _editing is null) return;
         if (_editing.PlacementMode == OrganizerPlacementMode.Dock &&
-            (ReferenceEquals(sender, ManageDockIconSizeSlider) || ReferenceEquals(sender, ManageDockOrientationCombo) ||
-             ReferenceEquals(sender, ManageDockSpacingSlider)))
+            (ReferenceEquals(sender, ManageForm.DockIconSize) ||
+             ReferenceEquals(sender, ManageForm.DockOrientation) ||
+             ReferenceEquals(sender, ManageForm.DockSpacing)))
         {
             if (_host.State.Organizers.FirstOrDefault(item => item.Id == _editing.Id) is { } dock)
-                ChangeDockSettings(dock, (DockOrientation)Math.Clamp(ManageDockOrientationCombo.SelectedIndex, 0, 1),
-                    ManageDockIconSizeSlider.Value, ManageDockSpacingSlider.Value);
+                ChangeDockSettings(
+                    dock,
+                    (DockOrientation)Math.Clamp(ManageForm.DockOrientation.SelectedIndex, 0, 1),
+                    ManageForm.DockIconSize.Value,
+                    ManageForm.DockSpacing.Value);
             return;
         }
         UpdateManageControls();
-        ManageNameError.Visibility = ManagedPlacementMode != OrganizerPlacementMode.Station &&
-            string.IsNullOrWhiteSpace(ManageNameBox.Text) ? Visibility.Visible : Visibility.Collapsed;
+        ManageForm.NameError.Visibility = ManagedPlacementMode != OrganizerPlacementMode.Station &&
+            string.IsNullOrWhiteSpace(ManageForm.NameInput.Text) ? Visibility.Visible : Visibility.Collapsed;
         _manageChangeVersion++;
-        ScheduleRuntimeApply(GetVisualChange(sender));
+        ScheduleRuntimeApply(ManageForm.GetVisualChange(sender));
         _stateSaveTimer.Stop();
         _stateSaveTimer.Start();
     }
 
     private void UpdateManageControls()
     {
-        if (ManageRowsCard is null || _adjustingManageControls) return;
+        if (ManageForm is null || _adjustingManageControls) return;
         _adjustingManageControls = true;
-        if (UpdateDockManageControls()) { _adjustingManageControls = false; return; }
-        bool positioned = ManagedPlacementMode == OrganizerPlacementMode.Positioned;
-        bool station = ManagedPlacementMode == OrganizerPlacementMode.Station;
-        bool stationSource = _editing?.PlacementMode == OrganizerPlacementMode.Station;
-        ManageExpansionModeCard.Visibility = station ? Visibility.Collapsed : Visibility.Visible;
-        ManageExpansionModeCombo.IsEnabled = !station &&
-            _selectedId is Guid selected && _host.State.Organizers.FirstOrDefault(item => item.Id == selected) is { ContainerOrganizerId: null };
-        ManageFloatingModeItem.IsEnabled = !stationSource;
-        ManagePositionedModeItem.IsEnabled = !stationSource;
-        if (station) ManageExpandedContentModeCombo.SelectedIndex = (int)OrganizerExpandedContentMode.Icon;
-        ManageExpandedContentModeCombo.IsEnabled = !station;
-        bool compactList = !station &&
-            ManageExpandedContentModeCombo.SelectedIndex == (int)OrganizerExpandedContentMode.CompactList;
-        ManageNameCard.Visibility = station ? Visibility.Collapsed : Visibility.Visible;
-        ManageNameError.Visibility = Visibility.Collapsed;
-        ManageDisplayCard.Visibility = station ? Visibility.Visible : Visibility.Collapsed;
-        ManageDockEdgeCard.Visibility = station ? Visibility.Visible : Visibility.Collapsed;
-        ManageCompactScaleCard.Visibility = station ? Visibility.Collapsed : Visibility.Visible;
-        ManageRowsCard.Visibility = compactList ? Visibility.Collapsed : Visibility.Visible;
-        ManageColumnsCard.Visibility = compactList ? Visibility.Collapsed : Visibility.Visible;
-        ManageCompactScaleSlider.Maximum = positioned
-            ? OrganizerLimits.MaximumPositionedCompactScale
-            : OrganizerLimits.MaximumCompactScale;
-        OrganizerPlacementMode placementMode = ManagedPlacementMode;
-        bool compactScaleConstrained = _host.State.GlobalSettings.UsesUniformCompactScale(placementMode);
-        if (compactScaleConstrained)
-            ManageCompactScaleSlider.SetModelValue(_host.State.GlobalSettings.ResolveCompactScale(placementMode, ManageCompactScaleSlider.Value));
-        ManageCompactScaleSlider.IsEnabled = !compactScaleConstrained;
-        ManageCompactScaleSlider.SetModelValue(Math.Clamp(
-            ManageCompactScaleSlider.Value,
-            OrganizerLimits.MinimumCompactScale,
-            ManageCompactScaleSlider.Maximum));
-        ConfigureGridSliders(ManageRowsSlider, ManageColumnsSlider, station);
-        (int rows, int columns) = ReadGridDimensions(ManageRowsSlider, ManageColumnsSlider, station);
-        var layout = new OrganizerLayout { Mode = OrganizerLayoutMode.Grid, Rows = rows, Columns = columns };
-        MainWindow? window = _selectedId is Guid id ? _host.Windows.FirstOrDefault(item => item.OrganizerId == id) : null;
-        DisplayInfo display = station
-            ? DisplayPlacementService.GetDisplay(SelectedDisplayDevice(ManageDisplayCombo))
-            : window is null ? GetPrimaryDisplay() : DisplayPlacementService.ForBounds(window.CompactBounds);
-        double canvas = ManageCanvasScaleSlider.Value;
-        double maximumItemScale;
-        if (station)
+        try
         {
-            maximumItemScale = DisplayPlacementService.CalculateMaximumStationItemScale(display, layout);
+            if (UpdateDockManageControls()) return;
+            bool canExpand = _selectedId is Guid selected &&
+                _host.State.Organizers.FirstOrDefault(item => item.Id == selected) is { ContainerOrganizerId: null };
+            _ = ManageForm.UpdateNonDockConstraints(
+                ManagedPlacementMode,
+                _editing,
+                _host.State.GlobalSettings,
+                canExpand,
+                () =>
+                {
+                    MainWindow? window = _selectedId is Guid id
+                        ? _host.Windows.FirstOrDefault(item => item.OrganizerId == id)
+                        : null;
+                    return window is null ? GetPrimaryDisplay() : DisplayPlacementService.ForBounds(window.CompactBounds);
+                });
         }
-        else
+        finally
         {
-            if (_editing?.ManualCanvasBaseWidthDip is double baseWidth &&
-                _editing.ManualCanvasBaseHeightDip is double baseHeight)
-            {
-                (double minimumWidth, double minimumHeight) =
-                    DisplayPlacementService.CalculateMinimumExpandedSizeDip(layout, .5);
-                ManageCanvasScaleSlider.Minimum = Math.Min(1.2,
-                    Math.Max(.1, Math.Max(minimumWidth / baseWidth, minimumHeight / baseHeight)));
-            }
-            else
-            {
-                ManageCanvasScaleSlider.Minimum = DisplayPlacementService.CalculateMinimumCanvasScale(display, layout);
-            }
-            if (ManageCanvasScaleSlider.Value < ManageCanvasScaleSlider.Minimum) ManageCanvasScaleSlider.SetModelValue(ManageCanvasScaleSlider.Minimum);
-            canvas = ManageCanvasScaleSlider.Value;
-            if (_editing?.ManualCanvasBaseWidthDip is double manualWidth &&
-                _editing.ManualCanvasBaseHeightDip is double manualHeight)
-            {
-                NativeMethods.RECT work = DisplayPlacementService.GetExpandedWorkArea(display);
-                double availablePanelHeightDip = Math.Max(
-                    1,
-                    work.Height / display.Scale - DisplayPlacementService.ExpandedTitleBandDip);
-                double fit = Math.Min(1, Math.Min(
-                    work.Width / display.Scale / (manualWidth * canvas),
-                    availablePanelHeightDip / (manualHeight * canvas)));
-                maximumItemScale = DisplayPlacementService.CalculateMaximumItemScaleForExpandedSize(
-                    layout,
-                    manualWidth * canvas * fit,
-                    manualHeight * canvas * fit);
-            }
-            else
-            {
-                maximumItemScale = DisplayPlacementService.CalculateMaximumItemScale(display, layout, canvas);
-            }
+            _adjustingManageControls = false;
         }
-        ManageItemScaleSlider.Maximum = maximumItemScale;
-        if (ManageItemScaleSlider.Value > ManageItemScaleSlider.Maximum) ManageItemScaleSlider.SetModelValue(ManageItemScaleSlider.Maximum);
-        SetPercent(ManageCompactPercent, ManageCompactScaleSlider.Value);
-        SetPercent(ManageCanvasPercent, ManageCanvasScaleSlider.Value);
-        SetPercent(ManageItemPercent, ManageItemScaleSlider.Value);
-        _adjustingManageControls = false;
     }
 
     private OrganizerDefinition? CaptureManageDraft()
@@ -1947,22 +1734,24 @@ public sealed partial class ConsoleWindow : Window
         _editing.PlacementMode = ManagedPlacementMode;
         if (_editing.PlacementMode == OrganizerPlacementMode.Dock)
         {
-            _editing.DockOrientation = (DockOrientation)Math.Clamp(ManageDockOrientationCombo.SelectedIndex, 0, 1);
-            _editing.DockIconSizeDip = _host.State.Organizers.First(item => item.Id == _editing.Id).DockIconSizeDip;
-            _editing.DockSpacingFactor = _host.State.Organizers.First(item => item.Id == _editing.Id).DockSpacingFactor;
+            OrganizerDefinition? liveDock = _host.State.Organizers.FirstOrDefault(item => item.Id == _editing.Id);
+            if (liveDock is null) return null;
+            _editing.DockOrientation = (DockOrientation)Math.Clamp(ManageForm.DockOrientation.SelectedIndex, 0, 1);
+            _editing.DockIconSizeDip = liveDock.DockIconSizeDip;
+            _editing.DockSpacingFactor = liveDock.DockSpacingFactor;
             return Clone(_editing);
         }
         _editing.ExpandedContentMode = _editing.PlacementMode == OrganizerPlacementMode.Station
             ? OrganizerExpandedContentMode.Icon
-            : (OrganizerExpandedContentMode)Math.Clamp(ManageExpandedContentModeCombo.SelectedIndex, 0, 1);
-        _editing.DockEdge = (OrganizerDockEdge)Math.Clamp(ManageDockEdgeCombo.SelectedIndex, 0, 3);
+            : (OrganizerExpandedContentMode)Math.Clamp(ManageForm.ExpandedContentCombo.SelectedIndex, 0, 1);
+        _editing.DockEdge = (OrganizerDockEdge)Math.Clamp(ManageForm.DockEdgeSelector.SelectedIndex, 0, 3);
         if (_editing.PlacementMode == OrganizerPlacementMode.Station)
         {
             _editing.Position ??= new WidgetPosition();
-            _editing.Position.MonitorDevice = SelectedDisplayDevice(ManageDisplayCombo) ?? string.Empty;
+            _editing.Position.MonitorDevice = ManageForm.SelectedDisplayDevice ?? string.Empty;
         }
         bool station = _editing.PlacementMode == OrganizerPlacementMode.Station;
-        (int rows, int columns) = ReadGridDimensions(ManageRowsSlider, ManageColumnsSlider, station);
+        (int rows, int columns) = ManageForm.ReadGridDimensions(station);
         if (station || _editing.Layout.Rows != rows || _editing.Layout.Columns != columns)
         {
             _editing.ManualCanvasBaseWidthDip = null;
@@ -1970,9 +1759,9 @@ public sealed partial class ConsoleWindow : Window
         }
         _editing.Layout.Mode = OrganizerLayoutMode.Grid;
         (_editing.Layout.Rows, _editing.Layout.Columns) = (rows, columns);
-        _editing.CompactScale = ManageCompactScaleSlider.Value;
-        _editing.CanvasScale = ManageCanvasScaleSlider.Value;
-        _editing.ItemScale = ManageItemScaleSlider.Value;
+        _editing.CompactScale = ManageForm.CompactScale.Value;
+        _editing.CanvasScale = ManageForm.CanvasScale.Value;
+        _editing.ItemScale = ManageForm.ItemScale.Value;
         return Clone(_editing);
     }
 
@@ -2001,10 +1790,8 @@ public sealed partial class ConsoleWindow : Window
         }
     }
 
-    private async void StateSaveTimer_Tick(Microsoft.UI.Dispatching.DispatcherQueueTimer sender, object args)
-    {
+    private async void StateSaveTimer_Tick(Microsoft.UI.Dispatching.DispatcherQueueTimer sender, object args) =>
         await FlushPendingManageChangesAsync(commitName: false);
-    }
 
     internal async Task<bool> FlushPendingManageChangesAsync(bool commitName = true)
     {
@@ -2018,8 +1805,6 @@ public sealed partial class ConsoleWindow : Window
             {
                 long inFlightVersion = _manageSaveVersion;
                 bool saved = await ObserveManageSaveAsync(inFlight);
-                // A newer edit may already have consumed its debounce while waiting here.
-                // Save that edit even if the older write failed; do not retry the same failed version.
                 if (!saved && _manageChangeVersion <= inFlightVersion) return false;
             }
             return _savedManageChangeVersion >= _manageChangeVersion || await TrackManageSaveAsync();
@@ -2106,13 +1891,14 @@ public sealed partial class ConsoleWindow : Window
 
     private void OpenManagedFolderButton_Click(object sender, RoutedEventArgs e)
     {
-        if (string.IsNullOrWhiteSpace(ManagePathBox.Text)) return;
-        if (!Directory.Exists(ManagePathBox.Text))
+        string path = ManageForm.StoragePathInput.Text;
+        if (string.IsNullOrWhiteSpace(path)) return;
+        if (!Directory.Exists(path))
         {
             ShowError(AppStrings.Get("OpenFolderErrorTitle"), AppStrings.Get("MissingStorageMessage"));
             return;
         }
-        Process.Start(new ProcessStartInfo(ManagePathBox.Text) { UseShellExecute = true });
+        Process.Start(new ProcessStartInfo(path) { UseShellExecute = true });
     }
 
     private void ShowError(string title, string message)
@@ -2125,51 +1911,12 @@ public sealed partial class ConsoleWindow : Window
         _errorInfoBarTimer.Start();
     }
 
-    private OrganizerVisualChange GetVisualChange(object sender)
-    {
-        if (ReferenceEquals(sender, ManageNameBox)) return OrganizerVisualChange.Name;
-        if (ReferenceEquals(sender, ManagePlacementModeCombo)) return OrganizerVisualChange.PlacementMode | OrganizerVisualChange.CompactScale | OrganizerVisualChange.Docking | OrganizerVisualChange.ExpandedContentMode;
-        if (ReferenceEquals(sender, ManageExpandedContentModeCombo)) return OrganizerVisualChange.ExpandedContentMode;
-        if (ReferenceEquals(sender, ManageDisplayCombo) || ReferenceEquals(sender, ManageDockEdgeCombo)) return OrganizerVisualChange.Docking;
-        if (ReferenceEquals(sender, ManageCompactScaleSlider)) return OrganizerVisualChange.CompactScale;
-        if (ReferenceEquals(sender, ManageCanvasScaleSlider)) return OrganizerVisualChange.CanvasScale | OrganizerVisualChange.ItemScale;
-        if (ReferenceEquals(sender, ManageItemScaleSlider)) return OrganizerVisualChange.ItemScale;
-        return OrganizerVisualChange.Layout | OrganizerVisualChange.ItemScale | OrganizerVisualChange.CanvasScale;
-    }
-
     private void PopulateDisplayCombos()
     {
-        string? addDevice = SelectedDisplayDevice(AddDisplayCombo);
-        string? manageDevice = SelectedDisplayDevice(ManageDisplayCombo);
         IReadOnlyList<DisplayInfo> displays = DisplayPlacementService.GetDisplays();
-        PopulateDisplayCombo(AddDisplayCombo, displays, addDevice);
-        PopulateDisplayCombo(ManageDisplayCombo, displays, manageDevice);
+        AddForm.PopulateDisplays(displays);
+        ManageForm.PopulateDisplays(displays);
     }
-
-    private static void PopulateDisplayCombo(ComboBox combo, IReadOnlyList<DisplayInfo> displays, string? selectedDevice)
-    {
-        combo.Items.Clear();
-        for (int index = 0; index < displays.Count; index++)
-        {
-            DisplayInfo display = displays[index];
-            combo.Items.Add(new ComboBoxItem
-            {
-                Tag = display.Device,
-                Content = AppStrings.Format("DisplayItemFormat", index + 1, display.Monitor.Width, display.Monitor.Height)
-            });
-        }
-        SelectDisplay(combo, selectedDevice);
-    }
-
-    private static void SelectDisplay(ComboBox combo, string? device)
-    {
-        combo.SelectedItem = combo.Items.OfType<ComboBoxItem>()
-            .FirstOrDefault(item => string.Equals(item.Tag as string, device, StringComparison.OrdinalIgnoreCase));
-        if (combo.SelectedIndex < 0 && combo.Items.Count > 0) combo.SelectedIndex = 0;
-    }
-
-    private static string? SelectedDisplayDevice(ComboBox combo) =>
-        (combo.SelectedItem as ComboBoxItem)?.Tag as string;
 
     private static string DockEdgeName(OrganizerDockEdge edge) => AppStrings.Get(edge switch
     {
@@ -2183,30 +1930,42 @@ public sealed partial class ConsoleWindow : Window
         .FirstOrDefault(display => display.Monitor.Left == 0 && display.Monitor.Top == 0)
         ?? DisplayPlacementService.GetDisplays().First();
 
-    private static void SetPercent(TextBlock target, double value) => target.Text = $"{Math.Round(value * 100):0}%";
+    private static void SetPercent(TextBlock target, double value) =>
+        target.Text = $"{Math.Round(value * 100):0}%";
 
-    private static void ConfigureGridSliders(Slider rows, Slider columns, bool station)
+    private static WidgetPosition? ClonePosition(WidgetPosition? position) => position is null
+        ? null
+        : new WidgetPosition
+        {
+            MonitorDevice = position.MonitorDevice,
+            XDip = position.XDip,
+            YDip = position.YDip,
+            SavedWorkAreaWidthDip = position.SavedWorkAreaWidthDip,
+            SavedWorkAreaHeightDip = position.SavedWorkAreaHeightDip
+        };
+
+    private static NoteDefinition CloneNote(NoteDefinition note) => new()
     {
-        rows.Minimum = station ? OrganizerLimits.MinimumStationRows : OrganizerLimits.MinimumGridDimension;
-        rows.Maximum = station ? OrganizerLimits.MaximumStationRows : OrganizerLimits.MaximumLayoutDimension;
-        columns.Minimum = station ? OrganizerLimits.MinimumStationColumns : OrganizerLimits.MinimumGridDimension;
-        columns.Maximum = station ? OrganizerLimits.MaximumStationColumns : OrganizerLimits.MaximumLayoutDimension;
-        rows.Value = Math.Clamp(rows.Value, rows.Minimum, rows.Maximum);
-        columns.Value = Math.Clamp(columns.Value, columns.Minimum, columns.Maximum);
-    }
-
-    private static (int Rows, int Columns) ReadGridDimensions(Slider rows, Slider columns, bool station) => (
-        Math.Clamp((int)Math.Round(rows.Value),
-            station ? OrganizerLimits.MinimumStationRows : OrganizerLimits.MinimumGridDimension,
-            station ? OrganizerLimits.MaximumStationRows : OrganizerLimits.MaximumLayoutDimension),
-        Math.Clamp((int)Math.Round(columns.Value),
-            station ? OrganizerLimits.MinimumStationColumns : OrganizerLimits.MinimumGridDimension,
-            station ? OrganizerLimits.MaximumStationColumns : OrganizerLimits.MaximumLayoutDimension));
+        Id = note.Id,
+        Name = note.Name,
+        Theme = note.Theme,
+        FontSize = note.FontSize,
+        ShowRuledLines = note.ShowRuledLines,
+        Placement = note.Placement is null ? null : new NoteWindowPlacement
+        {
+            MonitorDevice = note.Placement.MonitorDevice,
+            XDip = note.Placement.XDip,
+            YDip = note.Placement.YDip,
+            WidthDip = note.Placement.WidthDip,
+            HeightDip = note.Placement.HeightDip
+        }
+    };
 
     private static OrganizerDefinition Clone(OrganizerDefinition source) => new()
     {
         Id = source.Id,
         Name = source.Name,
+        HideName = source.HideName,
         CreatedAtUtc = source.CreatedAtUtc,
         PlacementMode = source.PlacementMode,
         ExpansionMode = source.ExpansionMode,
@@ -2214,11 +1973,7 @@ public sealed partial class ConsoleWindow : Window
         DockOrientation = source.DockOrientation,
         DockIconSizeDip = source.DockIconSizeDip,
         DockSpacingFactor = source.DockSpacingFactor,
-        DockCenter = source.DockCenter is null ? null : new WidgetPosition
-        {
-            MonitorDevice = source.DockCenter.MonitorDevice, XDip = source.DockCenter.XDip, YDip = source.DockCenter.YDip,
-            SavedWorkAreaWidthDip = source.DockCenter.SavedWorkAreaWidthDip, SavedWorkAreaHeightDip = source.DockCenter.SavedWorkAreaHeightDip
-        },
+        DockCenter = ClonePosition(source.DockCenter),
         Layout = new OrganizerLayout { Mode = source.Layout.Mode, Rows = source.Layout.Rows, Columns = source.Layout.Columns },
         CompactScale = source.CompactScale,
         CanvasScale = source.CanvasScale,
@@ -2232,17 +1987,13 @@ public sealed partial class ConsoleWindow : Window
         CompactListCanvasHeightDip = source.CompactListCanvasHeightDip,
         ManualCanvasBaseWidthDip = source.ManualCanvasBaseWidthDip,
         ManualCanvasBaseHeightDip = source.ManualCanvasBaseHeightDip,
-        Position = source.Position is null ? null : new WidgetPosition
-        {
-            MonitorDevice = source.Position.MonitorDevice,
-            XDip = source.Position.XDip,
-            YDip = source.Position.YDip,
-            SavedWorkAreaWidthDip = source.Position.SavedWorkAreaWidthDip,
-            SavedWorkAreaHeightDip = source.Position.SavedWorkAreaHeightDip
-        },
+        Position = ClonePosition(source.Position),
+        ExpandedPosition = ClonePosition(source.ExpandedPosition),
+        ContainerOrganizerId = source.ContainerOrganizerId,
+        StorageOwnedByApp = source.StorageOwnedByApp,
         StorageRelativePath = source.StorageRelativePath,
         StorageAbsolutePath = source.StorageAbsolutePath,
-        ItemOrder = source.ItemOrder.ToList()
+        ItemOrder = source.ItemOrder.ToList(),
+        Notes = source.Notes.Select(CloneNote).ToList()
     };
 }
-

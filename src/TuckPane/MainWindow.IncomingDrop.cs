@@ -7,7 +7,7 @@ public sealed partial class MainWindow
     private bool ReceivingDrop => _incomingDrop.ProtectsExpansion(_dragHasLocalFile);
     internal IDisposable HoldIncomingDrop()
     {
-        _ordinaryOutsideSince = 0;
+        _desktopCoordinator.ResetOrdinaryOutsideDelay();
         return _incomingDrop.Hold();
     }
 }

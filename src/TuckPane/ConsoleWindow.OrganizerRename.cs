@@ -1,7 +1,6 @@
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
-using TuckPane.Core;
 using TuckPane.Models;
 using TuckPane.Services;
 using Windows.System;
@@ -17,7 +16,9 @@ public sealed partial class ConsoleWindow
     {
         if (_loadingEditor || _editing is null) return;
         _manageNameDirty = true;
-        ManageNameError.Visibility = string.IsNullOrWhiteSpace(ManageNameBox.Text) ? Visibility.Visible : Visibility.Collapsed;
+        ManageForm.NameError.Visibility = string.IsNullOrWhiteSpace(ManageForm.NameInput.Text)
+            ? Visibility.Visible
+            : Visibility.Collapsed;
     }
 
     private async void ManageNameBox_KeyDown(object sender, KeyRoutedEventArgs e)
@@ -45,9 +46,9 @@ public sealed partial class ConsoleWindow
         if (_manageRenameTask is not null) return _manageRenameTask;
         if (!_manageNameDirty || _selectedId is not Guid id) return Task.FromResult(true);
         var completion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-        _manageRenameTask = completion.Task; // Set before disabling controls can cause LostFocus.
+        _manageRenameTask = completion.Task;
         _manageNameDirty = false;
-        string requested = ManageNameBox.Text;
+        string requested = ManageForm.NameInput.Text;
         _ = CommitManageNameCoreAsync(id, requested, completion);
         return completion.Task;
     }
@@ -55,7 +56,7 @@ public sealed partial class ConsoleWindow
     private async Task CommitManageNameCoreAsync(Guid id, string requested, TaskCompletionSource<bool> completion)
     {
         bool saved = false;
-        ManageNameBox.IsEnabled = false;
+        ManageForm.NameInput.IsEnabled = false;
         try
         {
             OrganizerDefinition? definition = _host.State.Organizers.FirstOrDefault(item => item.Id == id);
@@ -71,7 +72,7 @@ public sealed partial class ConsoleWindow
         finally
         {
             RefreshOrganizerName(id);
-            ManageNameBox.IsEnabled = true;
+            ManageForm.NameInput.IsEnabled = true;
             _manageRenameTask = null;
             completion.SetResult(saved);
         }
@@ -93,9 +94,9 @@ public sealed partial class ConsoleWindow
         _editing.StorageRelativePath = definition.StorageRelativePath;
         bool wasLoading = _loadingEditor;
         _loadingEditor = true;
-        if (!_manageNameDirty) ManageNameBox.Text = definition.Name;
-        ManagePathBox.Text = AppPaths.ResolveStoragePath(definition);
-        ManageNameError.Visibility = Visibility.Collapsed;
+        if (!_manageNameDirty) ManageForm.NameInput.Text = definition.Name;
+        ManageForm.StoragePathInput.Text = AppPaths.ResolveStoragePath(definition);
+        ManageForm.NameError.Visibility = Visibility.Collapsed;
         _loadingEditor = wasLoading;
     }
 }
