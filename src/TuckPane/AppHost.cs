@@ -20,13 +20,8 @@ public sealed partial class AppHost : IDisposable
     private readonly DesktopGridService _desktopGrid = new();
     private readonly Dictionary<Guid, MainWindow> _windows = [];
     private readonly Dictionary<Guid, NoteWindow> _noteWindows = [];
-    private readonly Dictionary<string, NoteWindow> _externalNoteWindows = new(StringComparer.OrdinalIgnoreCase);
-    private readonly Dictionary<string, TodoWindow> _externalTodoWindows = new(StringComparer.OrdinalIgnoreCase);
-    // ponytail: portable document opens are rare; use per-path tasks only if parallel opens become measurable.
-    private readonly SemaphoreSlim _externalNoteOpenGate = new(1, 1);
     private readonly HashSet<Guid> _trayHiddenNotes = [];
-    private readonly HashSet<string> _trayHiddenExternalNotes = new(StringComparer.OrdinalIgnoreCase);
-    private readonly HashSet<string> _trayHiddenExternalTodos = new(StringComparer.OrdinalIgnoreCase);
+    private readonly SemaphoreSlim _globalSettingsGate = new(1, 1);
     private readonly NoteStore _noteStore = new();
     private readonly DispatcherQueue _dispatcher = DispatcherQueue.GetForCurrentThread();
     private TrayIconService? _tray;
@@ -52,18 +47,7 @@ public sealed partial class AppHost : IDisposable
     public async Task SetOrganizerTextColorAsync(OrganizerTextColor color)
     {
         color = GlobalSettings.NormalizeOrganizerTextColor(color);
-        if (State.GlobalSettings.OrganizerTextColor == color) return;
-        OrganizerTextColor previous = State.GlobalSettings.OrganizerTextColor;
-        State.GlobalSettings.OrganizerTextColor = color;
-        try
-        {
-            await SaveStateAsync();
-        }
-        catch
-        {
-            State.GlobalSettings.OrganizerTextColor = previous;
-            throw;
-        }
+        if (!await MutateGlobalSettingAsync(s => s.OrganizerTextColor, (s, v) => s.OrganizerTextColor = v, color)) return;
         ThemeChanged?.Invoke(this, EventArgs.Empty);
     }
 
@@ -121,7 +105,8 @@ public sealed partial class AppHost : IDisposable
         catch (Exception ex) { AppLogger.Error("无法初始化桌面右键菜单。", ex); }
         RefreshFolderContextMenuLabel();
         await MigrateLegacyOrganizerNotesAsync();
-        StartupService.Apply(State.GlobalSettings.StartWithWindows);
+        try { StartupService.Apply(State.GlobalSettings.StartWithWindows); }
+        catch (Exception ex) { AppLogger.Error("无法同步开机自启注册表项。", ex); }
 
         Updates = new AppUpdateService();
         Console = new ConsoleWindow(this);
@@ -311,7 +296,8 @@ public sealed partial class AppHost : IDisposable
 
     public async Task<OrganizerDefinition> DuplicateOrganizerAsync(Guid id)
     {
-        OrganizerDefinition source = State.Organizers.First(item => item.Id == id);
+        OrganizerDefinition source = State.Organizers.FirstOrDefault(item => item.Id == id)
+            ?? throw new InvalidOperationException(AppStrings.Get("OrganizerContainmentMissingError"));
         if (source.PlacementMode == OrganizerPlacementMode.Station)
             throw new InvalidOperationException(AppStrings.Get("StationDuplicateError"));
         string name = OrganizerInteractionMath.CreateCopyName(
@@ -327,7 +313,8 @@ public sealed partial class AppHost : IDisposable
 
     internal async Task<string> CreateNoteAsync(Guid organizerId, string? text, NativeMethods.POINT anchor)
     {
-        OrganizerDefinition organizer = State.Organizers.First(item => item.Id == organizerId);
+        OrganizerDefinition organizer = State.Organizers.FirstOrDefault(item => item.Id == organizerId)
+            ?? throw new InvalidOperationException(AppStrings.Get("OrganizerContainmentMissingError"));
         var note = new NoteDefinition
         {
             Name = OrganizerNoteRules.CreateDefaultName(organizer.Notes.Select(item => item.Name)),
@@ -350,7 +337,8 @@ public sealed partial class AppHost : IDisposable
 
     internal async Task<string> CreateTodoAsync(Guid organizerId, NativeMethods.POINT anchor)
     {
-        OrganizerDefinition organizer = State.Organizers.First(item => item.Id == organizerId);
+        OrganizerDefinition organizer = State.Organizers.FirstOrDefault(item => item.Id == organizerId)
+            ?? throw new InvalidOperationException(AppStrings.Get("OrganizerContainmentMissingError"));
         string storagePath = AppPaths.ResolveStoragePath(organizer);
         Directory.CreateDirectory(storagePath);
         var document = new PortableTodoDocument
@@ -475,8 +463,8 @@ public sealed partial class AppHost : IDisposable
     internal void OpenNote(Guid organizerId, Guid noteId)
     {
         if (IsPreparingUpdate) return;
-        OrganizerDefinition organizer = State.Organizers.First(item => item.Id == organizerId);
-        NoteDefinition note = organizer.Notes.First(item => item.Id == noteId);
+        if (State.Organizers.FirstOrDefault(item => item.Id == organizerId) is not OrganizerDefinition organizer) return;
+        if (organizer.Notes.FirstOrDefault(item => item.Id == noteId) is not NoteDefinition note) return;
         if (!_noteWindows.TryGetValue(noteId, out NoteWindow? window))
         {
             window = new NoteWindow(this, note, _noteStore, organizerId: organizerId);
@@ -486,102 +474,12 @@ public sealed partial class AppHost : IDisposable
         window.ShowAndActivate();
     }
 
-    internal async Task OpenExternalNoteAsync(string path)
-    {
-        if (IsPreparingUpdate) return;
-        string fullPath = Path.GetFullPath(path);
-        if (!Path.GetExtension(fullPath).Equals(".tucknote", StringComparison.OrdinalIgnoreCase))
-        {
-            ReportOperationError("TuckPane", AppStrings.Format("PortableNoteOpenErrorFormat", Path.GetFileName(fullPath), AppStrings.Get("PortableNoteExtensionError")));
-            return;
-        }
-        await _externalNoteOpenGate.WaitAsync();
-        try
-        {
-            if (IsPreparingUpdate) return;
-            if (_externalNoteWindows.TryGetValue(fullPath, out NoteWindow? existing))
-            {
-                _trayHiddenExternalNotes.Remove(fullPath);
-                existing.ShowAndActivate();
-                return;
-            }
-            PortableNoteDocument portable = await _noteStore.LoadPortableAsync(fullPath);
-            if (portable.Theme != State.GlobalSettings.NoteTheme)
-            {
-                portable.Theme = State.GlobalSettings.NoteTheme;
-                await _noteStore.SavePortableAsync(fullPath, portable);
-            }
-            if (IsPreparingUpdate) return;
-            var definition = new NoteDefinition
-            {
-                Name = Path.GetFileNameWithoutExtension(fullPath),
-                Theme = State.GlobalSettings.NoteTheme,
-                FontSize = portable.FontSize,
-                ShowRuledLines = portable.ShowRuledLines,
-                Placement = FromPortablePlacement(portable.Placement)
-            };
-            var window = new NoteWindow(this, definition, _noteStore, fullPath, portable);
-            window.InitializeHostWindow();
-            _externalNoteWindows[fullPath] = window;
-            window.ShowAndActivate();
-        }
-        catch (Exception ex)
-        {
-            AppLogger.Error($"无法打开便携便签：{fullPath}", ex);
-            ReportOperationError("TuckPane", AppStrings.Format("PortableNoteOpenErrorFormat", Path.GetFileName(fullPath), ex.Message));
-        }
-        finally
-        {
-            _externalNoteOpenGate.Release();
-        }
-    }
-
-    internal async Task OpenExternalTodoAsync(string path)
-    {
-        if (IsPreparingUpdate) return;
-        string fullPath = Path.GetFullPath(path);
-        if (!Path.GetExtension(fullPath).Equals(".tucktodo", StringComparison.OrdinalIgnoreCase))
-        {
-            ReportOperationError("TuckPane", AppStrings.Format("PortableTodoOpenErrorFormat", Path.GetFileName(fullPath), AppStrings.Get("PortableTodoExtensionError")));
-            return;
-        }
-        await _externalNoteOpenGate.WaitAsync();
-        try
-        {
-            if (IsPreparingUpdate) return;
-            if (_externalTodoWindows.TryGetValue(fullPath, out TodoWindow? existing))
-            {
-                _trayHiddenExternalTodos.Remove(fullPath);
-                existing.ShowAndActivate();
-                return;
-            }
-            PortableTodoDocument document = await _noteStore.LoadTodoAsync(fullPath);
-            if (document.Theme != State.GlobalSettings.NoteTheme)
-            {
-                document.Theme = State.GlobalSettings.NoteTheme;
-                await _noteStore.SaveTodoAsync(fullPath, document);
-            }
-            if (IsPreparingUpdate) return;
-            var window = new TodoWindow(this, _noteStore, fullPath, document);
-            window.InitializeHostWindow();
-            _externalTodoWindows[fullPath] = window;
-            window.ShowAndActivate();
-        }
-        catch (Exception ex)
-        {
-            AppLogger.Error($"无法打开便携待办：{fullPath}", ex);
-            ReportOperationError("TuckPane", AppStrings.Format("PortableTodoOpenErrorFormat", Path.GetFileName(fullPath), ex.Message));
-        }
-        finally
-        {
-            _externalNoteOpenGate.Release();
-        }
-    }
-
     internal async Task<(string Path, bool RestoreWindow)> PrepareNoteDragAsync(Guid organizerId, Guid noteId)
     {
-        OrganizerDefinition organizer = State.Organizers.First(item => item.Id == organizerId);
-        NoteDefinition note = organizer.Notes.First(item => item.Id == noteId);
+        OrganizerDefinition organizer = State.Organizers.FirstOrDefault(item => item.Id == organizerId)
+            ?? throw new InvalidOperationException(AppStrings.Get("OrganizerContainmentMissingError"));
+        NoteDefinition note = organizer.Notes.FirstOrDefault(item => item.Id == noteId)
+            ?? throw new InvalidOperationException(AppStrings.Get("OrganizerContainmentMissingError"));
         bool restoreWindow = false;
         try
         {
@@ -630,8 +528,10 @@ public sealed partial class AppHost : IDisposable
 
     internal async Task RenameNoteAsync(Guid organizerId, Guid noteId, string name)
     {
-        OrganizerDefinition organizer = State.Organizers.First(item => item.Id == organizerId);
-        NoteDefinition note = organizer.Notes.First(item => item.Id == noteId);
+        OrganizerDefinition organizer = State.Organizers.FirstOrDefault(item => item.Id == organizerId)
+            ?? throw new InvalidOperationException(AppStrings.Get("OrganizerContainmentMissingError"));
+        NoteDefinition note = organizer.Notes.FirstOrDefault(item => item.Id == noteId)
+            ?? throw new InvalidOperationException(AppStrings.Get("OrganizerContainmentMissingError"));
         string candidate = name.Trim();
         if (candidate.Length == 0) throw new InvalidOperationException(AppStrings.Get("NoteNameRequired"));
         if (!OrganizerNoteRules.IsNameAvailable(
@@ -654,174 +554,6 @@ public sealed partial class AppHost : IDisposable
         }
     }
 
-    internal async Task<string> RenameExternalNoteAsync(string path, string name)
-    {
-        string fullPath = Path.GetFullPath(path);
-        string candidate = name.Trim();
-        if (candidate.Length == 0) throw new InvalidOperationException(AppStrings.Get("NoteNameRequired"));
-        if (candidate.Length > 120 || candidate.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0 || candidate.EndsWith('.'))
-            throw new InvalidOperationException(AppStrings.Get("FolderNameInvalidError"));
-        if (NoteStore.IsReservedDeviceName(candidate.Split('.', 2)[0]))
-            throw new InvalidOperationException(AppStrings.Get("FolderNameReservedError"));
-
-        string directory = Path.GetDirectoryName(fullPath) ?? throw new InvalidOperationException(AppStrings.Get("FolderNameInvalidError"));
-        string targetPath = Path.Combine(directory, candidate + ".tucknote");
-        if (targetPath.Equals(fullPath, StringComparison.Ordinal)) return fullPath;
-        if (!targetPath.Equals(fullPath, StringComparison.OrdinalIgnoreCase) &&
-            (File.Exists(targetPath) || Directory.Exists(targetPath)))
-            throw new InvalidOperationException(AppStrings.Get("NoteNameDuplicate"));
-
-        OrganizerDefinition? organizer = State.Organizers.FirstOrDefault(item =>
-            Path.GetFullPath(AppPaths.ResolveStoragePath(item)).TrimEnd(Path.DirectorySeparatorChar)
-                .Equals(directory.TrimEnd(Path.DirectorySeparatorChar), StringComparison.OrdinalIgnoreCase));
-        string oldFileName = Path.GetFileName(fullPath);
-        int orderIndex = organizer?.ItemOrder.FindIndex(item =>
-            item.Equals(oldFileName, StringComparison.OrdinalIgnoreCase)) ?? -1;
-        bool wasHidden = _trayHiddenExternalNotes.Contains(fullPath);
-        _externalNoteWindows.TryGetValue(fullPath, out NoteWindow? window);
-
-        try
-        {
-            await NoteRenameTransaction.RenameAsync(
-                fullPath,
-                targetPath,
-                () => window?.BeginDirectoryRenameAsync() ?? Task.CompletedTask,
-                () => window?.EndDirectoryRename(),
-                (oldPath, newPath) =>
-                {
-                    _externalNoteWindows.Remove(oldPath);
-                    _trayHiddenExternalNotes.Remove(oldPath);
-                    if (window is not null) _externalNoteWindows[newPath] = window;
-                    if (wasHidden) _trayHiddenExternalNotes.Add(newPath);
-                    if (orderIndex >= 0) organizer!.ItemOrder[orderIndex] = Path.GetFileName(newPath);
-                },
-                newPath => window?.RebindExternalPath(newPath),
-                () => orderIndex >= 0 ? SaveStateAsync() : Task.CompletedTask);
-        }
-        finally
-        {
-            // Refresh only after the save gate is released, including a failed rollback that kept the new name.
-            if (organizer is not null && _windows.TryGetValue(organizer.Id, out MainWindow? owner))
-            {
-                try { await owner.RefreshNotesAsync(); }
-                catch (Exception ex) { AppLogger.Error($"便携便签改名后刷新失败：{targetPath}", ex); }
-            }
-        }
-        return targetPath;
-    }
-
-    internal async Task<string> RenameExternalTodoAsync(string path, string name)
-    {
-        string fullPath = Path.GetFullPath(path);
-        string candidate = name.Trim();
-        if (candidate.Length == 0) throw new InvalidOperationException(AppStrings.Get("TodoNameRequired"));
-        if (candidate.Length > 120 || candidate.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0 || candidate.EndsWith('.'))
-            throw new InvalidOperationException(AppStrings.Get("FolderNameInvalidError"));
-        if (NoteStore.IsReservedDeviceName(candidate.Split('.', 2)[0]))
-            throw new InvalidOperationException(AppStrings.Get("FolderNameReservedError"));
-
-        string directory = Path.GetDirectoryName(fullPath) ?? throw new InvalidOperationException(AppStrings.Get("FolderNameInvalidError"));
-        string targetPath = Path.Combine(directory, candidate + ".tucktodo");
-        if (targetPath.Equals(fullPath, StringComparison.Ordinal)) return fullPath;
-        if (!targetPath.Equals(fullPath, StringComparison.OrdinalIgnoreCase) &&
-            (File.Exists(targetPath) || Directory.Exists(targetPath)))
-            throw new InvalidOperationException(AppStrings.Get("TodoNameDuplicate"));
-
-        OrganizerDefinition? organizer = State.Organizers.FirstOrDefault(item =>
-            Path.GetFullPath(AppPaths.ResolveStoragePath(item)).TrimEnd(Path.DirectorySeparatorChar)
-                .Equals(directory.TrimEnd(Path.DirectorySeparatorChar), StringComparison.OrdinalIgnoreCase));
-        string oldFileName = Path.GetFileName(fullPath);
-        string newFileName = Path.GetFileName(targetPath);
-        int orderIndex = organizer?.ItemOrder.FindIndex(item =>
-            item.Equals(oldFileName, StringComparison.OrdinalIgnoreCase)) ?? -1;
-        bool wasHidden = _trayHiddenExternalTodos.Contains(fullPath);
-        _externalTodoWindows.TryGetValue(fullPath, out TodoWindow? window);
-
-        File.Move(fullPath, targetPath);
-        _externalTodoWindows.Remove(fullPath);
-        _trayHiddenExternalTodos.Remove(fullPath);
-        if (window is not null) _externalTodoWindows[targetPath] = window;
-        if (wasHidden) _trayHiddenExternalTodos.Add(targetPath);
-        if (orderIndex >= 0) organizer!.ItemOrder[orderIndex] = newFileName;
-        try
-        {
-            if (orderIndex >= 0) await SaveStateAsync();
-        }
-        catch (Exception saveError)
-        {
-            try
-            {
-                File.Move(targetPath, fullPath);
-            }
-            catch (Exception rollbackError)
-            {
-                AppLogger.Error($"便携待办改名状态保存失败：{targetPath}", saveError);
-                AppLogger.Error($"无法回滚便携待办改名：{targetPath}", rollbackError);
-                window?.RebindExternalPath(targetPath);
-                return targetPath;
-            }
-            if (orderIndex >= 0) organizer!.ItemOrder[orderIndex] = oldFileName;
-            _externalTodoWindows.Remove(targetPath);
-            if (window is not null) _externalTodoWindows[fullPath] = window;
-            _trayHiddenExternalTodos.Remove(targetPath);
-            if (wasHidden) _trayHiddenExternalTodos.Add(fullPath);
-            throw;
-        }
-
-        window?.RebindExternalPath(targetPath);
-        if (organizer is not null && _windows.TryGetValue(organizer.Id, out MainWindow? owner))
-        {
-            try { await owner.RefreshNotesAsync(); }
-            catch (Exception ex) { AppLogger.Error($"便携待办改名后刷新失败：{targetPath}", ex); }
-        }
-        return targetPath;
-    }
-
-    internal void RebindPortableWindowAfterMove(string oldPath, string newPath)
-    {
-        string source = Path.GetFullPath(oldPath);
-        string destination = Path.GetFullPath(newPath);
-        if (_externalNoteWindows.Remove(source, out NoteWindow? noteWindow))
-        {
-            bool hidden = _trayHiddenExternalNotes.Remove(source);
-            _externalNoteWindows[destination] = noteWindow;
-            if (hidden) _trayHiddenExternalNotes.Add(destination);
-            noteWindow.RebindExternalPath(destination);
-        }
-        if (_externalTodoWindows.Remove(source, out TodoWindow? todoWindow))
-        {
-            bool hidden = _trayHiddenExternalTodos.Remove(source);
-            _externalTodoWindows[destination] = todoWindow;
-            if (hidden) _trayHiddenExternalTodos.Add(destination);
-            todoWindow.RebindExternalPath(destination);
-        }
-    }
-
-    internal async Task<bool> FlushPortableWindowAsync(string path)
-    {
-        string fullPath = Path.GetFullPath(path);
-        if (_externalNoteWindows.TryGetValue(fullPath, out NoteWindow? noteWindow))
-            return await noteWindow.FlushForExitAsync();
-        if (_externalTodoWindows.TryGetValue(fullPath, out TodoWindow? todoWindow))
-            return await todoWindow.FlushForExitAsync();
-        return true;
-    }
-
-    internal void ClosePortableWindowWithoutSave(string path)
-    {
-        string fullPath = Path.GetFullPath(path);
-        if (_externalNoteWindows.Remove(fullPath, out NoteWindow? noteWindow))
-        {
-            _trayHiddenExternalNotes.Remove(fullPath);
-            noteWindow.ClosePermanentlyWithoutSave();
-        }
-        if (_externalTodoWindows.Remove(fullPath, out TodoWindow? todoWindow))
-        {
-            _trayHiddenExternalTodos.Remove(fullPath);
-            todoWindow.ClosePermanentlyWithoutSave();
-        }
-    }
-
     internal async Task SetNoteThemeAsync(NoteTheme theme)
     {
         if (!_dispatcher.HasThreadAccess)
@@ -841,12 +573,12 @@ public sealed partial class AppHost : IDisposable
     private IReadOnlyList<NoteThemeTarget> CaptureNoteThemeTargets(NoteTheme theme)
     {
         var targets = new List<NoteThemeTarget>();
-        foreach (NoteWindow window in _noteWindows.Values.Concat(_externalNoteWindows.Values).ToArray())
+        foreach (NoteWindow window in _noteWindows.Values.Concat(OpenExternalNoteWindows).ToArray())
             targets.Add(new($"note:{window.Id}", () => window.ApplyGlobalThemeAsync(theme)));
-        foreach (TodoWindow window in _externalTodoWindows.Values.ToArray())
+        foreach (TodoWindow window in OpenExternalTodoWindows.ToArray())
             targets.Add(new($"todo:{window.ExternalPath}", () => window.ApplyGlobalThemeAsync(theme)));
-        var openNotePaths = _externalNoteWindows.Keys.ToHashSet(StringComparer.OrdinalIgnoreCase);
-        var openTodoPaths = _externalTodoWindows.Keys.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        HashSet<string> openNotePaths = _portableDocuments.GetOpenPaths(PortableDocumentKind.Note);
+        HashSet<string> openTodoPaths = _portableDocuments.GetOpenPaths(PortableDocumentKind.Todo);
         var visitedRoots = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (OrganizerDefinition organizer in State.Organizers.ToArray())
         {
@@ -874,8 +606,8 @@ public sealed partial class AppHost : IDisposable
 
     internal async Task DeleteNoteAsync(Guid organizerId, Guid noteId)
     {
-        OrganizerDefinition organizer = State.Organizers.First(item => item.Id == organizerId);
-        NoteDefinition note = organizer.Notes.First(item => item.Id == noteId);
+        if (State.Organizers.FirstOrDefault(item => item.Id == organizerId) is not OrganizerDefinition organizer) return;
+        if (organizer.Notes.FirstOrDefault(item => item.Id == noteId) is not NoteDefinition note) return;
         int index = organizer.Notes.IndexOf(note);
         int orderIndex = organizer.ItemOrder.FindIndex(key =>
             key.Equals(OrganizerNoteRules.ItemKey(noteId), StringComparison.OrdinalIgnoreCase));
@@ -889,8 +621,8 @@ public sealed partial class AppHost : IDisposable
         }
         catch
         {
-            organizer.Notes.Insert(index, note);
-            organizer.ItemOrder.Insert(orderIndex < 0 ? organizer.ItemOrder.Count : orderIndex, OrganizerNoteRules.ItemKey(noteId));
+            organizer.Notes.Insert(Math.Min(index, organizer.Notes.Count), note);
+            organizer.ItemOrder.Insert(orderIndex < 0 ? organizer.ItemOrder.Count : Math.Min(orderIndex, organizer.ItemOrder.Count), OrganizerNoteRules.ItemKey(noteId));
             throw;
         }
         try { await _noteStore.DeleteAsync(noteId); }
@@ -1014,12 +746,13 @@ public sealed partial class AppHost : IDisposable
 
     public async Task<string?> ToggleOrganizerModeAsync(Guid id)
     {
-        OrganizerDefinition current = State.Organizers.First(item => item.Id == id);
-        if (!OrganizerKinds.IsRegular(current.PlacementMode)) return AppStrings.Get("StationManageModeError");
+        if (State.Organizers.FirstOrDefault(item => item.Id == id) is not OrganizerDefinition initial) return null;
+        if (!OrganizerKinds.IsRegular(initial.PlacementMode)) return AppStrings.Get("StationManageModeError");
         if (_windows.TryGetValue(id, out MainWindow? window) && window.IsExpanded)
         {
             await window.CollapseForPeerAsync();
         }
+        if (State.Organizers.FirstOrDefault(item => item.Id == id) is not OrganizerDefinition current) return null;
 
         OrganizerDefinition edited = OrganizerInteractionMath.CopySettings(current, current.Name);
         edited.Id = current.Id;
@@ -1037,7 +770,7 @@ public sealed partial class AppHost : IDisposable
 
     internal async Task<string?> ToggleOrganizerExpandedContentModeAsync(Guid id)
     {
-        OrganizerDefinition current = State.Organizers.First(item => item.Id == id);
+        if (State.Organizers.FirstOrDefault(item => item.Id == id) is not OrganizerDefinition current) return null;
         OrganizerDefinition edited = OrganizerInteractionMath.CopySettings(current, current.Name);
         edited.Id = current.Id;
         if (!OrganizerInteractionMath.TryToggleExpandedContentMode(edited))
@@ -1052,7 +785,7 @@ public sealed partial class AppHost : IDisposable
 
     internal string? ApplyOrganizerRuntime(OrganizerDefinition edited, OrganizerVisualChange changes)
     {
-        OrganizerDefinition current = State.Organizers.First(item => item.Id == edited.Id);
+        if (State.Organizers.FirstOrDefault(item => item.Id == edited.Id) is not OrganizerDefinition current) return null;
         if (!OrganizerInteractionMath.CanChangePlacementMode(current.PlacementMode, edited.PlacementMode))
             return AppStrings.Get("StationManageModeError");
         if (edited.PlacementMode == OrganizerPlacementMode.Station)
@@ -1071,23 +804,11 @@ public sealed partial class AppHost : IDisposable
         WidgetPosition? previousPosition = current.Position;
         Guid[] previousContainmentChain = OrganizerContainment.GetAncestorIds(State.Organizers, current.Id).ToArray();
         // Display names are persisted only by RenameOrganizerAsync.
-        current.PlacementMode = edited.PlacementMode;
-        current.DockEdge = edited.DockEdge;
+        current.CopyEditableSettingsFrom(edited, copyPreferencesAndDock: false, copyManualCanvasBase: false);
         if (current.PlacementMode == OrganizerPlacementMode.Dock)
             DockSettings.Apply(current, edited.DockOrientation, edited.DockIconSizeDip, edited.DockSpacingFactor);
         if (edited.PlacementMode == OrganizerPlacementMode.Station && edited.Position is not null)
             current.Position = edited.Position;
-        current.Layout = new OrganizerLayout { Mode = edited.Layout.Mode, Rows = edited.Layout.Rows, Columns = edited.Layout.Columns };
-        current.CompactScale = edited.CompactScale;
-        current.CanvasScale = edited.CanvasScale;
-        current.ItemScale = edited.ItemScale;
-        current.NameScale = edited.NameScale;
-        current.CompactListItemScale = edited.CompactListItemScale;
-        current.IconContentScale = edited.IconContentScale;
-        current.CompactListContentScale = edited.CompactListContentScale;
-        current.ExpandedContentMode = edited.ExpandedContentMode;
-        current.CompactListCanvasWidthDip = edited.CompactListCanvasWidthDip;
-        current.CompactListCanvasHeightDip = edited.CompactListCanvasHeightDip;
         if (layoutChanged)
         {
             current.ManualCanvasBaseWidthDip = null;
@@ -1181,26 +902,26 @@ public sealed partial class AppHost : IDisposable
 
     internal DesktopGridPlacement? FindNearestPositionedPlacement(Guid organizerId, NativeMethods.RECT desiredBounds)
     {
+        if (State.Organizers.FirstOrDefault(item => item.Id == organizerId) is not OrganizerDefinition organizer) return null;
         DisplayInfo display = DisplayPlacementService.ForBounds(desiredBounds);
         var center = new NativeMethods.POINT
         {
             X = desiredBounds.Left + desiredBounds.Width / 2,
             Y = desiredBounds.Top + desiredBounds.Height / 2
         };
-        double compactScale = State.Organizers.First(item => item.Id == organizerId).CompactScale;
-        return FindPositionedPlacement(display, center, organizerId, compactScale);
+        return FindPositionedPlacement(display, center, organizerId, organizer.CompactScale);
     }
 
     internal DesktopGridPlacement? FindCurrentPositionedPlacement(Guid organizerId, NativeMethods.RECT currentBounds)
     {
+        if (State.Organizers.FirstOrDefault(item => item.Id == organizerId) is not OrganizerDefinition organizer) return null;
         DisplayInfo display = DisplayPlacementService.ForBounds(currentBounds);
         var center = new NativeMethods.POINT
         {
             X = currentBounds.Left + currentBounds.Width / 2,
             Y = currentBounds.Top + currentBounds.Height / 2
         };
-        double compactScale = State.Organizers.First(item => item.Id == organizerId).CompactScale;
-        return FindPositionedPlacement(display, center, organizerId, compactScale);
+        return FindPositionedPlacement(display, center, organizerId, organizer.CompactScale);
     }
 
     private bool TryCreateOrganizerReleasePlan(
@@ -1260,7 +981,7 @@ public sealed partial class AppHost : IDisposable
         DesktopGridSnapshot grid = ReadGridSnapshot(display);
         var occupied = _windows.Values
             .Where(window => window.OrganizerId != container.Id)
-            .Where(window => State.Organizers.First(candidate => candidate.Id == window.OrganizerId) is
+            .Where(window => State.Organizers.FirstOrDefault(candidate => candidate.Id == window.OrganizerId) is
                 { PlacementMode: OrganizerPlacementMode.Positioned, ContainerOrganizerId: null })
             .Select(window => window.CompactBounds)
             .ToList();
@@ -1296,7 +1017,8 @@ public sealed partial class AppHost : IDisposable
     {
         if (!Enum.IsDefined(disposition)) throw new ArgumentOutOfRangeException(nameof(disposition));
         if (TransferQueue.IsActive) return new(string.Empty, null, TransferStatus.Failed, AppStrings.Get("TransferBeforeDelete"));
-        OrganizerDefinition definition = State.Organizers.First(item => item.Id == id);
+        if (State.Organizers.FirstOrDefault(item => item.Id == id) is not OrganizerDefinition definition)
+            return new(string.Empty, null, TransferStatus.Retained, string.Empty);
         if (!TryCreateOrganizerReleasePlan(definition, out IReadOnlyList<OrganizerReleasePlacement> releasePlan, out string? releaseError))
         {
             return new(
@@ -1306,6 +1028,8 @@ public sealed partial class AppHost : IDisposable
                 releaseError ?? AppStrings.Get("OrganizerReleaseNoGridError"));
         }
         await CollapseContainedChildrenAsync(definition.Id);
+        if (!State.Organizers.Contains(definition))
+            return new(string.Empty, null, TransferStatus.Retained, string.Empty);
         var legacyWindows = new List<(Guid Id, NoteWindow Window, bool WasVisible, bool WasTrayHidden)>();
         try
         {
@@ -1334,10 +1058,10 @@ public sealed partial class AppHost : IDisposable
             _trayHiddenNotes.Remove(item.Id);
             item.Window.ClosePermanentlyWithoutSave();
             await OpenExternalNoteAsync(path);
-            if (!item.WasVisible && _externalNoteWindows.TryGetValue(path, out NoteWindow? migratedWindow))
+            if (!item.WasVisible && _portableDocuments.TryGetWindow(PortableDocumentKind.Note, path, out IPortableDocumentWindow? migratedWindow) && migratedWindow is not null)
             {
                 migratedWindow.HideForTray();
-                if (item.WasTrayHidden) _trayHiddenExternalNotes.Add(path);
+                if (item.WasTrayHidden) _portableDocuments.MarkHiddenForTray(PortableDocumentKind.Note, path);
             }
         }
         if (definition.Notes.Count > 0)
@@ -1347,98 +1071,55 @@ public sealed partial class AppHost : IDisposable
         TransferOutcome outcome;
         if (disposition == OrganizerDeleteDisposition.MoveFolderToDesktop)
         {
-            await _externalNoteOpenGate.WaitAsync();
-            var movedNotes = new List<(string OldPath, NoteWindow Window, bool WasVisible, bool WasTrayHidden)>();
-            var movedTodos = new List<(string OldPath, TodoWindow Window, bool WasVisible, bool WasTrayHidden)>();
+            await _portableDocuments.WaitOpenGateAsync();
+            List<PortableExportedWindow> movedPortable = [];
             try
             {
-            try
-            {
-                foreach ((string path, NoteWindow noteWindow) in _externalNoteWindows.Where(pair =>
-                             OrganizerNoteRules.RebaseTopLevelPortablePath(sourceRoot, sourceRoot, pair.Key) is not null).ToArray())
+                try
                 {
-                    bool wasVisible = await noteWindow.FlushAndHideForDragAsync();
-                    movedNotes.Add((path, noteWindow, wasVisible, _trayHiddenExternalNotes.Contains(path)));
+                    movedPortable = await _portableDocuments.FlushAndHideTopLevelAsync(sourceRoot);
                 }
-                foreach ((string path, TodoWindow todoWindow) in _externalTodoWindows.Where(pair =>
-                             OrganizerNoteRules.RebaseTopLevelPortablePath(sourceRoot, sourceRoot, pair.Key) is not null).ToArray())
+                catch (Exception ex)
                 {
-                    bool wasVisible = await todoWindow.FlushAndHideForDragAsync();
-                    movedTodos.Add((path, todoWindow, wasVisible, _trayHiddenExternalTodos.Contains(path)));
+                    return new(sourceRoot, null, TransferStatus.Failed, ex.Message);
                 }
-            }
-            catch (Exception ex)
-            {
-                foreach (var item in movedNotes.Where(item => item.WasVisible)) item.Window.RestoreAfterDrag();
-                foreach (var item in movedTodos.Where(item => item.WasVisible)) item.Window.RestoreAfterDrag();
-                return new(sourceRoot, null, TransferStatus.Failed, ex.Message);
-            }
 
-            var storage = new StorageService(
-                sourceRoot,
-                createIfMissing: false,
-                ownedContainerPath: AppPaths.GetOwnedStorageContainer(definition),
-                exportEmptyDirectory: !definition.StorageOwnedByApp);
-            outcome = await TransferQueue.RunAsync(token => storage.ExportToDesktopAsync(definition.Name, null, token));
-            if (outcome.Status != TransferStatus.Moved)
-            {
-                if (outcome is { Status: TransferStatus.CopiedSourceRetained, DestinationPath: not null })
+                var storage = new StorageService(
+                    sourceRoot,
+                    createIfMissing: false,
+                    ownedContainerPath: AppPaths.GetOwnedStorageContainer(definition),
+                    exportEmptyDirectory: !definition.StorageOwnedByApp);
+                outcome = await TransferQueue.RunAsync(token => storage.ExportToDesktopAsync(definition.Name, null, token));
+                if (outcome.Status != TransferStatus.Moved)
                 {
-                    foreach (string oldPath in movedNotes.Select(item => item.OldPath).Concat(movedTodos.Select(item => item.OldPath)))
+                    if (outcome is { Status: TransferStatus.CopiedSourceRetained, DestinationPath: not null })
                     {
-                        string? recovered = OrganizerNoteRules.RebaseTopLevelPortablePath(sourceRoot, outcome.DestinationPath, oldPath);
-                        if (!File.Exists(oldPath) && recovered is not null && File.Exists(recovered))
-                            RebindPortableWindowAfterMove(oldPath, recovered);
+                        foreach (string oldPath in movedPortable.Select(item => item.OldPath))
+                        {
+                            string? recovered = OrganizerNoteRules.RebaseTopLevelPortablePath(sourceRoot, outcome.DestinationPath, oldPath);
+                            if (!File.Exists(oldPath) && recovered is not null && File.Exists(recovered))
+                                RebindPortableWindowAfterMove(oldPath, recovered);
+                        }
                     }
+                    foreach (PortableExportedWindow item in movedPortable.Where(item => item.WasVisible))
+                        item.Window.RestoreAfterDrag();
+                    return outcome;
                 }
-                foreach (var item in movedNotes.Where(item => item.WasVisible)) item.Window.RestoreAfterDrag();
-                foreach (var item in movedTodos.Where(item => item.WasVisible)) item.Window.RestoreAfterDrag();
-                return outcome;
-            }
-            if (outcome.DestinationPath is not null)
-            {
-                string destinationRoot = Path.GetFullPath(outcome.DestinationPath);
-                foreach (var item in movedNotes)
+                if (outcome.DestinationPath is not null)
                 {
-                    string newPath = OrganizerNoteRules.ResolvePortablePathAfterMove(
-                        sourceRoot,
-                        destinationRoot,
-                        item.OldPath,
-                        moveSucceeded: true);
-                    _externalNoteWindows.Remove(item.OldPath);
-                    _externalNoteWindows[newPath] = item.Window;
-                    _trayHiddenExternalNotes.Remove(item.OldPath);
-                    if (item.WasTrayHidden) _trayHiddenExternalNotes.Add(newPath);
-                    item.Window.RebindExternalPath(newPath);
-                    if (item.WasVisible) item.Window.RestoreAfterDrag();
-                }
-                foreach (var item in movedTodos)
-                {
-                    string newPath = OrganizerNoteRules.ResolvePortablePathAfterMove(
-                        sourceRoot,
-                        destinationRoot,
-                        item.OldPath,
-                        moveSucceeded: true);
-                    _externalTodoWindows.Remove(item.OldPath);
-                    _externalTodoWindows[newPath] = item.Window;
-                    _trayHiddenExternalTodos.Remove(item.OldPath);
-                    if (item.WasTrayHidden) _trayHiddenExternalTodos.Add(newPath);
-                    item.Window.RebindExternalPath(newPath);
-                    if (item.WasVisible) item.Window.RestoreAfterDrag();
-                }
+                    string destinationRoot = Path.GetFullPath(outcome.DestinationPath);
+                    _portableDocuments.CommitTopLevelExport(sourceRoot, destinationRoot, movedPortable);
 
-                definition.StorageRelativePath = string.Empty;
-                definition.StorageAbsolutePath = destinationRoot;
-                definition.StorageOwnedByApp = false;
-            }
+                    definition.StorageRelativePath = string.Empty;
+                    definition.StorageAbsolutePath = destinationRoot;
+                    definition.StorageOwnedByApp = false;
+                }
             }
             finally
             {
-                foreach (var item in movedNotes.Where(item => item.WasVisible))
-                    try { item.Window.RestoreAfterDrag(); } catch (Exception ex) { AppLogger.Error("Restore exported note failed", ex); }
-                foreach (var item in movedTodos.Where(item => item.WasVisible))
-                    try { item.Window.RestoreAfterDrag(); } catch (Exception ex) { AppLogger.Error("Restore exported todo failed", ex); }
-                _externalNoteOpenGate.Release();
+                foreach (PortableExportedWindow item in movedPortable.Where(item => item.WasVisible))
+                    try { item.Window.RestoreAfterDrag(); } catch (Exception ex) { AppLogger.Error("Restore exported portable document failed", ex); }
+                _portableDocuments.ReleaseOpenGate();
             }
         }
         else
@@ -1528,21 +1209,60 @@ public sealed partial class AppHost : IDisposable
         ThemeChanged?.Invoke(this, EventArgs.Empty);
     }
 
-    public async Task SetStartupAsync(bool enabled)
+    private async Task<bool> MutateGlobalSettingAsync<T>(
+        Func<GlobalSettings, T> read,
+        Action<GlobalSettings, T> write,
+        T value,
+        IEqualityComparer<T>? comparer = null)
     {
-        if (State.GlobalSettings.StartWithWindows == enabled) return;
-        bool previous = State.GlobalSettings.StartWithWindows;
-        StartupService.Apply(enabled);
-        State.GlobalSettings.StartWithWindows = enabled;
+        comparer ??= EqualityComparer<T>.Default;
+        await _globalSettingsGate.WaitAsync();
         try
         {
-            await SaveStateAsync();
+            GlobalSettings settings = State.GlobalSettings;
+            T previous = read(settings);
+            if (comparer.Equals(previous, value)) return false;
+            write(settings, value);
+            try
+            {
+                await SaveStateAsync();
+                return true;
+            }
+            catch
+            {
+                write(settings, previous);
+                throw;
+            }
         }
-        catch
+        finally
         {
-            State.GlobalSettings.StartWithWindows = previous;
-            StartupService.Apply(previous);
-            throw;
+            _globalSettingsGate.Release();
+        }
+    }
+
+    public async Task SetStartupAsync(bool enabled)
+    {
+        await _globalSettingsGate.WaitAsync();
+        try
+        {
+            if (State.GlobalSettings.StartWithWindows == enabled) return;
+            bool previous = State.GlobalSettings.StartWithWindows;
+            StartupService.Apply(enabled);
+            State.GlobalSettings.StartWithWindows = enabled;
+            try
+            {
+                await SaveStateAsync();
+            }
+            catch
+            {
+                State.GlobalSettings.StartWithWindows = previous;
+                StartupService.Apply(previous);
+                throw;
+            }
+        }
+        finally
+        {
+            _globalSettingsGate.Release();
         }
     }
 
@@ -1557,52 +1277,57 @@ public sealed partial class AppHost : IDisposable
     public async Task SetDefaultStorageDirectoryAsync(string? path)
     {
         string? normalized = string.IsNullOrWhiteSpace(path) ? null : AppPaths.ValidateCustomStoragePath(path);
-        string? previous = State.GlobalSettings.DefaultStorageDirectory;
-        if (string.Equals(previous, normalized, StringComparison.OrdinalIgnoreCase)) return;
-        State.GlobalSettings.DefaultStorageDirectory = normalized;
-        try
-        {
-            await SaveStateAsync();
-        }
-        catch
-        {
-            State.GlobalSettings.DefaultStorageDirectory = previous;
-            throw;
-        }
+        if (!await MutateGlobalSettingAsync(
+                s => s.DefaultStorageDirectory,
+                (s, v) => s.DefaultStorageDirectory = v,
+                normalized,
+                StringComparer.OrdinalIgnoreCase))
+            return;
         Console.RefreshAll();
-
     }
 
     public async Task SetLanguageAsync(AppLanguage language)
     {
         if (!Enum.IsDefined(language)) language = AppLanguage.ChineseSimplified;
-        if (State.GlobalSettings.Language == language)
+        bool changed = false;
+        await _globalSettingsGate.WaitAsync();
+        try
+        {
+            if (State.GlobalSettings.Language != language)
+            {
+                AppLanguage previous = State.GlobalSettings.Language;
+                State.GlobalSettings.Language = language;
+                AppStrings.SetLanguage(language);
+                try
+                {
+                    await SaveStateAsync();
+                    changed = true;
+                }
+                catch
+                {
+                    State.GlobalSettings.Language = previous;
+                    AppStrings.SetLanguage(previous);
+                    throw;
+                }
+            }
+        }
+        finally
+        {
+            _globalSettingsGate.Release();
+        }
+
+        if (!changed)
         {
             Console.ApplyLanguage();
             return;
-        }
-        AppLanguage previous = State.GlobalSettings.Language;
-        State.GlobalSettings.Language = language;
-        AppStrings.SetLanguage(language);
-        try
-        {
-            await SaveStateAsync();
-        }
-        catch
-        {
-            State.GlobalSettings.Language = previous;
-            AppStrings.SetLanguage(previous);
-            throw;
         }
         RefreshFolderContextMenuLabel();
         Console.ApplyLanguage();
         foreach (MainWindow window in _windows.Values) window.ApplyLanguage();
         foreach (NoteWindow window in _noteWindows.Values) window.ApplyLanguage();
-        foreach (NoteWindow window in _externalNoteWindows.Values) window.ApplyLanguage();
-        foreach (TodoWindow window in _externalTodoWindows.Values) window.ApplyLanguage();
+        _portableDocuments.ApplyLanguage();
         _tray?.ApplyLanguage();
         Console.RefreshAll();
-
     }
 
     public async Task PrepareToExpandAsync(MainWindow source, Func<bool>? isCurrent = null)
@@ -1780,7 +1505,7 @@ public sealed partial class AppHost : IDisposable
 
     internal async Task<bool> TryContainDraggedOrganizerAsync(MainWindow source, NativeMethods.POINT dropPoint)
     {
-        OrganizerDefinition organizer = State.Organizers.First(item => item.Id == source.OrganizerId);
+        if (State.Organizers.FirstOrDefault(item => item.Id == source.OrganizerId) is not OrganizerDefinition organizer) return false;
         if (source.IsExpanded ||
             organizer.PlacementMode is not (OrganizerPlacementMode.Floating or OrganizerPlacementMode.Positioned)) return false;
         foreach (MainWindow target in _windows.Values)
@@ -1797,7 +1522,7 @@ public sealed partial class AppHost : IDisposable
 
     internal async Task<string?> FinishContainedOrganizerDragAsync(Guid organizerId, NativeMethods.POINT dropPoint)
     {
-        OrganizerDefinition organizer = State.Organizers.First(item => item.Id == organizerId);
+        if (State.Organizers.FirstOrDefault(item => item.Id == organizerId) is not OrganizerDefinition organizer) return null;
         _windows.TryGetValue(organizer.Id, out MainWindow? window);
         foreach (MainWindow target in _windows.Values)
         {
@@ -1843,7 +1568,7 @@ public sealed partial class AppHost : IDisposable
             bounds = DisplayPlacementService.CalculateDraggedBounds(desired, dropPoint, dropPoint, display.Work);
         }
 
-        OrganizerDefinition parent = State.Organizers.First(item => item.Id == previousContainerId);
+        OrganizerDefinition? parent = State.Organizers.FirstOrDefault(item => item.Id == previousContainerId);
         OrganizerContainmentSnapshot containmentSnapshot = OrganizerContainment.Capture(State.Organizers);
         WidgetPosition? previousPosition = organizer.Position;
         OrganizerContainment.Detach(State.Organizers, organizer.Id);
@@ -1877,7 +1602,7 @@ public sealed partial class AppHost : IDisposable
         }
         try
         {
-            await RefreshContainmentParentsAsync([parent.Id]);
+            if (parent is not null) await RefreshContainmentParentsAsync([parent.Id]);
             Console.RefreshAll(organizer.Id);
         }
         catch (Exception ex)
@@ -1979,7 +1704,7 @@ public sealed partial class AppHost : IDisposable
         DesktopGridSnapshot snapshot = ReadGridSnapshot(display);
         NativeMethods.RECT[] occupied = _windows.Values
             .Where(window => window.OrganizerId != excludeId)
-            .Where(window => State.Organizers.First(item => item.Id == window.OrganizerId) is
+            .Where(window => State.Organizers.FirstOrDefault(item => item.Id == window.OrganizerId) is
                 { PlacementMode: OrganizerPlacementMode.Positioned, ContainerOrganizerId: null })
             .Select(window => window.CompactBounds)
             .ToArray();
@@ -2070,20 +1795,28 @@ public sealed partial class AppHost : IDisposable
 
     public async Task SetUniformCompactScaleEnabledAsync(OrganizerPlacementMode mode, bool enabled)
     {
-        (bool previousEnabled, double previousScale) = GetUniformCompactScaleSetting(mode);
-        if (previousEnabled == enabled) return;
-        List<(OrganizerDefinition Definition, NativeMethods.RECT Bounds, double RuntimeScale)> snapshots =
-            CaptureCompactScaleSnapshots(mode);
-        string? error = ApplyUniformCompactScaleSetting(mode, enabled, previousScale, snapshots);
-        if (error is not null) throw new InvalidOperationException(error);
+        await _globalSettingsGate.WaitAsync();
         try
         {
-            await SaveStateAsync();
+            (bool previousEnabled, double previousScale) = GetUniformCompactScaleSetting(mode);
+            if (previousEnabled == enabled) return;
+            List<(OrganizerDefinition Definition, NativeMethods.RECT Bounds, double RuntimeScale)> snapshots =
+                CaptureCompactScaleSnapshots(mode);
+            string? error = ApplyUniformCompactScaleSetting(mode, enabled, previousScale, snapshots);
+            if (error is not null) throw new InvalidOperationException(error);
+            try
+            {
+                await SaveStateAsync();
+            }
+            catch
+            {
+                RestoreUniformCompactScaleSetting(mode, previousEnabled, previousScale, snapshots);
+                throw;
+            }
         }
-        catch
+        finally
         {
-            RestoreUniformCompactScaleSetting(mode, previousEnabled, previousScale, snapshots);
-            throw;
+            _globalSettingsGate.Release();
         }
     }
 
@@ -2120,7 +1853,8 @@ public sealed partial class AppHost : IDisposable
         {
             foreach (var snapshot in snapshots)
             {
-                OrganizerDefinition current = State.Organizers.First(item => item.Id == snapshot.Definition.Id);
+                if (State.Organizers.FirstOrDefault(item => item.Id == snapshot.Definition.Id) is not OrganizerDefinition current)
+                    continue;
                 OrganizerDefinition edited = OrganizerInteractionMath.CopySettings(current, current.Name);
                 edited.Id = current.Id;
                 edited.CompactScale = State.GlobalSettings.ResolveCompactScale(mode, current.CompactScale);
@@ -2148,7 +1882,8 @@ public sealed partial class AppHost : IDisposable
         SetUniformCompactScaleSetting(mode, enabled, scale);
         foreach (var snapshot in snapshots)
         {
-            OrganizerDefinition current = State.Organizers.First(item => item.Id == snapshot.Definition.Id);
+            if (State.Organizers.FirstOrDefault(item => item.Id == snapshot.Definition.Id) is not OrganizerDefinition current)
+                continue;
             current.CompactScale = snapshot.Definition.CompactScale;
             current.Position = snapshot.Definition.Position;
             if (!_windows.TryGetValue(current.Id, out MainWindow? window)) continue;
@@ -2215,16 +1950,7 @@ public sealed partial class AppHost : IDisposable
         .Where(item => item.PlacementMode == mode)
         .Select(item =>
         {
-            OrganizerDefinition snapshot = OrganizerInteractionMath.CopySettings(item, item.Name);
-            snapshot.Id = item.Id;
-            snapshot.Position = item.Position is null ? null : new WidgetPosition
-            {
-                MonitorDevice = item.Position.MonitorDevice,
-                XDip = item.Position.XDip,
-                YDip = item.Position.YDip,
-                SavedWorkAreaWidthDip = item.Position.SavedWorkAreaWidthDip,
-                SavedWorkAreaHeightDip = item.Position.SavedWorkAreaHeightDip
-            };
+            OrganizerDefinition snapshot = item.Clone();
             NativeMethods.RECT bounds = _windows.TryGetValue(item.Id, out MainWindow? window)
                 ? window.CompactBounds
                 : default;
@@ -2234,139 +1960,51 @@ public sealed partial class AppHost : IDisposable
 
     public async Task SetCollapseOnOutsideClickAsync(bool enabled)
     {
-        if (State.GlobalSettings.CollapseOnOutsideClick == enabled) return;
-        State.GlobalSettings.CollapseOnOutsideClick = enabled;
-        try
-        {
-            await SaveStateAsync();
-        }
-        catch
-        {
-            State.GlobalSettings.CollapseOnOutsideClick = !enabled;
-            throw;
-        }
+        if (!await MutateGlobalSettingAsync(s => s.CollapseOnOutsideClick, (s, v) => s.CollapseOnOutsideClick = v, enabled)) return;
         foreach (MainWindow window in _windows.Values) window.ApplyOutsideClickSetting();
     }
 
     public async Task SetNoteAlwaysOnTopAsync(bool enabled)
     {
-        if (State.GlobalSettings.NoteAlwaysOnTop == enabled) return;
-        State.GlobalSettings.NoteAlwaysOnTop = enabled;
-        try
-        {
-            await SaveStateAsync();
-        }
-        catch
-        {
-            State.GlobalSettings.NoteAlwaysOnTop = !enabled;
-            throw;
-        }
-        foreach (NoteWindow window in _noteWindows.Values.Concat(_externalNoteWindows.Values))
-            window.ApplyAlwaysOnTopSetting();
-        foreach (TodoWindow window in _externalTodoWindows.Values)
-            window.ApplyAlwaysOnTopSetting();
+        if (!await MutateGlobalSettingAsync(s => s.NoteAlwaysOnTop, (s, v) => s.NoteAlwaysOnTop = v, enabled)) return;
+        foreach (NoteWindow window in _noteWindows.Values) window.ApplyAlwaysOnTopSetting();
+        _portableDocuments.ApplyAlwaysOnTopSetting();
     }
 
     public async Task SetEdgeGlowEnabledAsync(bool enabled)
     {
-        if (State.GlobalSettings.EdgeGlowEnabled == enabled) return;
-        bool previous = State.GlobalSettings.EdgeGlowEnabled;
-        State.GlobalSettings.EdgeGlowEnabled = enabled;
-        try
-        {
-            await SaveStateAsync();
-        }
-        catch
-        {
-            State.GlobalSettings.EdgeGlowEnabled = previous;
-            throw;
-        }
+        if (!await MutateGlobalSettingAsync(s => s.EdgeGlowEnabled, (s, v) => s.EdgeGlowEnabled = v, enabled)) return;
         ThemeChanged?.Invoke(this, EventArgs.Empty);
     }
 
     public async Task SetExclusiveExpansionAsync(bool enabled)
     {
-        if (State.GlobalSettings.ExclusiveExpansion == enabled)
-        {
-            if (enabled) await ReconcileExclusiveExpansionAsync();
-            return;
-        }
-        State.GlobalSettings.ExclusiveExpansion = enabled;
-        try
-        {
-            await SaveStateAsync();
-        }
-        catch
-        {
-            State.GlobalSettings.ExclusiveExpansion = !enabled;
-            throw;
-        }
+        await MutateGlobalSettingAsync(s => s.ExclusiveExpansion, (s, v) => s.ExclusiveExpansion = v, enabled);
         if (enabled) await ReconcileExclusiveExpansionAsync();
     }
 
     public async Task SetExpandOnHoverAsync(bool enabled)
     {
-        if (State.GlobalSettings.ExpandOnHover == enabled) return;
-        State.GlobalSettings.ExpandOnHover = enabled;
-        try
-        {
-            await SaveStateAsync();
-        }
-        catch
-        {
-            State.GlobalSettings.ExpandOnHover = !enabled;
-            throw;
-        }
+        if (!await MutateGlobalSettingAsync(s => s.ExpandOnHover, (s, v) => s.ExpandOnHover = v, enabled)) return;
         foreach (MainWindow window in _windows.Values) window.RefreshPerformanceSettings();
     }
 
     public async Task SetCollapseOnPointerLeaveAsync(bool enabled)
     {
-        if (State.GlobalSettings.CollapseOnPointerLeave == enabled) return;
-        State.GlobalSettings.CollapseOnPointerLeave = enabled;
-        try
-        {
-            await SaveStateAsync();
-        }
-        catch
-        {
-            State.GlobalSettings.CollapseOnPointerLeave = !enabled;
-            throw;
-        }
+        if (!await MutateGlobalSettingAsync(s => s.CollapseOnPointerLeave, (s, v) => s.CollapseOnPointerLeave = v, enabled)) return;
         foreach (MainWindow window in _windows.Values) window.RefreshPerformanceSettings();
     }
 
     public async Task SetPerformanceProfileAsync(PerformanceProfile profile)
     {
         if (!Enum.IsDefined(profile)) profile = PerformanceProfile.Balanced;
-        if (State.GlobalSettings.PerformanceProfile == profile) return;
-        PerformanceProfile previous = State.GlobalSettings.PerformanceProfile;
-        State.GlobalSettings.PerformanceProfile = profile;
-        try
-        {
-            await SaveStateAsync();
-        }
-        catch
-        {
-            State.GlobalSettings.PerformanceProfile = previous;
-            throw;
-        }
+        if (!await MutateGlobalSettingAsync(s => s.PerformanceProfile, (s, v) => s.PerformanceProfile = v, profile)) return;
         foreach (MainWindow window in _windows.Values) window.RefreshPerformanceSettings();
     }
 
     public async Task SetWindowAlignmentEnabledAsync(bool enabled)
     {
-        if (State.GlobalSettings.WindowAlignmentEnabled == enabled) return;
-        State.GlobalSettings.WindowAlignmentEnabled = enabled;
-        try
-        {
-            await SaveStateAsync();
-        }
-        catch
-        {
-            State.GlobalSettings.WindowAlignmentEnabled = !enabled;
-            throw;
-        }
+        if (!await MutateGlobalSettingAsync(s => s.WindowAlignmentEnabled, (s, v) => s.WindowAlignmentEnabled = v, enabled)) return;
         foreach (MainWindow window in _windows.Values) window.RefreshWindowAlignmentSetting();
     }
 
@@ -2392,8 +2030,8 @@ public sealed partial class AppHost : IDisposable
     }
 
     private string LifecycleWindowCounts() =>
-        $"organizers={_windows.Count} notes={_noteWindows.Count + _externalNoteWindows.Count} " +
-        $"todos={_externalTodoWindows.Count} exiting={_exitPreparation.IsActive}";
+        $"organizers={_windows.Count} notes={_noteWindows.Count + _portableDocuments.NoteCount} " +
+        $"todos={_portableDocuments.TodoCount} exiting={_exitPreparation.IsActive}";
 
     public Task ExitAsync(string source = "app") => ExitCoreAsync(source, null);
     internal Task<bool> ExitForUpdateAsync(Func<Task> handoff) => ExitCoreAsync("update", handoff);
@@ -2419,9 +2057,8 @@ public sealed partial class AppHost : IDisposable
         }
         if (handoff is not null)
         {
-            frozen = new UpdateWindowInput(_windows.Values.Cast<Window>().Concat(_noteWindows.Values).Concat(_externalNoteWindows.Values).Concat(_externalTodoWindows.Values).Append(Console).Distinct());
-            await _externalNoteOpenGate.WaitAsync();
-            _externalNoteOpenGate.Release();
+            frozen = new UpdateWindowInput(_windows.Values.Cast<Window>().Concat(_noteWindows.Values).Concat(OpenPortableUiWindows).Append(Console).Distinct());
+            await _portableDocuments.DrainOpenGateAsync();
         }
         if (!await Console.FlushPendingThemeSaveAsync())
         {
@@ -2436,7 +2073,7 @@ public sealed partial class AppHost : IDisposable
         }
 
         NoteWindow[] noteWindows = _noteWindows.Values
-            .Concat(_externalNoteWindows.Values)
+            .Concat(OpenExternalNoteWindows)
             .Distinct()
             .ToArray();
         foreach (NoteWindow window in noteWindows)
@@ -2446,7 +2083,7 @@ public sealed partial class AppHost : IDisposable
             window.ShowAndActivate();
             return false;
         }
-        TodoWindow[] todoWindows = _externalTodoWindows.Values.Distinct().ToArray();
+        TodoWindow[] todoWindows = OpenExternalTodoWindows.Distinct().ToArray();
         foreach (TodoWindow window in todoWindows)
         {
             if (await window.FlushForExitAsync()) continue;
@@ -2455,9 +2092,9 @@ public sealed partial class AppHost : IDisposable
             return false;
         }
 
+        await SaveStateAsync();
         if (handoff is not null)
         {
-            await SaveStateAsync();
             await handoff();
         }
         AppLogger.Lifecycle("exit-commit", $"source={source} {LifecycleWindowCounts()}");
@@ -2467,8 +2104,7 @@ public sealed partial class AppHost : IDisposable
         foreach (NoteWindow window in noteWindows) window.ClosePermanentlyWithoutSave();
         foreach (TodoWindow window in todoWindows) window.ClosePermanentlyWithoutSave();
         _noteWindows.Clear();
-        _externalNoteWindows.Clear();
-        _externalTodoWindows.Clear();
+        _portableDocuments.Clear();
         foreach (MainWindow window in _windows.Values.ToArray()) window.ClosePermanently();
         _windows.Clear();
         _tray?.Dispose();
@@ -2529,45 +2165,23 @@ public sealed partial class AppHost : IDisposable
                         break;
                     case TrayCommand.ShowAll:
                         foreach (MainWindow window in _windows.Values) window.SetVisible(true);
-                    foreach (Guid noteId in _trayHiddenNotes.ToArray())
-                    {
-                        if (_noteWindows.TryGetValue(noteId, out NoteWindow? noteWindow)) noteWindow.RestoreFromTray();
-                    }
-                    _trayHiddenNotes.Clear();
-                    foreach (string path in _trayHiddenExternalNotes.ToArray())
-                    {
-                        if (_externalNoteWindows.TryGetValue(path, out NoteWindow? noteWindow)) noteWindow.RestoreFromTray();
-                    }
-                    _trayHiddenExternalNotes.Clear();
-                    foreach (string path in _trayHiddenExternalTodos.ToArray())
-                    {
-                        if (_externalTodoWindows.TryGetValue(path, out TodoWindow? todoWindow)) todoWindow.RestoreFromTray();
-                    }
-                    _trayHiddenExternalTodos.Clear();
+                        foreach (Guid noteId in _trayHiddenNotes.ToArray())
+                        {
+                            if (_noteWindows.TryGetValue(noteId, out NoteWindow? noteWindow)) noteWindow.RestoreFromTray();
+                        }
+                        _trayHiddenNotes.Clear();
+                        _portableDocuments.RestoreAllFromTray();
                         break;
                     case TrayCommand.HideAll:
                         foreach (MainWindow window in _windows.Values) window.SetVisible(false);
-                    _trayHiddenNotes.Clear();
-                    foreach ((Guid noteId, NoteWindow noteWindow) in _noteWindows)
-                    {
-                        if (!noteWindow.IsVisible) continue;
-                        _trayHiddenNotes.Add(noteId);
-                        noteWindow.HideForTray();
-                    }
-                    _trayHiddenExternalNotes.Clear();
-                    foreach ((string path, NoteWindow noteWindow) in _externalNoteWindows)
-                    {
-                        if (!noteWindow.IsVisible) continue;
-                        _trayHiddenExternalNotes.Add(path);
-                        noteWindow.HideForTray();
-                    }
-                    _trayHiddenExternalTodos.Clear();
-                    foreach ((string path, TodoWindow todoWindow) in _externalTodoWindows)
-                    {
-                        if (!todoWindow.IsVisible) continue;
-                        _trayHiddenExternalTodos.Add(path);
-                        todoWindow.HideForTray();
-                    }
+                        _trayHiddenNotes.Clear();
+                        foreach ((Guid noteId, NoteWindow noteWindow) in _noteWindows)
+                        {
+                            if (!noteWindow.IsVisible) continue;
+                            _trayHiddenNotes.Add(noteId);
+                            noteWindow.HideForTray();
+                        }
+                        _portableDocuments.HideAllForTray();
                         break;
                     case TrayCommand.ToggleStartup:
                         await SetStartupAsync(!State.GlobalSettings.StartWithWindows);
@@ -2597,8 +2211,7 @@ public sealed partial class AppHost : IDisposable
         AppLogger.Lifecycle("host-dispose", LifecycleWindowCounts());
         _tray?.Dispose();
         foreach (NoteWindow window in _noteWindows.Values) _ = window.ClosePermanentlyAsync();
-        foreach (NoteWindow window in _externalNoteWindows.Values) _ = window.ClosePermanentlyAsync();
-        foreach (TodoWindow window in _externalTodoWindows.Values) _ = window.ClosePermanentlyAsync();
+        _portableDocuments.CloseAllOnDispose();
         foreach (MainWindow window in _windows.Values) window.ClosePermanently();
     }
 }

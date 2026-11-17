@@ -87,8 +87,8 @@ public sealed partial class AppHost
     internal bool IsDockItemOpen(WidgetItem item) => item.Kind switch
     {
         WidgetItemKind.Note => item.NoteId is Guid id && _noteWindows.TryGetValue(id, out var note) && note.IsVisible,
-        WidgetItemKind.PortableNote => _externalNoteWindows.TryGetValue(item.FullPath, out var note) && note.IsVisible,
-        WidgetItemKind.PortableTodo => _externalTodoWindows.TryGetValue(item.FullPath, out var todo) && todo.IsVisible,
+        WidgetItemKind.PortableNote => _portableDocuments.IsOpenAndVisible(PortableDocumentKind.Note, item.FullPath),
+        WidgetItemKind.PortableTodo => _portableDocuments.IsOpenAndVisible(PortableDocumentKind.Todo, item.FullPath),
         WidgetItemKind.Organizer => item.OrganizerId is Guid id && _windows.TryGetValue(id, out var window) && window.IsOpenForDock,
         _ => _dockOpenPaths.TryGetValue(item.FullPath, out bool open) && open
     };

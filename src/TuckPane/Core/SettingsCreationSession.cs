@@ -1,4 +1,3 @@
-using System.Text.Json;
 using TuckPane.Models;
 
 namespace TuckPane.Core;
@@ -7,7 +6,7 @@ internal sealed record SettingsCreationDraft(OrganizerDefinition Definition, str
 {
     public SettingsCreationDraft Snapshot() => this with
     {
-        Definition = JsonSerializer.Deserialize<OrganizerDefinition>(JsonSerializer.Serialize(Definition))!
+        Definition = Definition.Clone()
     };
 }
 

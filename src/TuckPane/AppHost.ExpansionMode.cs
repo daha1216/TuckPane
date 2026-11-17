@@ -13,7 +13,7 @@ public sealed partial class AppHost
     internal OrganizerExpansionMode GetRequestedExpansionMode(Guid id) =>
         _expansionModes.TryGetValue(id, out var coordinator) && coordinator.IsPending
             ? coordinator.DesiredMode
-            : State.Organizers.First(item => item.Id == id).ExpansionMode;
+            : State.Organizers.FirstOrDefault(item => item.Id == id)?.ExpansionMode ?? OrganizerExpansionMode.Collapsible;
 
     internal async Task<string?> SetOrganizerExpansionModeAsync(Guid id, OrganizerExpansionMode? requestedMode = null,
         Func<CancellationToken, Task<bool>>? prepare = null)
@@ -34,7 +34,7 @@ public sealed partial class AppHost
                 try
                 {
                     token.ThrowIfCancellationRequested();
-                    OrganizerDefinition definition = State.Organizers.First(item => item.Id == id);
+                    if (State.Organizers.FirstOrDefault(item => item.Id == id) is not OrganizerDefinition definition) return;
                     await OrganizerExpansion.SetAsync(definition, target, SaveStateAsync);
                 }
                 finally { _expansionModeSaveGate.Release(); }
