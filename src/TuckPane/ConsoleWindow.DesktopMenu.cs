@@ -1,13 +1,14 @@
 using Microsoft.UI.Xaml;
 using TuckPane.Services;
+
 namespace TuckPane;
+
 public sealed partial class ConsoleWindow
 {
-    private bool _loadingDesktopMenu;
     private void UpdateDesktopMenuControls(string? error = null)
     {
         if (!_componentReady) return;
-        _loadingDesktopMenu = true;
+        using var _ = _settingBinder.Suppress();
         try
         {
             FolderContextMenuState state = _host.DesktopContextMenu.ReadState();
@@ -30,13 +31,12 @@ public sealed partial class ConsoleWindow
         finally
         {
             DesktopMenuStatusText.Visibility = string.IsNullOrEmpty(DesktopMenuStatusText.Text) ? Visibility.Collapsed : Visibility.Visible;
-            _loadingDesktopMenu = false;
         }
     }
 
     private void DesktopMenuToggle_Toggled(object sender, RoutedEventArgs e)
     {
-        if (!_componentReady || _loadingDesktopMenu) return;
+        if (!_componentReady || _settingBinder.IsSuppressed) return;
         SetDesktopMenuEnabled(DesktopMenuToggle.IsOn);
     }
 
@@ -58,5 +58,4 @@ public sealed partial class ConsoleWindow
         }
         UpdateDesktopMenuControls(error);
     }
-
 }

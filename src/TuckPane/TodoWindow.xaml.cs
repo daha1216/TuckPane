@@ -2,8 +2,6 @@ using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
 using Microsoft.UI;
-using Microsoft.UI.Input;
-using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
@@ -13,23 +11,14 @@ using TuckPane.Core;
 using TuckPane.Models;
 using TuckPane.Services;
 using Windows.Foundation;
-using Windows.Graphics;
 using Windows.UI;
 using Windows.UI.Text;
-using WinUIEx;
-using WinRT.Interop;
 
 namespace TuckPane;
 
 public sealed partial class TodoWindow : Window
 {
-    private const double MinimumWidthDip = 280;
-    private const double MinimumHeightDip = 340;
-    private const double MaximumWidthDip = 1600;
-    private const double MaximumHeightDip = 1200;
-
     private readonly AppHost _host;
-    private readonly WindowThemeBrushes _themeBrushes = new();
     private readonly NoteStore _store;
     private readonly PortableTodoDocument _document;
     private readonly ObservableCollection<TodoRow> _rows;
@@ -37,28 +26,10 @@ public sealed partial class TodoWindow : Window
     private readonly Microsoft.UI.Dispatching.DispatcherQueueTimer _completionTimer;
     private readonly SemaphoreSlim _saveGate = new(1, 1);
     private readonly TodoComposer _composer = new();
+    private readonly PortableDocumentWindowChrome _windowChrome;
     private string _externalPath;
-    private AppWindow _appWindow = null!;
-    private InputNonClientPointerSource? _titleInput;
-    private NativeWindowChromeController? _chrome;
-    private IntPtr _hwnd;
-    private bool _initialized;
-    private bool _permanentClose;
-    private bool _visibleValue;
-    private bool _visible
-    {
-        get => _visibleValue;
-        set
-        {
-            if (_visibleValue == value) return;
-            _visibleValue = value;
-            _host.NotifyDockOpenStateChanged();
-        }
-    }
-    private bool _restoringPlacement;
-    private bool _renaming;
-    private bool _renameCommitInProgress;
     private bool _syncingTaskCheckBox;
+    private bool _isDraggingTask;
 
     internal TodoWindow(AppHost host, NoteStore store, string path, PortableTodoDocument document)
     {
@@ -71,13 +42,32 @@ public sealed partial class TodoWindow : Window
             new TodoRow(task, _document.FontSize, _host.State.GlobalSettings.TodoShowSeparators)));
 
         InitializeComponent();
-        ExtendsContentIntoTitleBar = true;
-        SetTitleBar(TitleDragSurface);
-        SystemBackdrop = new TransparentTintBackdrop(Colors.Transparent);
+        _windowChrome = new PortableDocumentWindowChrome(
+            this,
+            _host,
+            WindowRoot,
+            WindowFrame,
+            HeaderBar,
+            ErrorBar,
+            () => Path.GetFileNameWithoutExtension(_externalPath),
+            () => _document.Placement,
+            placement =>
+            {
+                _document.Placement = placement;
+                ScheduleSave();
+            },
+            HideAsync,
+            CommitTitleRenameAsync,
+            OnThemeSelected);
+
+        HeaderBar.ColorButton.Click += ColorButton_Click;
+        HeaderBar.OptionToggleButton.Click += SeparatorsButton_Click;
+
         TaskList.ItemsSource = _rows;
         UpdateComposerMetrics();
         WindowRoot.AddHandler(UIElement.PointerWheelChangedEvent,
             new PointerEventHandler(WindowRoot_PointerWheelChanged), handledEventsToo: true);
+        WindowRoot.ActualThemeChanged += WindowRoot_ActualThemeChanged;
 
         _saveTimer = DispatcherQueue.CreateTimer();
         _saveTimer.Interval = TimeSpan.FromMilliseconds(350);
@@ -97,60 +87,12 @@ public sealed partial class TodoWindow : Window
         if (removedExpired) ScheduleSave();
     }
 
-    internal bool IsVisible => _visible;
+    internal bool IsVisible => _windowChrome.IsVisible;
     internal string ExternalPath => _externalPath;
 
-    internal void InitializeHostWindow()
-    {
-        if (_initialized) return;
-        _initialized = true;
-        _hwnd = WindowNative.GetWindowHandle(this);
-        _appWindow = AppWindow.GetFromWindowId(Win32Interop.GetWindowIdFromWindow(_hwnd));
-        _titleInput = InputNonClientPointerSource.GetForWindowId(_appWindow.Id);
-        _appWindow.IsShownInSwitchers = true;
-        if (_appWindow.Presenter is OverlappedPresenter presenter)
-        {
-            presenter.SetBorderAndTitleBar(true, false);
-            presenter.IsAlwaysOnTop = _host.State.GlobalSettings.NoteAlwaysOnTop;
-            presenter.IsResizable = true;
-            presenter.IsMaximizable = false;
-            presenter.IsMinimizable = true;
-        }
-        long extendedStyle = NativeMethods.GetWindowLongPtr(_hwnd, NativeMethods.GWL_EXSTYLE).ToInt64();
-        extendedStyle = (extendedStyle | NativeMethods.WS_EX_APPWINDOW) & ~NativeMethods.WS_EX_TOOLWINDOW;
-        _ = NativeMethods.SetWindowLongPtr(_hwnd, NativeMethods.GWL_EXSTYLE, new IntPtr(extendedStyle));
-        _ = NativeMethods.SetWindowPos(_hwnd, IntPtr.Zero, 0, 0, 0, 0,
-            NativeMethods.SWP_NOMOVE | NativeMethods.SWP_NOSIZE | NativeMethods.SWP_NOZORDER |
-            NativeMethods.SWP_NOACTIVATE | NativeMethods.SWP_FRAMECHANGED);
-        _chrome = new NativeWindowChromeController(_hwnd, DispatcherQueue);
-        RestorePlacement();
-        _appWindow.Changed += AppWindow_Changed;
-        _appWindow.Closing += AppWindow_Closing;
-    }
-
-    internal void ShowAndActivate()
-    {
-        InitializeHostWindow();
-        _visible = true;
-        if (_appWindow.Presenter is OverlappedPresenter { State: OverlappedPresenterState.Minimized } presenter)
-            presenter.Restore(activateWindow: true);
-        _appWindow.Show(activateWindow: true);
-        Activate();
-        _ = NativeMethods.SetWindowPos(
-            _hwnd,
-            _host.State.GlobalSettings.NoteAlwaysOnTop ? NativeMethods.HWND_TOPMOST : NativeMethods.HWND_TOP,
-            0, 0, 0, 0,
-            NativeMethods.SWP_NOMOVE | NativeMethods.SWP_NOSIZE | NativeMethods.SWP_SHOWWINDOW |
-            NativeMethods.SWP_NOOWNERZORDER);
-        _ = NativeMethods.SetForegroundWindow(_hwnd);
-        _ = DispatcherQueue.TryEnqueue(UpdateTitlePassthrough);
-    }
-
-    internal void ApplyAlwaysOnTopSetting()
-    {
-        if (_appWindow.Presenter is OverlappedPresenter presenter)
-            presenter.IsAlwaysOnTop = _host.State.GlobalSettings.NoteAlwaysOnTop;
-    }
+    internal void InitializeHostWindow() => _windowChrome.InitializeHostWindow();
+    internal void ShowAndActivate() => _windowChrome.ShowAndActivate();
+    internal void ApplyAlwaysOnTopSetting() => _windowChrome.ApplyAlwaysOnTopSetting();
 
     internal async Task ApplyGlobalThemeAsync(NoteTheme theme)
     {
@@ -171,89 +113,60 @@ public sealed partial class TodoWindow : Window
         UpdateTitle();
     }
 
-    internal void HideForTray()
-    {
-        if (!_visible) return;
-        _visible = false;
-        _appWindow.Hide();
-    }
+    internal void HideForTray() => _windowChrome.HideForTray();
+    internal void RestoreFromTray() => _windowChrome.RestoreFromTray();
+    internal Task HideAsync() => _windowChrome.HideAsync(FlushAsync);
 
-    internal void RestoreFromTray()
-    {
-        if (_permanentClose) return;
-        _visible = true;
-        _appWindow.Show(activateWindow: false);
-    }
+    internal Task<bool> FlushAndHideForDragAsync() =>
+        _windowChrome.FlushAndHideForDragAsync(FlushAsync, "TodoDragSaveFailed");
 
-    internal async Task HideAsync()
-    {
-        if (_permanentClose) return;
-        await FlushAsync();
-        _visible = false;
-        _appWindow.Hide();
-    }
-
-    internal async Task<bool> FlushAndHideForDragAsync()
-    {
-        bool wasVisible = _visible;
-        if (!await FlushAsync()) throw new IOException(AppStrings.Get("TodoDragSaveFailed"));
-        if (wasVisible)
-        {
-            _visible = false;
-            _appWindow.Hide();
-        }
-        return wasVisible;
-    }
-
-    internal void RestoreAfterDrag()
-    {
-        if (_permanentClose) return;
-        _visible = true;
-        _appWindow.Show(activateWindow: false);
-    }
+    internal void RestoreAfterDrag() => _windowChrome.RestoreAfterDrag();
 
     internal Task<bool> FlushForExitAsync() =>
-        _permanentClose ? Task.FromResult(true) : FlushAsync();
+        _windowChrome.IsPermanentClose ? Task.FromResult(true) : FlushAsync();
 
-    internal async Task ClosePermanentlyAsync()
-    {
-        if (_permanentClose) return;
-        await FlushAsync();
-        _permanentClose = true;
-        Close();
-    }
+    internal Task ClosePermanentlyAsync() => _windowChrome.ClosePermanentlyAsync(FlushAsync);
 
-    internal void ClosePermanentlyWithoutSave()
-    {
-        if (_permanentClose) return;
-        _saveTimer.Stop();
-        _completionTimer.Stop();
-        _permanentClose = true;
-        Close();
-    }
+    internal void ClosePermanentlyWithoutSave() =>
+        _windowChrome.ClosePermanentlyWithoutSave(() =>
+        {
+            _saveTimer.Stop();
+            _completionTimer.Stop();
+        });
 
     internal void ApplyLanguage()
     {
-        UpdateTitle();
+        string idSuffix = GetAutomationSuffix();
+        _windowChrome.ApplyHeaderLanguage(
+            idPrefix: "Todo",
+            idSuffix: idSuffix,
+            renameHintKey: "TodoRenameHint",
+            colorKey: "TodoColor",
+            optionKey: "TodoSeparators",
+            closeKey: "CloseTodo");
+        AutomationProperties.SetAutomationId(HeaderBar.OptionToggleButton, $"TodoSeparators-{idSuffix}");
         AutomationProperties.SetName(NewTaskBox, AppStrings.Get("TodoAddPlaceholder"));
+        AutomationProperties.SetAutomationId(NewTaskBox, $"TodoNewTaskBox-{idSuffix}");
         AutomationProperties.SetName(AddTaskButton, AppStrings.Get("TodoAddPlaceholder"));
-        AutomationProperties.SetName(ColorButton, AppStrings.Get("TodoColor"));
-        ToolTipService.SetToolTip(ColorButton, AppStrings.Get("TodoColor"));
-        AutomationProperties.SetName(SeparatorsButton, AppStrings.Get("TodoSeparators"));
-        ToolTipService.SetToolTip(SeparatorsButton, AppStrings.Get("TodoSeparators"));
-        AutomationProperties.SetName(CloseButton, AppStrings.Get("CloseTodo"));
-        ToolTipService.SetToolTip(CloseButton, AppStrings.Get("CloseTodo"));
+        AutomationProperties.SetAutomationId(AddTaskButton, $"TodoAddTask-{idSuffix}");
         foreach (TodoRow row in _rows) row.ApplyLanguage();
     }
 
     private void UpdateTitle()
     {
+        string idSuffix = GetAutomationSuffix();
         string name = Path.GetFileNameWithoutExtension(_externalPath);
         Title = name;
-        TodoTitleText.Text = name;
-        AutomationProperties.SetName(TodoTitleText, name);
-        AutomationProperties.SetHelpText(TodoTitleText, AppStrings.Get("TodoRenameHint"));
+        HeaderBar.TitleText.Text = name;
+        AutomationProperties.SetName(HeaderBar.TitleText, name);
+        AutomationProperties.SetAutomationId(HeaderBar.TitleText, $"TodoTitle-{idSuffix}");
+        AutomationProperties.SetHelpText(HeaderBar.TitleText, AppStrings.Get("TodoRenameHint"));
+        AutomationProperties.SetName(HeaderBar.TitleEditor, AppStrings.Get("ContextRename"));
+        AutomationProperties.SetAutomationId(HeaderBar.TitleEditor, $"TodoTitleEditor-{idSuffix}");
     }
+
+    private string GetAutomationSuffix() =>
+        ((uint)StringComparer.OrdinalIgnoreCase.GetHashCode(_externalPath)).ToString("X8");
 
     private async Task<bool> FlushAsync()
     {
@@ -350,21 +263,18 @@ public sealed partial class TodoWindow : Window
     {
         NewTaskBox.FontSize = _document.FontSize;
         AddTaskButton.FontSize = _document.FontSize;
-        // Measure one ordinary text line, independent of wrapped/finished rows.
         var line = new TextBlock
         {
             Text = "Ag中", FontSize = _document.FontSize,
             FontFamily = NewTaskBox.FontFamily
         };
         line.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
-        // Matches row padding 8+4 and the checkbox target (20 plus top margin 1).
         NewTaskEntry.Height = Math.Max(40, Math.Max(21, line.DesiredSize.Height) + 12 +
             (_host.State.GlobalSettings.TodoShowSeparators ? 1 : 0));
     }
 
     private void TaskCheckTarget_Tapped(object sender, TappedRoutedEventArgs e)
     {
-        // Native CheckBox taps already toggle themselves; only bridge the surrounding hit area.
         if (sender is not Grid target || !ReferenceEquals(e.OriginalSource, target) ||
             FindDescendant<CheckBox>(target, candidate => candidate.Tag is TodoRow) is not { IsEnabled: true } box) return;
         _ = box.Focus(FocusState.Pointer);
@@ -470,8 +380,12 @@ public sealed partial class TodoWindow : Window
         row.EndEdit();
     }
 
+    private void TaskList_DragItemsStarting(object sender, DragItemsStartingEventArgs e) =>
+        _isDraggingTask = true;
+
     private void TaskList_DragItemsCompleted(ListViewBase sender, DragItemsCompletedEventArgs args)
     {
+        _isDraggingTask = false;
         _document.Tasks = _rows.Select(row => row.Task).ToList();
         ScheduleSave();
     }
@@ -479,19 +393,24 @@ public sealed partial class TodoWindow : Window
     private void CompletionTimer_Tick(Microsoft.UI.Dispatching.DispatcherQueueTimer sender, object args)
     {
         DateTimeOffset now = DateTimeOffset.UtcNow;
-        foreach (TodoRow row in _rows) row.RefreshVisual(now);
-        TodoRow[] expired = _rows.Where(row =>
-            row.Task.Done &&
-            row.Task.CompletedAtUtc is DateTimeOffset completed &&
-            now.ToUniversalTime() - completed >= TodoRules.CompletionDelay).ToArray();
-        foreach (TodoRow row in expired)
+        bool editingAny = _isDraggingTask;
+        foreach (TodoRow row in _rows)
         {
-            _rows.Remove(row);
-            _document.Tasks.Remove(row.Task);
+            if (row.IsEditing) editingAny = true;
+            if (row.Done || row.HasPendingVisualSync) row.RefreshVisual(now);
         }
-        if (expired.Length > 0)
+        if (!editingAny)
         {
-            ScheduleSave();
+            TodoRow[] expired = _rows.Where(row =>
+                row.Task.Done &&
+                row.Task.CompletedAtUtc is DateTimeOffset completed &&
+                now.ToUniversalTime() - completed >= TodoRules.CompletionDelay).ToArray();
+            foreach (TodoRow row in expired)
+            {
+                _rows.Remove(row);
+                _document.Tasks.Remove(row.Task);
+            }
+            if (expired.Length > 0) ScheduleSave();
         }
         RefreshCompletionTimer();
     }
@@ -519,26 +438,11 @@ public sealed partial class TodoWindow : Window
         e.Handled = true;
     }
 
-    private void ColorButton_Click(object sender, RoutedEventArgs e)
-    {
-        var flyout = new MenuFlyout();
-        foreach (NoteThemeColors colors in NoteThemePalette.All)
-        {
-            var item = new ToggleMenuFlyoutItem
-            {
-                Text = AppStrings.Get(colors.NameKey),
-                Tag = colors.Theme,
-                IsChecked = colors.Theme == _document.Theme
-            };
-            item.Click += ThemeItem_Click;
-            flyout.Items.Add(item);
-        }
-        flyout.ShowAt(ColorButton);
-    }
+    private void ColorButton_Click(object sender, RoutedEventArgs e) =>
+        _windowChrome.ShowThemeFlyout(_document.Theme, "Todo");
 
-    private async void ThemeItem_Click(object sender, RoutedEventArgs e)
+    private async void OnThemeSelected(NoteTheme theme)
     {
-        if (sender is not ToggleMenuFlyoutItem { Tag: NoteTheme theme }) return;
         try { await _host.SetNoteThemeAsync(theme); }
         catch (Exception ex)
         {
@@ -550,15 +454,15 @@ public sealed partial class TodoWindow : Window
     internal void ApplySeparatorSetting()
     {
         bool enabled = _host.State.GlobalSettings.TodoShowSeparators;
-        SeparatorsButton.IsChecked = enabled;
+        HeaderBar.OptionToggleButton.IsChecked = enabled;
         foreach (TodoRow row in _rows) row.SetSeparators(enabled);
         UpdateComposerMetrics();
     }
 
     private async void SeparatorsButton_Click(object sender, RoutedEventArgs e)
     {
-        bool enabled = SeparatorsButton.IsChecked == true;
-        SeparatorsButton.IsEnabled = false;
+        bool enabled = HeaderBar.OptionToggleButton.IsChecked == true;
+        HeaderBar.OptionToggleButton.IsEnabled = false;
         try { await _host.SetTodoShowSeparatorsAsync(enabled); }
         catch (Exception ex)
         {
@@ -568,233 +472,89 @@ public sealed partial class TodoWindow : Window
         finally
         {
             ApplySeparatorSetting();
-            SeparatorsButton.IsEnabled = true;
+            HeaderBar.OptionToggleButton.IsEnabled = true;
         }
     }
 
+    private void WindowRoot_ActualThemeChanged(FrameworkElement sender, object args) => ApplyTheme();
+
     private void ApplyTheme()
     {
-        NoteThemeColors colors = NoteThemePalette.Get(_document.Theme);
-        WindowRoot.RequestedTheme = colors.TextColor.R > 128 ? ElementTheme.Dark : ElementTheme.Light;
-        var editor = new SolidColorBrush(colors.EditorColor);
-        var surface = new SolidColorBrush(colors.SurfaceColor);
+        PortableDocumentResolvedTheme resolved = _windowChrome.ApplyChromeTheme(_document.Theme, showFrameBorder: true);
+        WindowRoot.RequestedTheme = resolved.HighContrast
+            ? ElementTheme.Default
+            : resolved.Text.R > 128 ? ElementTheme.Dark : ElementTheme.Light;
+
         var text = (SolidColorBrush)WindowRoot.Resources["TodoTextBrush"];
         var input = (SolidColorBrush)WindowRoot.Resources["TodoInputBrush"];
         var border = (SolidColorBrush)WindowRoot.Resources["TodoBorderBrush"];
         var separator = (SolidColorBrush)WindowRoot.Resources["TodoSeparatorBrush"];
-        var accent = new SolidColorBrush(colors.AccentColor);
-        text.Color = colors.TextColor;
-        input.Color = ColorHelper.FromArgb(24, colors.TextColor.R, colors.TextColor.G, colors.TextColor.B);
-        border.Color = colors.BorderColor;
-        separator.Color = colors.BorderColor;
-        _themeBrushes.Set(WindowRoot.Resources, "TextControlBackgroundPointerOver", input.Color);
-        _themeBrushes.Set(WindowRoot.Resources, "TextControlBackgroundFocused", input.Color);
-        _themeBrushes.Set(WindowRoot.Resources, "TextControlForegroundPointerOver", text.Color);
-        _themeBrushes.Set(WindowRoot.Resources, "TextControlForegroundFocused", text.Color);
-        _themeBrushes.Set(WindowRoot.Resources, "TextControlBorderBrushPointerOver", border.Color);
-        _themeBrushes.Set(WindowRoot.Resources, "TextControlBorderBrushFocused", border.Color);
-        Color addColor = ColorHelper.FromArgb(12, colors.TextColor.R, colors.TextColor.G, colors.TextColor.B);
-        Color addBorder = ColorHelper.FromArgb(80, colors.BorderColor.R, colors.BorderColor.G, colors.BorderColor.B);
+        text.Color = resolved.Text;
+        input.Color = resolved.HighContrast
+            ? resolved.Editor
+            : ColorHelper.FromArgb(24, resolved.Text.R, resolved.Text.G, resolved.Text.B);
+        border.Color = resolved.Border;
+        separator.Color = resolved.Border;
+        separator.Opacity = resolved.HighContrast ? 1 : 0.5;
+
+        WindowThemeBrushes themeBrushes = _windowChrome.ThemeBrushes;
+        themeBrushes.Set(WindowRoot.Resources, "TextControlBackgroundPointerOver", input.Color);
+        themeBrushes.Set(WindowRoot.Resources, "TextControlBackgroundFocused", input.Color);
+        themeBrushes.Set(WindowRoot.Resources, "TextControlForegroundPointerOver", text.Color);
+        themeBrushes.Set(WindowRoot.Resources, "TextControlForegroundFocused", text.Color);
+        themeBrushes.Set(WindowRoot.Resources, "TextControlBorderBrushPointerOver", border.Color);
+        themeBrushes.Set(WindowRoot.Resources, "TextControlBorderBrushFocused", resolved.Accent);
+
+        Color addColor = resolved.HighContrast
+            ? resolved.Editor
+            : ColorHelper.FromArgb(12, resolved.Text.R, resolved.Text.G, resolved.Text.B);
+        Color addBorder = resolved.HighContrast
+            ? resolved.Border
+            : ColorHelper.FromArgb(80, resolved.Border.R, resolved.Border.G, resolved.Border.B);
         ((SolidColorBrush)WindowRoot.Resources["TodoAddBrush"]).Color = addColor;
         ((SolidColorBrush)WindowRoot.Resources["TodoAddBorderBrush"]).Color = addBorder;
-        _themeBrushes.Set(NewTaskBox.Resources, "TextControlBackgroundPointerOver", addColor);
-        _themeBrushes.Set(NewTaskBox.Resources, "TextControlBackgroundFocused", addColor);
-        _themeBrushes.Set(NewTaskBox.Resources, "TextControlBorderBrushPointerOver", addBorder);
-        _themeBrushes.Set(NewTaskBox.Resources, "TextControlBorderBrushFocused", colors.AccentColor);
-        _themeBrushes.Set(AddTaskButton.Resources, "ButtonBackgroundPointerOver", ColorHelper.FromArgb(24, colors.TextColor.R, colors.TextColor.G, colors.TextColor.B));
-        _themeBrushes.Set(AddTaskButton.Resources, "ButtonBackgroundPressed", ColorHelper.FromArgb(36, colors.TextColor.R, colors.TextColor.G, colors.TextColor.B));
-        _themeBrushes.Set(AddTaskButton.Resources, "ButtonForegroundPointerOver", colors.TextColor);
-        _themeBrushes.Set(AddTaskButton.Resources, "ButtonForegroundPressed", colors.TextColor);
-        _themeBrushes.Set(AddTaskButton.Resources, "ButtonBorderBrushPointerOver", addBorder);
-        _themeBrushes.Set(AddTaskButton.Resources, "ButtonBorderBrushPressed", colors.AccentColor);
-        WindowFrame.Background = editor;
-        WindowFrame.BorderBrush = border;
-        DragTitleBar.Background = surface;
-        TodoTitleText.Foreground = text;
-        TodoTitleEditor.Foreground = text;
-        ColorButton.Foreground = accent;
-        SeparatorsButton.Foreground = text;
-        _themeBrushes.Set(SeparatorsButton.Resources, "ToggleButtonBackgroundChecked",
-            ColorHelper.FromArgb(68, colors.AccentColor.R, colors.AccentColor.G, colors.AccentColor.B));
-        _themeBrushes.Set(SeparatorsButton.Resources, "ToggleButtonBackgroundCheckedPointerOver",
-            ColorHelper.FromArgb(88, colors.AccentColor.R, colors.AccentColor.G, colors.AccentColor.B));
-        _themeBrushes.Set(SeparatorsButton.Resources, "ToggleButtonForegroundChecked", text.Color);
-        _themeBrushes.Set(SeparatorsButton.Resources, "ToggleButtonForegroundCheckedPointerOver", text.Color);
-        CloseButton.Foreground = text;
+        themeBrushes.Set(NewTaskBox.Resources, "TextControlBackgroundPointerOver", addColor);
+        themeBrushes.Set(NewTaskBox.Resources, "TextControlBackgroundFocused", addColor);
+        themeBrushes.Set(NewTaskBox.Resources, "TextControlBorderBrushPointerOver", addBorder);
+        themeBrushes.Set(NewTaskBox.Resources, "TextControlBorderBrushFocused", resolved.Accent);
+        themeBrushes.Set(AddTaskButton.Resources, "ButtonBackgroundPointerOver",
+            resolved.HighContrast ? resolved.Accent : ColorHelper.FromArgb(24, resolved.Text.R, resolved.Text.G, resolved.Text.B));
+        themeBrushes.Set(AddTaskButton.Resources, "ButtonBackgroundPressed",
+            resolved.HighContrast ? resolved.Accent : ColorHelper.FromArgb(36, resolved.Text.R, resolved.Text.G, resolved.Text.B));
+        themeBrushes.Set(AddTaskButton.Resources, "ButtonForegroundPointerOver",
+            resolved.HighContrast ? resolved.Surface : resolved.Text);
+        themeBrushes.Set(AddTaskButton.Resources, "ButtonForegroundPressed",
+            resolved.HighContrast ? resolved.Surface : resolved.Text);
+        themeBrushes.Set(AddTaskButton.Resources, "ButtonBorderBrushPointerOver", addBorder);
+        themeBrushes.Set(AddTaskButton.Resources, "ButtonBorderBrushPressed", resolved.Accent);
         TaskList.Foreground = text;
     }
 
-    private async void CloseButton_Click(object sender, RoutedEventArgs e) => await HideAsync();
-
-    private void TodoTitleText_Tapped(object sender, TappedRoutedEventArgs e)
+    private async Task CommitTitleRenameAsync(string candidate)
     {
-        if (_renaming) return;
-        _renaming = true;
-        TodoTitleEditor.Text = Path.GetFileNameWithoutExtension(_externalPath);
-        TodoTitleText.Visibility = Visibility.Collapsed;
-        TodoTitleEditor.Visibility = Visibility.Visible;
-        UpdateTitlePassthrough();
-        TodoTitleEditor.Focus(FocusState.Programmatic);
-        TodoTitleEditor.SelectAll();
-        e.Handled = true;
-    }
-
-    private async void TodoTitleEditor_KeyDown(object sender, KeyRoutedEventArgs e)
-    {
-        if (e.Key == Windows.System.VirtualKey.Escape)
-        {
-            EndRename();
-            e.Handled = true;
-        }
-        else if (e.Key == Windows.System.VirtualKey.Enter)
-        {
-            e.Handled = true;
-            await CommitRenameAsync();
-        }
-    }
-
-    private async void TodoTitleEditor_LostFocus(object sender, RoutedEventArgs e) => await CommitRenameAsync();
-
-    private async Task CommitRenameAsync()
-    {
-        if (!_renaming || _renameCommitInProgress) return;
-        _renameCommitInProgress = true;
         try
         {
-            if (!await FlushAsync()) return;
-            _externalPath = await _host.RenameExternalTodoAsync(_externalPath, TodoTitleEditor.Text);
-            EndRename();
+            if (!await FlushAsync())
+                throw new IOException(AppStrings.Get("TodoDragSaveFailed"));
+            _externalPath = await _host.RenameExternalTodoAsync(_externalPath, candidate);
             UpdateTitle();
         }
         catch (Exception ex)
         {
             AppLogger.Error($"无法重命名待办：{_externalPath}", ex);
-            ShowError(ex.Message);
+            throw;
         }
-        finally
-        {
-            _renameCommitInProgress = false;
-            if (_renaming)
-            {
-                TodoTitleEditor.Focus(FocusState.Programmatic);
-                TodoTitleEditor.SelectAll();
-            }
-        }
-    }
-
-    private void EndRename()
-    {
-        _renaming = false;
-        TodoTitleEditor.Visibility = Visibility.Collapsed;
-        TodoTitleText.Visibility = Visibility.Visible;
-        UpdateTitlePassthrough();
-    }
-
-    private void TitleDragSurface_SizeChanged(object sender, SizeChangedEventArgs e) => UpdateTitlePassthrough();
-
-    private void UpdateTitlePassthrough()
-    {
-        FrameworkElement target = _renaming ? TitleDragSurface : TodoTitleText;
-        if (_titleInput is null || target.ActualWidth <= 0 || target.ActualHeight <= 0) return;
-        Rect bounds = target.TransformToVisual(WindowRoot)
-            .TransformBounds(new Rect(0, 0, target.ActualWidth, target.ActualHeight));
-        double scale = Math.Max(1, NativeMethods.GetDpiForWindow(_hwnd) / 96d);
-        _titleInput.SetRegionRects(
-            NonClientRegionKind.Passthrough,
-            [new RectInt32(
-                (int)Math.Floor(bounds.X * scale),
-                (int)Math.Floor(bounds.Y * scale),
-                Math.Max(1, (int)Math.Ceiling(bounds.Width * scale)),
-                Math.Max(1, (int)Math.Ceiling(bounds.Height * scale))) ]);
-    }
-
-    private void RestorePlacement()
-    {
-        PortableNotePlacement placement = _document.Placement ?? new PortableNotePlacement
-        {
-            WidthDip = 360,
-            HeightDip = 480
-        };
-        DisplayInfo display = DisplayPlacementService.GetDisplay(placement.MonitorDevice);
-        int width = (int)Math.Round(placement.WidthDip * display.Scale);
-        int height = (int)Math.Round(placement.HeightDip * display.Scale);
-        int left = string.IsNullOrWhiteSpace(placement.MonitorDevice)
-            ? display.Work.Left + (display.Work.Width - width) / 2
-            : display.Work.Left + (int)Math.Round(placement.XDip * display.Scale);
-        int top = string.IsNullOrWhiteSpace(placement.MonitorDevice)
-            ? display.Work.Top + (display.Work.Height - height) / 2
-            : display.Work.Top + (int)Math.Round(placement.YDip * display.Scale);
-        NativeMethods.RECT bounds = DisplayPlacementService.Clamp(new NativeMethods.RECT
-        {
-            Left = left,
-            Top = top,
-            Right = left + width,
-            Bottom = top + height
-        }, display.Work);
-        _restoringPlacement = true;
-        _appWindow.MoveAndResize(new RectInt32(bounds.Left, bounds.Top, bounds.Width, bounds.Height));
-        _restoringPlacement = false;
-    }
-
-    private void AppWindow_Changed(AppWindow sender, AppWindowChangedEventArgs args)
-    {
-        if (_restoringPlacement || (!args.DidPositionChange && !args.DidSizeChange)) return;
-        if (args.DidSizeChange)
-        {
-            DisplayInfo currentDisplay = DisplayPlacementService.ForBounds(new NativeMethods.RECT
-            {
-                Left = sender.Position.X,
-                Top = sender.Position.Y,
-                Right = sender.Position.X + sender.Size.Width,
-                Bottom = sender.Position.Y + sender.Size.Height
-            });
-            int width = Math.Clamp(sender.Size.Width,
-                (int)Math.Round(MinimumWidthDip * currentDisplay.Scale),
-                (int)Math.Round(MaximumWidthDip * currentDisplay.Scale));
-            int height = Math.Clamp(sender.Size.Height,
-                (int)Math.Round(MinimumHeightDip * currentDisplay.Scale),
-                (int)Math.Round(MaximumHeightDip * currentDisplay.Scale));
-            if (width != sender.Size.Width || height != sender.Size.Height)
-            {
-                _restoringPlacement = true;
-                sender.Resize(new SizeInt32(width, height));
-                _restoringPlacement = false;
-            }
-        }
-        if (!NativeMethods.GetWindowRect(_hwnd, out NativeMethods.RECT bounds)) return;
-        DisplayInfo display = DisplayPlacementService.ForBounds(bounds);
-        _document.Placement = new PortableNotePlacement
-        {
-            MonitorDevice = display.Device,
-            XDip = (bounds.Left - display.Work.Left) / display.Scale,
-            YDip = (bounds.Top - display.Work.Top) / display.Scale,
-            WidthDip = bounds.Width / display.Scale,
-            HeightDip = bounds.Height / display.Scale
-        };
-        ScheduleSave();
-    }
-
-    private void AppWindow_Closing(AppWindow sender, AppWindowClosingEventArgs args)
-    {
-        if (_permanentClose) return;
-        args.Cancel = true;
-        _ = HideAsync();
     }
 
     private void TodoWindow_Closed(object sender, WindowEventArgs args)
     {
+        WindowRoot.ActualThemeChanged -= WindowRoot_ActualThemeChanged;
         _saveTimer.Stop();
         _completionTimer.Stop();
-        _chrome?.Dispose();
-        _chrome = null;
-        _saveGate.Dispose();
+        _windowChrome.Dispose();
     }
 
-    private void ShowError(string message)
-    {
-        ErrorBar.Message = message;
-        ErrorBar.IsOpen = true;
-    }
+    private void ShowError(string message) => _windowChrome.ShowError(message);
 
     private static T? FindDescendant<T>(DependencyObject root, Func<T, bool> predicate) where T : DependencyObject
     {
@@ -815,6 +575,7 @@ public sealed partial class TodoWindow : Window
         private string _editText;
         private double _opacity = 1;
         private bool _showSeparators;
+        private bool _lastRenderedDone;
 
         internal TodoRow(PortableTodoTask task, double fontSize, bool showSeparators = false)
         {
@@ -822,12 +583,14 @@ public sealed partial class TodoWindow : Window
             _fontSize = fontSize;
             _showSeparators = showSeparators;
             _editText = task.Text;
+            _lastRenderedDone = !task.Done;
             RefreshVisual(DateTimeOffset.UtcNow);
         }
 
         internal PortableTodoTask Task { get; }
         public string Text => Task.Text;
         public bool Done => Task.Done;
+        internal bool HasPendingVisualSync => _lastRenderedDone != Task.Done || (!Task.Done && Math.Abs(_opacity - 1) > .001);
         public TextDecorations TextDecorations => Done
             ? Windows.UI.Text.TextDecorations.Strikethrough
             : Windows.UI.Text.TextDecorations.None;
@@ -900,6 +663,9 @@ public sealed partial class TodoWindow : Window
         internal void RefreshVisual(DateTimeOffset now)
         {
             Opacity = TodoRules.GetOpacity(Task, now);
+            bool done = Done;
+            if (_lastRenderedDone == done) return;
+            _lastRenderedDone = done;
             OnPropertyChanged(nameof(Done));
             OnPropertyChanged(nameof(TextDecorations));
             OnPropertyChanged(nameof(UndoVisibility));

@@ -41,7 +41,7 @@ public sealed partial class NoteWindow
         await _imageClipboardGate.WaitAsync();
         try
         {
-            if (!_visible || _permanentClose) return true;
+            if (!IsVisible || _windowChrome.IsPermanentClose) return true;
             if (action == "paste")
             {
                 DataPackageView clipboard = Clipboard.GetContent();
@@ -80,7 +80,7 @@ public sealed partial class NoteWindow
                 foreach (int delay in new[] { 0, 50, 100, 200, 400 })
                 {
                     if (delay > 0) await Task.Delay(delay);
-                    if (_permanentClose || !_visible) break;
+                    if (_windowChrome.IsPermanentClose || !IsVisible) break;
                     ok = Clipboard.SetContentWithOptions(content, new ClipboardContentOptions { IsAllowedInHistory = true });
                     if (ok) break;
                 }
@@ -93,14 +93,14 @@ public sealed partial class NoteWindow
         {
             ok = false;
             AppLogger.Error("便签图片剪贴板操作失败。", ex);
-            if (!_permanentClose) ShowError(AppStrings.Get(action == "paste" ? "NoteImagePasteError" : "NoteClipboardWriteError"));
+            if (!_windowChrome.IsPermanentClose) ShowError(AppStrings.Get(action == "paste" ? "NoteImagePasteError" : "NoteClipboardWriteError"));
         }
         finally
         {
             _imageClipboardGate.Release();
-            if (!_permanentClose && Editor.CoreWebView2 is { } core)
+            if (!_windowChrome.IsPermanentClose && Editor.CoreWebView2 is { } core)
             {
-                ok = ok && _visible;
+                ok = ok && IsVisible;
                 string result = JsonSerializer.Serialize(new { token, ok, dataUrl, text });
                 await core.ExecuteScriptAsync($"window.__tuckpane?.completeImageClipboard({result})");
             }
@@ -151,7 +151,7 @@ public sealed partial class NoteWindow
             {
                 try
                 {
-                    if (!_permanentClose && Editor.CoreWebView2 is { } core)
+                    if (!_windowChrome.IsPermanentClose && Editor.CoreWebView2 is { } core)
                         await core.ExecuteScriptAsync($"window.__tuckpane?.imageCommand({JsonSerializer.Serialize(token)},{JsonSerializer.Serialize(action)})");
                 }
                 catch (Exception ex) { AppLogger.Error("便签图片菜单操作失败。", ex); }

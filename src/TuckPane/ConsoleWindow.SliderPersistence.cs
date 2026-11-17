@@ -14,30 +14,81 @@ public sealed partial class ConsoleWindow
 
     private void InitializeSliderCompletion()
     {
-        // Named controls include those in pages/expanders not materialized yet.
-        foreach (ConsoleSlider slider in new[] { UniformFloatingCompactScaleSlider, UniformPositionedCompactScaleSlider,
-            CompactHoverMagnificationSlider, DockHoverMagnificationSlider,
-            CompactNameScaleSlider, ExpandedNameScaleSlider, HoverExpandDelaySlider, PointerLeaveCollapseDelaySlider,
-            StationPointerLeaveCollapseDelaySlider, StationActivationDistanceSlider, StationHoverExpandDelaySlider,
-            ThemeTransparencySlider, ThemeBlurStrengthSlider, ManageRowsSlider, ManageColumnsSlider,
-            ManageCompactScaleSlider, ManageCanvasScaleSlider, ManageItemScaleSlider,
-            ManageDockIconSizeSlider, ManageDockSpacingSlider, AddRowsSlider, AddColumnsSlider,
-            AddCompactScaleSlider, AddCanvasScaleSlider, AddItemScaleSlider, AddDockIconSizeSlider, AddDockSpacingSlider })
-            slider.AdjustmentCompleted += Slider_AdjustmentCompleted;
+        WireSliderGroup(
+            [UniformFloatingCompactScaleSlider, UniformPositionedCompactScaleSlider],
+            async () =>
+            {
+                _uniformCompactScaleSaveTimer.Stop();
+                if (_uniformCompactScaleApplyScheduled) ApplyPendingUniformCompactScaleChanges(null, EventArgs.Empty);
+                _ = await SaveUniformSlidersAsync();
+                UpdateUniformCompactScaleControls();
+            });
+
+        WireSliderGroup(
+            [CompactHoverMagnificationSlider, DockHoverMagnificationSlider],
+            async () =>
+            {
+                _hoverMagnificationSaveTimer?.Stop();
+                _ = await SaveHoverMagnificationSlidersAsync();
+                UpdateHoverMagnificationScaleControls();
+            });
+
+        WireSliderGroup(
+            [CompactNameScaleSlider, ExpandedNameScaleSlider],
+            async () =>
+            {
+                _nameScaleSaveTimer.Stop();
+                _ = await SaveNameSlidersAsync();
+                UpdateNameScaleControls();
+            });
+
+        WireSliderGroup(
+            [
+                HoverExpandDelaySlider,
+                PointerLeaveCollapseDelaySlider,
+                StationPointerLeaveCollapseDelaySlider,
+                StationActivationDistanceSlider,
+                StationHoverExpandDelaySlider
+            ],
+            async () =>
+            {
+                _hoverDelaySaveTimer.Stop();
+                _ = await SaveDelaySlidersAsync();
+                UpdateHoverDelayControls();
+            });
+
+        WireSliderGroup(
+            [ThemeTransparencySlider, ThemeBlurStrengthSlider],
+            async () =>
+            {
+                _themeSaveTimer.Stop();
+                _ = await SaveThemeAsync();
+                UpdateThemeControls();
+            });
+
+        ManageForm.SubscribeSliderCompletion(async (_, _) =>
+        {
+            if (!_componentReady || _closingPermanently) return;
+            _ = await FlushPendingManageChangesAsync(commitName: false);
+            UpdateManageControls();
+        });
+
+        AddForm.SubscribeSliderCompletion((_, _) =>
+        {
+            if (!_componentReady || _closingPermanently) return;
+            UpdateAddControls();
+        });
     }
 
-    private async void Slider_AdjustmentCompleted(object? sender, EventArgs args)
+    private void WireSliderGroup(ConsoleSlider[] sliders, Func<Task> onCompletedAsync)
     {
-        if (!_componentReady || _closingPermanently) return;
-        await FlushPendingSliderSavesAsync();
-        await FlushPendingManageChangesAsync(commitName: false);
-        UpdateUniformCompactScaleControls();
-        UpdateNameScaleControls();
-        UpdateHoverDelayControls();
-        UpdateThemeControls();
-        UpdateAddControls();
-        UpdateManageControls();
-        UpdateHoverMagnificationScaleControls();
+        EventHandler handler = async (_, _) =>
+        {
+            if (!_componentReady || _closingPermanently) return;
+            await onCompletedAsync();
+        };
+        foreach (ConsoleSlider slider in sliders)
+            slider.AdjustmentCompleted += handler;
     }
 
     internal async Task<bool> FlushPendingSliderSavesAsync()
@@ -60,17 +111,15 @@ public sealed partial class ConsoleWindow
         {
             if (_uniformCompactScaleApplyScheduled) ApplyPendingUniformCompactScaleChanges(null, EventArgs.Empty);
             return (_host.State.GlobalSettings.UniformFloatingCompactScale,
-            _host.State.GlobalSettings.UniformPositionedCompactScale,
-            _host.CaptureUniformCompactScaleSnapshots(OrganizerPlacementMode.Floating),
-            _host.CaptureUniformCompactScaleSnapshots(OrganizerPlacementMode.Positioned), _uniformSliderSave.Revision);
+                _host.State.GlobalSettings.UniformPositionedCompactScale,
+                _host.CaptureUniformCompactScaleSnapshots(OrganizerPlacementMode.Floating),
+                _host.CaptureUniformCompactScaleSnapshots(OrganizerPlacementMode.Positioned), _uniformSliderSave.Revision);
         },
         _host.SaveStateAsync,
         saved =>
         {
             _savedUniformFloatingCompactScale = saved.Item1;
             _savedUniformPositionedCompactScale = saved.Item2;
-            // Keep the committed geometry only while a newer edit is already pending.
-            // A later independent gesture must capture fresh window state.
             bool newerEdit = _uniformSliderSave.Revision != saved.Item5;
             _savedUniformFloatingSnapshots = newerEdit ? saved.Item3 : null;
             _savedUniformPositionedSnapshots = newerEdit ? saved.Item4 : null;

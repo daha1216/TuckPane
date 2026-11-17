@@ -19,10 +19,7 @@ public sealed partial class MainWindow : IExpansionModeView
     internal bool IsPermanentlyExpanded => OrganizerExpansion.IsPermanent(_definition);
     private Task ExpandAsyncForMode() => ApplyExpansionModeAsync();
 
-    private bool ExpansionModeInteractionBusy => _pressActive || _widgetDragging || _nativeMouseCapture ||
-        _canvasResize is not null || _widgetGesture.IsCompleting || _resizeGesture.IsCompleting ||
-        _shellDragActive || _shellDropFinalizing || _shellPromotionPending || _itemReorderSession is not null ||
-        _modeInteractionOperations > 0 || _dragHasLocalFile;
+    private bool ExpansionModeInteractionBusy => CaptureInteractionState().BlocksExpansionModeSwitch;
 
     void IExpansionModeView.Begin(OrganizerExpansionMode mode)
     {
@@ -32,7 +29,7 @@ public sealed partial class MainWindow : IExpansionModeView
         _outsideClickHook?.Stop();
         _externalHoverTimer.Stop();
         _hoverExpandScrollToEnd = false;
-        _ordinaryOutsideSince = 0;
+        _desktopCoordinator.ResetOrdinaryOutsideDelay();
         if (mode == OrganizerExpansionMode.Collapsible) _modeHoverGuard.SuppressUntilExit();
         UpdateExpansionModeControls();
         RefreshPerformanceSettings();
@@ -176,15 +173,12 @@ public sealed partial class MainWindow : IExpansionModeView
         bool permanent = _host.GetRequestedExpansionMode(OrganizerId) == OrganizerExpansionMode.AlwaysExpanded;
         CollapseButton.Visibility = station || permanent ? Visibility.Collapsed : Visibility.Visible;
         OrganizerExpansionMode target = permanent ? OrganizerExpansionMode.Collapsible : OrganizerExpansionMode.AlwaysExpanded;
-        foreach (MenuFlyoutItem item in new[] { CompactToggleExpansionModeMenuItem, ExpandedToggleExpansionModeMenuItem })
-        {
-            item.Visibility = station ? Visibility.Collapsed : Visibility.Visible;
-            item.IsEnabled = OrganizerExpansion.CanEnable(_definition);
-            item.Tag = target;
-            item.Text = AppStrings.Get(permanent ? "ContextSwitchToCollapsible" : "ContextSwitchToAlwaysExpanded");
-            item.FontFamily = new FontFamily(AppStrings.FontFamily);
-            item.CharacterSpacing = AppStrings.CharacterSpacing;
-        }
+        ToggleExpansionModeMenuItem.Visibility = station ? Visibility.Collapsed : Visibility.Visible;
+        ToggleExpansionModeMenuItem.IsEnabled = OrganizerExpansion.CanEnable(_definition);
+        ToggleExpansionModeMenuItem.Tag = target;
+        ToggleExpansionModeMenuItem.Text = AppStrings.Get(permanent ? "ContextSwitchToCollapsible" : "ContextSwitchToAlwaysExpanded");
+        ToggleExpansionModeMenuItem.FontFamily = new FontFamily(AppStrings.FontFamily);
+        ToggleExpansionModeMenuItem.CharacterSpacing = AppStrings.CharacterSpacing;
         RefreshOrganizerMenuVisibility();
     }
 

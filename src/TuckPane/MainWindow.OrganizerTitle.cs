@@ -33,7 +33,7 @@ public sealed partial class MainWindow
     {
         if (_closing || !_expanded || _definition.HideName || !_organizerTitleEdit.Begin()) return;
         _externalHoverTimer.Stop();
-        _ordinaryOutsideSince = 0;
+        _desktopCoordinator.ResetOrdinaryOutsideDelay();
         _desktopLayer?.SetInputActivation(true);
         ExpandedNameEditor.Text = _definition.Name;
         ExpandedNameEditor.FontSize = ExpandedNameText.FontSize;
@@ -77,7 +77,7 @@ public sealed partial class MainWindow
             {
                 _desktopLayer?.SetInputActivation(false);
                 UpdateOrganizerName();
-                _ordinaryOutsideSince = 0;
+                _desktopCoordinator.ResetOrdinaryOutsideDelay();
             }
         }
     }

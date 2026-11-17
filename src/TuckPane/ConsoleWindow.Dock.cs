@@ -1,5 +1,4 @@
 using Microsoft.UI.Xaml;
-using Microsoft.UI.Xaml.Controls;
 using TuckPane.Core;
 using TuckPane.Models;
 using TuckPane.Services;
@@ -9,21 +8,9 @@ namespace TuckPane;
 public sealed partial class ConsoleWindow
 {
     private ThemeTarget _manageCategory = ThemeTarget.Organizer;
-    private OrganizerPlacementMode ManagedPlacementMode => _editing?.PlacementMode switch
-    {
-        OrganizerPlacementMode.Station => OrganizerPlacementMode.Station,
-        OrganizerPlacementMode.Dock => OrganizerPlacementMode.Dock,
-        _ => ReferenceEquals(ManagePlacementModeCombo.SelectedItem, ManagePositionedModeItem)
-            ? OrganizerPlacementMode.Positioned : OrganizerPlacementMode.Floating
-    };
 
-    private void SelectManagePlacementMode(OrganizerPlacementMode mode) =>
-        ManagePlacementModeCombo.SelectedItem = mode switch
-        {
-            OrganizerPlacementMode.Floating => ManageFloatingModeItem,
-            OrganizerPlacementMode.Positioned => ManagePositionedModeItem,
-            _ => null
-        };
+    private OrganizerPlacementMode ManagedPlacementMode =>
+        ManageForm.ResolvePlacementMode(_manageCategory, _editing?.PlacementMode);
 
     internal void SetDockSize(Guid id, double size)
     {
@@ -52,11 +39,11 @@ public sealed partial class ConsoleWindow
             _editing.DockIconSizeDip = dock.DockIconSizeDip;
             _editing.DockOrientation = dock.DockOrientation;
             _editing.DockSpacingFactor = dock.DockSpacingFactor;
-            ManageDockIconSizeSlider.Value = dock.DockIconSizeDip;
-            ManageDockSpacingSlider.Value = dock.DockSpacingFactor;
-            ManageDockOrientationCombo.SelectedIndex = (int)dock.DockOrientation;
-            ManageDockIconSizeValue.Text = $"{dock.DockIconSizeDip:0} DIP";
-            ManageDockSpacingValue.Text = $"{dock.DockSpacingFactor:0.00}";
+            ManageForm.DockIconSize.Value = dock.DockIconSizeDip;
+            ManageForm.DockSpacing.Value = dock.DockSpacingFactor;
+            ManageForm.DockOrientation.SelectedIndex = (int)dock.DockOrientation;
+            ManageForm.DockIconSizeLabel.Text = $"{dock.DockIconSizeDip:0} DIP";
+            ManageForm.DockSpacingLabel.Text = $"{dock.DockSpacingFactor:0.00}";
         }
         finally { _loadingEditor = loading; }
     }
@@ -87,45 +74,19 @@ public sealed partial class ConsoleWindow
     private bool UpdateDockAddControls()
     {
         bool dock = AddedPlacementMode == OrganizerPlacementMode.Dock;
-        AddDockSettingsCard.Visibility = dock ? Visibility.Visible : Visibility.Collapsed;
-        AddExpandedContentModeCard.Visibility = dock ? Visibility.Collapsed : Visibility.Visible;
         if (!_addNameWasEdited && !_loadingCreation)
         {
             _loadingDefaultName = true;
-            AddNameBox.Text = dock ? AppStrings.Get("NavDocks") : _defaultAddName;
+            AddForm.NameInput.Text = dock ? AppStrings.Get("NavDocks") : _defaultAddName;
             _loadingDefaultName = false;
         }
-        if (!dock) return false;
-        AddNameCard.Visibility = Visibility.Visible;
-        foreach (FrameworkElement control in new FrameworkElement[] { AddExpansionModeCard, AddDisplayCard,
-            AddDockEdgeCard, AddCompactScaleCard, AddCanvasScaleCard, AddRowsCard, AddColumnsCard })
-            control.Visibility = Visibility.Collapsed;
-        AddExpandedContentModeCombo.SelectedIndex = 0;
-        AddExpansionModeCombo.SelectedIndex = 0;
-        AddDockIconSizeValue.Text = $"{DockLayoutMath.NormalizeIconSize(AddDockIconSizeSlider.Value):0} DIP";
-        AddDockSpacingValue.Text = $"{DockLayoutMath.NormalizeSpacing(AddDockSpacingSlider.Value):0.00}";
+        if (!AddForm.UpdateDockControls(AddedPlacementMode, sourceMode: null, _creationCategory))
+            return false;
         CreateOrganizerButton.IsEnabled = true;
         CreateLimitText.Visibility = Visibility.Collapsed;
         return true;
     }
 
-    private bool UpdateDockManageControls()
-    {
-        bool dock = _editing?.PlacementMode == OrganizerPlacementMode.Dock;
-        bool regular = _editing is { } current && OrganizerKinds.IsRegular(current.PlacementMode);
-        ManageIdentityGroup.Visibility = _editing?.PlacementMode == OrganizerPlacementMode.Station
-            ? Visibility.Collapsed : Visibility.Visible;
-        ManageDockSettingsCard.Visibility = dock ? Visibility.Visible : Visibility.Collapsed;
-        ManagePlacementModeCard.Visibility = regular ? Visibility.Visible : Visibility.Collapsed;
-        ManageExpandedContentModeCard.Visibility = regular ? Visibility.Visible : Visibility.Collapsed;
-        ManagePlacementModeCombo.IsEnabled = regular;
-        if (!dock) return false;
-        ManageNameCard.Visibility = Visibility.Visible;
-        foreach (FrameworkElement control in new FrameworkElement[] { ManageExpansionModeCard, ManageDisplayCard,
-            ManageDockEdgeCard, ManageCompactScaleCard, ManageCanvasScaleCard, ManageRowsCard, ManageColumnsCard })
-            control.Visibility = Visibility.Collapsed;
-        ManageDockIconSizeValue.Text = $"{DockLayoutMath.NormalizeIconSize(ManageDockIconSizeSlider.Value):0} DIP";
-        ManageDockSpacingValue.Text = $"{DockLayoutMath.NormalizeSpacing(ManageDockSpacingSlider.Value):0.00}";
-        return true;
-    }
+    private bool UpdateDockManageControls() =>
+        ManageForm.UpdateDockControls(ManagedPlacementMode, _editing?.PlacementMode, _manageCategory);
 }

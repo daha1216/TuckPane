@@ -16,13 +16,8 @@ public sealed partial class ConsoleWindow
     private NavigationViewItemBase? _activeNavigationItem;
     private bool _restoringNavigation;
 
-    private OrganizerPlacementMode AddedPlacementMode => _creationCategory switch
-    {
-        ThemeTarget.Station => OrganizerPlacementMode.Station,
-        ThemeTarget.Dock => OrganizerPlacementMode.Dock,
-        _ => AddPlacementModeCombo.SelectedIndex == 1
-            ? OrganizerPlacementMode.Positioned : OrganizerPlacementMode.Floating
-    };
+    private OrganizerPlacementMode AddedPlacementMode =>
+        AddForm.ResolvePlacementMode(_creationCategory, editingSourceMode: null);
 
     private SettingsCreationDraft NewCreationDraft(ThemeTarget category) => new(new OrganizerDefinition
     {
@@ -75,27 +70,13 @@ public sealed partial class ConsoleWindow
             _addOrganizerId = value.Id;
             _addStoragePath = draft.StoragePath;
             _addNameWasEdited = draft.NameWasEdited;
-            AddNameBox.Text = value.Name;
-            AddPlacementModeCombo.SelectedIndex = value.PlacementMode == OrganizerPlacementMode.Positioned ? 1 : 0;
-            AddExpansionModeCombo.SelectedIndex = (int)value.ExpansionMode;
-            AddExpandedContentModeCombo.SelectedIndex = (int)value.ExpandedContentMode;
-            AddDockEdgeCombo.SelectedIndex = (int)value.DockEdge;
-            SelectDisplay(AddDisplayCombo, value.Position?.MonitorDevice);
-            ConfigureGridSliders(AddRowsSlider, AddColumnsSlider, _creationCategory == ThemeTarget.Station);
-            AddRowsSlider.SetModelValue(value.Layout.Rows);
-            AddColumnsSlider.SetModelValue(value.Layout.Columns);
-            AddCompactScaleSlider.Maximum = value.PlacementMode == OrganizerPlacementMode.Positioned
-                ? OrganizerLimits.MaximumPositionedCompactScale : OrganizerLimits.MaximumCompactScale;
-            AddCompactScaleSlider.SetModelValue(value.CompactScale);
-            AddCanvasScaleSlider.Minimum = .1;
-            AddItemScaleSlider.Maximum = Math.Max(1.65, value.ItemScale);
-            AddCanvasScaleSlider.SetModelValue(value.CanvasScale);
-            AddItemScaleSlider.SetModelValue(value.ItemScale);
-            AddDockOrientationCombo.SelectedIndex = (int)value.DockOrientation;
-            AddDockIconSizeSlider.SetModelValue(value.DockIconSizeDip);
-            AddDockSpacingSlider.SetModelValue(value.DockSpacingFactor);
+            AddForm.LoadFromDefinition(value, value.ExpansionMode, _creationCategory == ThemeTarget.Station);
         }
-        finally { _loadingCreation = false; _loadingDefaultName = false; }
+        finally
+        {
+            _loadingCreation = false;
+            _loadingDefaultName = false;
+        }
         UpdateAddStoragePath();
         UpdateAddControls();
     }
@@ -128,7 +109,6 @@ public sealed partial class ConsoleWindow
             }
             else if (result is { SameSession: true })
             {
-                // Reflect the new object without replacing another editor or stealing navigation.
                 PopulateManageList(_selectedId, preserveEditor: true);
             }
         }
@@ -138,6 +118,9 @@ public sealed partial class ConsoleWindow
                 ShowError(AppStrings.Get("CreateErrorTitle"), ex.Message);
             else AppLogger.Error("Unable to create organizer from settings draft.", ex);
         }
-        finally { UpdateAddControls(); }
+        finally
+        {
+            UpdateAddControls();
+        }
     }
 }

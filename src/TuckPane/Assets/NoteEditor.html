@@ -575,7 +575,7 @@
         setRuledLines,
         imageCommand,
         completeImageClipboard,
-        getState() { return { html: cleanHtml(editor.innerHTML), fontSize }; }
+        getState() { return documentEpoch > 0 ? { html: cleanHtml(editor.innerHTML), fontSize } : null; }
       };
       post({ type: 'shellReady' });
     })();
