@@ -311,8 +311,9 @@ if (args is ["--sep04-drag-stability"])
     // Drag-in progress must not create a Dispatcher-capturing Progress<T>
     // for every copied chunk.  Null or an explicitly non-capturing/throttled
     // sink is acceptable for these no-progress UI paths.
-    string importBlock = ExtractBlock(mainSource, "private async Task ImportFromDragAsync");
-    string pasteBlock = ExtractBlock(mainSource, "private async void PasteMenuItem_Click");
+    string importBlock = RepoSourceSnapshot.ExtractMethodBody(mainSource, "ImportFromDragAsync(");
+    string pasteBlock = RepoSourceSnapshot.ExtractMethodBody(mainSource, "PasteMenuItem_Click(") + "\n" +
+                        RepoSourceSnapshot.ExtractMethodBody(mainSource, "PasteClipboardAsync(");
     Require(failures,
         !importBlock.Contains("new Progress<TransferProgress>(_ => { })", StringComparison.Ordinal) &&
         !pasteBlock.Contains("new Progress<TransferProgress>(_ => { })", StringComparison.Ordinal),
@@ -325,7 +326,7 @@ if (args is ["--sep04-drag-stability"])
 
     // FileSystemWatcher notifications must collapse to one pending dispatcher
     // callback instead of flooding the UI queue.
-    string watcherBlock = ExtractBlock(mainSource, "private void Watcher_Changed");
+    string watcherBlock = RepoSourceSnapshot.ExtractMethodBody(mainSource, "Watcher_Changed(");
     Require(failures,
         watcherBlock.Contains("Interlocked.Exchange", StringComparison.Ordinal) &&
         watcherBlock.Contains("_watcherRefreshPosted", StringComparison.Ordinal),
@@ -339,12 +340,12 @@ if (args is ["--sep04-drag-stability"])
         mainSource.Contains("_catalogRefreshCancellation", StringComparison.Ordinal) &&
         mainSource.Contains("Interlocked.Increment(ref _catalogRefreshGeneration)", StringComparison.Ordinal),
         "catalog refresh 缺少可取消、带 generation 的旧任务淘汰契约。");
-    string refreshBlock = ExtractBlock(mainSource, "private async Task RefreshCatalogCoreAsync");
+    string refreshBlock = RepoSourceSnapshot.ExtractMethodBody(mainSource, "RefreshCatalogCoreAsync(");
     Require(failures,
         refreshBlock.Contains("Task.Run", StringComparison.Ordinal) &&
         refreshBlock.Contains("generation != Volatile.Read", StringComparison.Ordinal),
         "catalog 刷新没有在 worker 线程读取目录，或没有阻止旧 generation 覆盖新列表。");
-    string iconBlock = ExtractBlock(mainSource, "private async Task LoadIconAsync");
+    string iconBlock = RepoSourceSnapshot.ExtractMethodBody(mainSource, "LoadIconAsync(");
     Require(failures,
         (mainSource + iconSource).Contains("SemaphoreSlim", StringComparison.Ordinal) ||
         (mainSource + iconSource).Contains("Parallel.ForEachAsync", StringComparison.Ordinal) ||
@@ -355,8 +356,8 @@ if (args is ["--sep04-drag-stability"])
     // DragOver must be a cheap read of DragEnter's cached classification.  A
     // synchronous IDataObject COM probe on every pointer update is a freeze
     // amplifier, especially when the shell owns the drag loop.
-    string itemsDragOver = ExtractBlock(mainSource, "private void ItemsGrid_DragOver");
-    string rootDragOver = ExtractBlock(mainSource, "private void WindowRoot_DragOver");
+    string itemsDragOver = RepoSourceSnapshot.ExtractMethodBody(mainSource, "ItemsGrid_DragOver(");
+    string rootDragOver = RepoSourceSnapshot.ExtractMethodBody(mainSource, "WindowRoot_DragOver(");
     Require(failures,
         !itemsDragOver.Contains("HasLocalFileDrop(e.DataView)", StringComparison.Ordinal) &&
         !rootDragOver.Contains("HasLocalFileDrop(e.DataView)", StringComparison.Ordinal),
@@ -926,8 +927,10 @@ if (args is ["--dialog-window-unification"])
     }
 
     string mainSource2 = RepoSourceSnapshot.AllTuckPaneCSharp();
-    string deleteSource = RepoSourceSnapshot.ExtractMethodBody(mainSource2, "ShowDeleteDialogAsync()");
-    Require(!deleteSource.Contains("new ContentDialog", StringComparison.Ordinal),
+    string deleteSource = RepoSourceSnapshot.ExtractMethodBody(mainSource2, "ShowDeleteDialogAsync()") + "\n" +
+                          RepoSourceSnapshot.ExtractMethodBody(mainSource2, "ShowDeleteOrganizerDialogAsync()");
+    Require(!string.IsNullOrWhiteSpace(deleteSource) &&
+            !deleteSource.Contains("new ContentDialog", StringComparison.Ordinal),
         "删除收纳窗仍使用内嵌 ContentDialog。");
     foreach (string marker in new[]
     {
@@ -1043,7 +1046,8 @@ if (args is ["--organizer-resize-rename-sync"])
         "Station 重新投影没有读取 contained organizer 的最新名称。");
 
     string allCs = RepoSourceSnapshot.AllTuckPaneCSharp();
-    string renameSource = RepoSourceSnapshot.ExtractMethodBody(allCs, "ShowRenameDialogAsync()");
+    string renameSource = RepoSourceSnapshot.ExtractMethodBody(allCs, "ShowRenameDialogAsync()") + "\n" +
+                          RepoSourceSnapshot.ExtractMethodBody(allCs, "ShowRenameOrganizerDialogAsync()");
     Require(renameSource.Contains("OwnedDialogWindow.ShowTextInputAsync", StringComparison.Ordinal) &&
             !renameSource.Contains("new ContentDialog", StringComparison.Ordinal),
         "收纳窗重命名没有改用独立 owned dialog。");

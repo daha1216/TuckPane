@@ -1,4 +1,4 @@
-param(
+﻿param(
     [Parameter(Mandatory = $true)]
     [string]$ExePath
 )
@@ -288,7 +288,12 @@ New-Item -ItemType Directory -Path $localRoot, $itemsRoot -Force | Out-Null
 
 $expectedMenu = @('设置', '窗口复制', '模式切换', '重命名', '打开收纳目录', '删除窗口')
 $xaml = [xml](Get-Content -LiteralPath (Join-Path $projectRoot 'src\TuckPane\MainWindow.xaml') -Raw -Encoding UTF8)
-$menuNames = @('CompactTileContextMenu', 'ExpandedViewContextMenu', 'ItemContextMenu')
+$organizerMenus = if ($null -ne $xaml.SelectSingleNode("//*[local-name()='MenuFlyout' and @*[local-name()='Name' and .='OrganizerContextMenu']]")) {
+    @('OrganizerContextMenu')
+} else {
+    @('CompactTileContextMenu', 'ExpandedViewContextMenu')
+}
+$menuNames = $organizerMenus + @('ItemContextMenu')
 foreach ($menuName in $menuNames) {
     $menu = $xaml.SelectSingleNode("//*[local-name()='MenuFlyout' and @*[local-name()='Name' and .='$menuName']]")
     if ($null -eq $menu) { throw "Context menu was not found in XAML: $menuName" }

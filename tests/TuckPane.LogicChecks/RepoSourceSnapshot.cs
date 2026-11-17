@@ -4,6 +4,11 @@ internal static class RepoSourceSnapshot
 {
     internal static string RepoRoot()
     {
+        if (Environment.GetEnvironmentVariable("TUCKPANE_SOURCE_ROOT_OVERRIDE") is { Length: > 0 } overrideRoot &&
+            Directory.Exists(overrideRoot))
+        {
+            return Path.GetFullPath(overrideRoot);
+        }
         foreach (string seed in new[] { Environment.CurrentDirectory, AppContext.BaseDirectory })
         {
             for (DirectoryInfo? dir = new(seed); dir is not null; dir = dir.Parent)

@@ -137,16 +137,21 @@ internal static class SettingsCompactFollowupChecks
             dialog.Width == 660 && dialog.Height == 420,
             "The selected negative-coordinate screen must center the dialog in its work area at its own DPI.");
         string source = RepoSourceSnapshot.AllTuckPaneCSharp();
-        foreach (string method in new[] { "ShowRenameFileDialogAsync", "ShowRenameNoteDialogAsync", "ShowRenameDialogAsync" })
+        foreach (string[] candidates in new string[][]
         {
-            string body = RepoSourceSnapshot.ExtractMethodBody(source, method + "(");
-            Require(!string.IsNullOrEmpty(body) &&
+            ["ShowRenameFileDialogAsync("],
+            ["ShowRenameNoteDialogAsync("],
+            ["ShowRenameDialogAsync(", "ShowRenameOrganizerDialogAsync("]
+        })
+        {
+            string body = string.Join("\n", candidates.Select(c => RepoSourceSnapshot.ExtractMethodBody(source, c)));
+            Require(!string.IsNullOrWhiteSpace(body) &&
                     body.Contains("OwnedDialogWindow.ShowTextInputAsync", StringComparison.Ordinal) &&
                     (body.Contains("GetRenameDialogDisplay", StringComparison.Ordinal) ||
                      body.Contains("RenameDialogPlacement.Resolve", StringComparison.Ordinal) ||
                      body.Contains("resolveDisplay", StringComparison.OrdinalIgnoreCase) ||
                      body.Contains("display", StringComparison.OrdinalIgnoreCase)),
-                $"{method} must resolve the current display before creating its rename dialog.");
+                $"{candidates[0]} must resolve the current display before creating its rename dialog.");
         }
         Require(source.Contains("RenameDialogPlacement.Resolve(") && source.Contains("TryGetLogicalWindowRect") && source.Contains("DockCenter"),
             "Production rename placement must connect logical bounds and the Dock-center fallback to the tested resolver.");
