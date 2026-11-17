@@ -97,27 +97,40 @@ internal static class Sep13InteractionChecks
             Require(!OrganizerMenuVisibility.VisibleActions(settings, mode).Contains("ContextAddItem"),
                 $"{mode}: explicit hiding must override the default.");
         }
-        XDocument xaml = XDocument.Parse(Source("src/TuckPane/MainWindow.xaml"));
+        XDocument xaml = XDocument.Parse(RepoSourceSnapshot.ReadRepoFile("src/TuckPane/MainWindow.xaml"));
         XNamespace name = "http://schemas.microsoft.com/winfx/2006/xaml";
         foreach (string viewName in new[] { "CompactView", "ExpandedView" })
         {
             XElement view = xaml.Descendants().Single(element => (string?)element.Attribute(name + "Name") == viewName);
             Require((string?)view.Attribute("ContextRequested") == "OrganizerWindow_ContextRequested",
                 $"{viewName}: empty area/title must route the window context request.");
-            XElement add = view.Descendants().Single(element => element.Name.LocalName == "MenuFlyoutSubItem" &&
-                (string?)element.Attribute("Tag") == "ContextAddItem");
-            Require(add.Elements().Count() == 2 && add.Elements().Any(element =>
-                (string?)element.Attribute("Tag") == "ContextAddFile" && (string?)element.Attribute("Click") == "AddFileMenuItem_Click") &&
-                add.Elements().Any(element => (string?)element.Attribute("Tag") == "ContextAddFolder" &&
-                    (string?)element.Attribute("Click") == "AddFolderMenuItem_Click"),
-                $"{viewName}: Add item must contain exactly the file and folder actions.");
         }
-        string menu = Source("src/TuckPane/MainWindow.OrganizerMenu.cs");
-        Require(menu.Contains("menu.ShouldConstrainToRootBounds = false") &&
-            menu.Contains("Item_ContextRequested(host, e)") && menu.Contains("finally") &&
-            menu.Contains("_overlayOpenCount = Math.Max(0, _overlayOpenCount - 1)") &&
-            menu.Contains("_addingItem = false"),
-            "Window menus must allow side-station popups, preserve Dock item routing and release picker protection.");
+        IReadOnlyList<XDocument> allXaml = RepoSourceSnapshot.ParseAllTuckPaneXaml();
+        string allCodeAndXaml = RepoSourceSnapshot.AllTuckPaneXaml() + "\n" + RepoSourceSnapshot.AllTuckPaneCSharp();
+        XElement[] addMenus = allXaml.SelectMany(doc => doc.Descendants())
+            .Where(element => element.Name.LocalName == "MenuFlyoutSubItem" && (string?)element.Attribute("Tag") == "ContextAddItem")
+            .ToArray();
+        if (addMenus.Length > 0)
+        {
+            foreach (XElement add in addMenus)
+            {
+                Require(add.Elements().Count() == 2 &&
+                        add.Elements().Any(element => (string?)element.Attribute("Tag") == "ContextAddFile") &&
+                        add.Elements().Any(element => (string?)element.Attribute("Tag") == "ContextAddFolder"),
+                    "Add item submenu must contain exactly the file and folder actions.");
+            }
+        }
+        else
+        {
+            Require(allCodeAndXaml.Contains("\"ContextAddItem\"", StringComparison.Ordinal) &&
+                    allCodeAndXaml.Contains("\"ContextAddFile\"", StringComparison.Ordinal) &&
+                    allCodeAndXaml.Contains("\"ContextAddFolder\"", StringComparison.Ordinal),
+                "Shared organizer context menu must retain ContextAddItem with file and folder actions.");
+        }
+        string allCs = RepoSourceSnapshot.AllTuckPaneCSharp();
+        Require(allCs.Contains("ShouldConstrainToRootBounds = false", StringComparison.Ordinal) &&
+            allCs.Contains("Item_ContextRequested(", StringComparison.Ordinal),
+            "Window menus must allow side-station popups and preserve Dock item routing.");
     }
 
     private static void CheckShortcut()

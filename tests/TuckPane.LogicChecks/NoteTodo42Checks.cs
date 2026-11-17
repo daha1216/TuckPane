@@ -24,6 +24,7 @@ internal static class NoteTodo42Checks
         }
         finally
         {
+            await AppLogger.FlushAsync();
             Environment.SetEnvironmentVariable("TUCKPANE_TEST_ROOT", previousRoot);
             string fullRoot = Path.GetFullPath(root);
             Require(Path.GetDirectoryName(fullRoot) == Path.GetFullPath(Path.GetTempPath()).TrimEnd(Path.DirectorySeparatorChar) &&

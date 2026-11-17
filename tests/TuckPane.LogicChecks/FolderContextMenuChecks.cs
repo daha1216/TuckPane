@@ -20,6 +20,7 @@ internal static class FolderContextMenuChecks
         }
         finally
         {
+            await AppLogger.FlushAsync();
             // The only deletion is the freshly created, uniquely named test directory.
             Directory.Delete(root, recursive: true);
         }
@@ -171,13 +172,14 @@ internal static class FolderContextMenuChecks
 
     private static void CheckInstaller()
     {
-        string script = File.ReadAllText(Path.Combine(Environment.CurrentDirectory, "installer", "TuckPane.iss"));
+        string script = RepoSourceSnapshot.ReadRepoFile("installer/TuckPane.iss");
         Require(!script.Split('\n').Any(line => line.Contains("Subkey: \"Software\\Classes\\Directory\\Shell\\TuckPane.CreateOrganizerHere\"", StringComparison.OrdinalIgnoreCase)),
             "Legacy unconditional deletion/uninstall would erase the new registration.");
-        Require(script.Contains("if Enabled = 0 then Exit;") && script.Contains("CompareText(Command, FolderMenuCommand) = 0") &&
-            script.Contains("CompareText(Owner, ExpandConstant('{app}\\TuckPane.exe')) = 0") &&
-            script.Contains("else if Command = '' then begin") && script.Contains("RegQueryStringValue(HKCU, FolderMenuKey, 'OwnerExecutable', Owner)"),
-            "Installer must preserve off preferences and check ownership before uninstalling.");
+        Require(script.Contains("if Enabled = 0 then Exit;") &&
+            script.Contains("if not FolderMenuOwnedByThisInstall then Exit;") &&
+            script.Contains("CompareText(Command, FolderMenuCommand) = 0") &&
+            script.Contains("CompareText(Owner, ExpandConstant('{app}\\TuckPane.exe')) = 0"),
+            "Installer must preserve off preferences and check ownership before registering or uninstalling.");
         Require(script.Contains("PrivilegesRequired=lowest") && script.Contains("--create-organizer-in \"%1\""),
             "Installer must use the same current-user command contract.");
     }

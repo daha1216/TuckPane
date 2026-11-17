@@ -1,0 +1,7 @@
+<Project>
+  <PropertyGroup>
+    <Version Condition="'$(Version)' == ''">4.2.6</Version>
+    <AssemblyVersion Condition="'$(AssemblyVersion)' == ''">$(Version).0</AssemblyVersion>
+    <FileVersion Condition="'$(FileVersion)' == ''">$(Version).0</FileVersion>
+  </PropertyGroup>
+</Project>

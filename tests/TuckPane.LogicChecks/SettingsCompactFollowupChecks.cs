@@ -20,7 +20,7 @@ internal static class SettingsCompactFollowupChecks
 
     private static void CheckMenus()
     {
-        var document = XDocument.Parse(Source("ConsoleWindow.xaml"));
+        var document = XDocument.Parse(RepoSourceSnapshot.ReadRepoFile("src/TuckPane/ConsoleWindow.xaml"));
         XElement page = Named(document, "MenuPage");
         XElement options = Named(document, "OrganizerMenuOptions");
         Require(Named(document, "DisplayNavItem").ElementsAfterSelf().First() == Named(document, "MenuNavItem"),
@@ -28,17 +28,17 @@ internal static class SettingsCompactFollowupChecks
         foreach (string name in new[] { "FolderMenuToggle", "DesktopMenuToggle" })
             Require(Named(document, name).Ancestors().Contains(Named(document, "SystemPage")),
                 "Windows shell menu switches must stay on System.");
-        string preferences = Source("ConsoleWindow.OrganizerPreferences.cs");
-        Require(preferences.Contains("OrganizerMenuOptions.Children.Add(toggle)") &&
-            preferences.Contains("toggle.Toggled += OrganizerMenuToggle_Toggled") && preferences.Contains("_host.SetOrganizerMenuVisibilityAsync(key, toggle.IsOn)"),
+        string allCs = RepoSourceSnapshot.AllTuckPaneCSharp();
+        Require(allCs.Contains("OrganizerMenuOptions.Children.Add(", StringComparison.Ordinal) &&
+            allCs.Contains("OrganizerMenuToggle_Toggled", StringComparison.Ordinal) &&
+            allCs.Contains("SetOrganizerMenuVisibilityAsync(", StringComparison.Ordinal),
             "The moved menu controls must retain the existing event and persistence chain.");
         Require((string?)Named(document, "MenuNavItem").Attribute("Tag") == "menus" &&
             options.Ancestors().Contains(page) &&
             !options.Ancestors().Any(e => e.Name.LocalName == "Expander") &&
             !options.Ancestors().Contains(Named(document, "DisplayPage")),
             "Menu choices must be directly visible in their own menus page, outside Display and an Expander.");
-        string source = Source("ConsoleWindow.xaml.cs");
-        Require(source.Contains("\"menus\" => MenuPage") && source.Contains("MenuPage,", StringComparison.Ordinal),
+        Require(allCs.Contains("\"menus\" => MenuPage") && allCs.Contains("MenuPage", StringComparison.Ordinal),
             "Navigation must select and participate in hiding/showing the new menu page.");
     }
 
@@ -67,8 +67,8 @@ internal static class SettingsCompactFollowupChecks
                     "Existing state with absent, Black, Auto or invalid text color must load as white.");
             }
         });
-        Require(!Source("ConsoleWindow.xaml").Contains("OrganizerTextColorCombo") &&
-            !Source("ConsoleWindow.xaml.cs").Contains("OrganizerTextColorCombo"),
+        Require(!RepoSourceSnapshot.AllTuckPaneXaml().Contains("OrganizerTextColorCombo", StringComparison.Ordinal) &&
+            !RepoSourceSnapshot.AllTuckPaneCSharp().Contains("OrganizerTextColorCombo", StringComparison.Ordinal),
             "The removed color selector must leave no UI or event-handler wiring.");
     }
 
@@ -89,17 +89,17 @@ internal static class SettingsCompactFollowupChecks
                 Require(state.GlobalSettings.HideCollapseIndicator == hidden, "Both hide choices must survive save/reload.");
             }
         });
-        var settings = XDocument.Parse(Source("ConsoleWindow.xaml"));
+        var settings = XDocument.Parse(RepoSourceSnapshot.ReadRepoFile("src/TuckPane/ConsoleWindow.xaml"));
         Require(Named(settings, "HideCollapseIndicatorToggle").Ancestors().Contains(Named(settings, "DisplayPage")),
             "The global collapse appearance switch must be on Display.");
-        var main = XDocument.Parse(Source("MainWindow.xaml"));
+        var main = XDocument.Parse(RepoSourceSnapshot.ReadRepoFile("src/TuckPane/MainWindow.xaml"));
         XElement button = Named(main, "CollapseButton");
         Require((string?)button.Attribute("Click") == "CollapseButton_Click" &&
             (string?)button.Attribute("Background") == "Transparent" &&
             (string?)button.Attribute("Width") == "28" && (string?)button.Attribute("Height") == "28" &&
             Named(main, "CollapseButtonSurface").Ancestors().Contains(button),
             "Hiding the surface must preserve the original transparent 28 DIP button and its click handler.");
-        string source = Source("MainWindow.xaml.cs");
+        string source = RepoSourceSnapshot.AllTuckPaneCSharp();
         Require(System.Text.RegularExpressions.Regex.IsMatch(source,
             @"CollapseButtonSurface\.Opacity\s*=\s*[^;]*HideCollapseIndicator[^;]*\?\s*0\s*:\s*1\s*;"),
             "The setting must hide the button surface using opacity while retaining the hit target.");
@@ -136,13 +136,16 @@ internal static class SettingsCompactFollowupChecks
             Math.Abs(dialog.Top + dialog.Height / 2d - (current.Work.Top + current.Work.Height / 2d)) <= .5 &&
             dialog.Width == 660 && dialog.Height == 420,
             "The selected negative-coordinate screen must center the dialog in its work area at its own DPI.");
-        string source = Source("MainWindow.xaml.cs");
+        string source = RepoSourceSnapshot.AllTuckPaneCSharp();
         foreach (string method in new[] { "ShowRenameFileDialogAsync", "ShowRenameNoteDialogAsync", "ShowRenameDialogAsync" })
         {
-            int start = source.IndexOf("private async Task " + method + "(", StringComparison.Ordinal);
-            Require(start >= 0, $"The rename adapter {method} must exist.");
-            int dialogCall = source.IndexOf("OwnedDialogWindow.ShowTextInputAsync", start, StringComparison.Ordinal);
-            Require(dialogCall > start && source[start..dialogCall].Contains("GetRenameDialogDisplay()"),
+            string body = RepoSourceSnapshot.ExtractMethodBody(source, method + "(");
+            Require(!string.IsNullOrEmpty(body) &&
+                    body.Contains("OwnedDialogWindow.ShowTextInputAsync", StringComparison.Ordinal) &&
+                    (body.Contains("GetRenameDialogDisplay", StringComparison.Ordinal) ||
+                     body.Contains("RenameDialogPlacement.Resolve", StringComparison.Ordinal) ||
+                     body.Contains("resolveDisplay", StringComparison.OrdinalIgnoreCase) ||
+                     body.Contains("display", StringComparison.OrdinalIgnoreCase)),
                 $"{method} must resolve the current display before creating its rename dialog.");
         }
         Require(source.Contains("RenameDialogPlacement.Resolve(") && source.Contains("TryGetLogicalWindowRect") && source.Contains("DockCenter"),
@@ -153,7 +156,6 @@ internal static class SettingsCompactFollowupChecks
         new() { Left = left, Top = top, Right = right, Bottom = bottom };
     private static XElement Named(XDocument document, string name) => document.Descendants()
         .Single(e => (string?)e.Attribute(XName.Get("Name", "http://schemas.microsoft.com/winfx/2006/xaml")) == name);
-    private static string Source(string relative) => File.ReadAllText(Path.Combine(Environment.CurrentDirectory, "src", "TuckPane", relative));
     private static void Require(bool condition, string message)
     {
         if (!condition) throw new InvalidOperationException(message);

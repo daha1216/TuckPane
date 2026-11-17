@@ -86,7 +86,7 @@ internal static class Sep11FixChecks
 
     private static void CheckTitle()
     {
-        var document = XDocument.Load(Path.Combine(Environment.CurrentDirectory, "src", "TuckPane", "MainWindow.xaml"));
+        var document = XDocument.Parse(RepoSourceSnapshot.ReadRepoFile("src/TuckPane/MainWindow.xaml"));
         XNamespace x = "http://schemas.microsoft.com/winfx/2006/xaml";
         XElement editor = document.Descendants().Single(e => (string?)e.Attribute(x + "Name") == "ExpandedNameEditor");
         XElement title = document.Descendants().Single(e => (string?)e.Attribute(x + "Name") == "ExpandedNameText");

@@ -25,15 +25,19 @@ internal static class DockRefinementChecks
                     geometry.HorizontalInset == (horizontal ? 25 : 16) &&
                     geometry.VerticalInset == (horizontal ? 16 : 50),
                 "Rendering and hit testing must share the enlarged corner radius and orientation-aware insets.");
-            Require(geometry.ItemCenter(0) == (horizontal ? new Vector2(57, 48) : new Vector2(48, 82)),
-                "The first Dock item must respect orientation-specific left/right padding.");
+            Vector2 expectedFirst = horizontal
+                ? new Vector2((float)(geometry.EndInset + 32), (float)(geometry.TopInset + 32))
+                : new Vector2((float)(geometry.LeftInset + 32), (float)(geometry.EndInset + 32));
+            Require(Vector2.Distance(geometry.ItemCenter(0), expectedFirst) < .001f,
+                "The first Dock item must respect orientation-specific gutter padding.");
             Require(geometry.Contains(new Vector2(4, 20)) && !geometry.Contains(Vector2.Zero),
                 "Rounded corners must accept (4, 20) while excluding the outer corner.");
 
             DockGeometry scaled = DockLayoutMath.Calculate(3, 128, orientation);
             Near(scaled.Width, geometry.Width * 2 - (horizontal ? 2 : 0), "Scaling must keep the halved physical end guards fixed");
             Near(scaled.Height, geometry.Height * 2 - (horizontal ? 0 : 4), "Scaling must keep the two 2 DIP end guards fixed");
-            Require(scaled.ItemCenter(0) == geometry.ItemCenter(0) * 2 - (horizontal ? new Vector2(1, 0) : new Vector2(0, 2)) &&
+            Vector2 expectedScaledFirst = geometry.ItemCenter(0) * 2 - (horizontal ? new Vector2(1, 0) : new Vector2(0, 2));
+            Require(Vector2.Distance(scaled.ItemCenter(0), expectedScaledFirst) < .001f &&
                     scaled.Pitch == geometry.Pitch * 2,
                 "Scaling must preserve item/gap proportions while retaining the fixed end guard.");
             double endGuard = horizontal ? 1 : 2;

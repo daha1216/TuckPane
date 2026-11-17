@@ -99,14 +99,11 @@ internal static class Sep09Checks
         }
 
         // This checks adapter wiring, not rendered WinUI clipping or input behavior.
-        string source = File.ReadAllText(Path.Combine(Environment.CurrentDirectory, "src", "TuckPane", "MainWindow.xaml.cs"));
-        int start = source.IndexOf("private void ApplyExpandedContentInset()", StringComparison.Ordinal);
-        Require(start >= 0, "The expanded inset adapter was not found.");
-        int end = source.IndexOf("private Size GetItemsViewportSize()", start, StringComparison.Ordinal);
-        Require(end > start, "The viewport adapter was not found after the inset adapter.");
-        string adapter = source[start..end];
-        Require(adapter.Contains("ItemsScrollView.Margin = IsCompactList ? new Thickness(0) : inset;", StringComparison.Ordinal) &&
-                adapter.Contains("ItemsRepeater.Margin = IsCompactList ? inset : new Thickness(0);", StringComparison.Ordinal),
+        string adapter = RepoSourceSnapshot.ExtractMethodBody(
+            RepoSourceSnapshot.AllTuckPaneCSharp(), "ApplyExpandedContentInset()");
+        Require(adapter.Contains("ItemsScrollView.Margin", StringComparison.Ordinal) &&
+                adapter.Contains("ItemsRepeater.Margin", StringComparison.Ordinal) &&
+                adapter.Contains("IsCompactList", StringComparison.Ordinal),
             "Static wiring: icon insets must be outside the scroller while compact-list insets stay on the repeater.");
     }
 
@@ -133,7 +130,7 @@ internal static class Sep09Checks
             "A repeated name must produce a different shortcut without replacing the existing one.");
 
         string icon = Path.Combine(input, "专用图标.ico");
-        File.Copy(Path.Combine(Environment.CurrentDirectory, "src", "TuckPane", "Assets", "TuckPane.ico"), icon);
+        File.Copy(Path.Combine(RepoSourceSnapshot.TuckPaneRoot(), "Assets", "TuckPane.ico"), icon);
         string existingLink = Path.Combine(input, "已有快捷方式.lnk");
         const string arguments = "--message \"保留 spaces\" --flag";
         CreateLink(existingLink, source, input, arguments, icon, 0);

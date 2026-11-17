@@ -25,13 +25,24 @@ jobs:
         with:
           dotnet-version: 10.0.400
 
-      # Mirrors the restore/publish arguments used by scripts/build-release.ps1, so a pull request
-      # fails here instead of failing halfway through a tagged release build.
-      - name: Restore
-        shell: pwsh
-        run: dotnet restore .\src\TuckPane\TuckPane.csproj --locked-mode -p:Platform=x64
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
 
-      - name: Build application
+      - name: Restore locked dependencies
+        shell: pwsh
+        run: |
+          dotnet restore .\src\TuckPane\TuckPane.csproj --locked-mode -p:Platform=x64
+          dotnet restore .\src\TuckPane.Updater\TuckPane.Updater.csproj --locked-mode
+          dotnet restore .\src\TuckPane.Launcher\TuckPane.Launcher.csproj --locked-mode
+          dotnet restore .\src\TuckPane.Updates\TuckPane.Updates.csproj --locked-mode
+
+      - name: Build solution
+        shell: pwsh
+        run: dotnet build .\TuckPane.slnx -c Release
+
+      # Mirrors the publish + launcher packaging flow used by scripts/build-release.ps1.
+      - name: Publish application and portable launcher
         shell: pwsh
         run: |
           dotnet publish .\src\TuckPane\TuckPane.csproj `
@@ -44,22 +55,37 @@ jobs:
             -p:DebugSymbols=false `
             -p:DebugType=None `
             -o .\artifacts\ci\app
+          if ($LASTEXITCODE -ne 0) { throw "Application publish failed" }
+          .\scripts\publish-portable-launcher.ps1 -PublishDirectory .\artifacts\ci\app
+          $files = [ordered]@{}
+          Get-ChildItem -LiteralPath .\artifacts\ci\app -File -Recurse | Sort-Object FullName | ForEach-Object {
+            $relative = [IO.Path]::GetRelativePath((Resolve-Path .\artifacts\ci\app).Path, $_.FullName).Replace('\', '/')
+            $files[$relative] = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+          }
+          $props = [xml](Get-Content -LiteralPath .\Directory.Build.props -Raw)
+          $version = ($props.Project.PropertyGroup.Version | Select-Object -First 1).'#text'.Trim()
+          @{ Version = $version; Files = $files } | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath .\artifacts\ci\app\update-files.json -Encoding utf8
 
-      - name: Build update helper and launcher
+      - name: Portable launcher checks
         shell: pwsh
-        run: |
-          dotnet build .\src\TuckPane.Updater\TuckPane.Updater.csproj -c Release
-          dotnet build .\src\TuckPane.Launcher\TuckPane.Launcher.csproj -c Release
+        run: .\scripts\check-portable-launcher.ps1 -PublishDirectory (Resolve-Path -LiteralPath .\artifacts\ci\app).Path
 
       - name: Update checks
         shell: pwsh
         run: dotnet run --project .\tests\TuckPane.UpdateChecks\TuckPane.UpdateChecks.csproj -c Release -- --updates
 
-      # The logic checks are deliberately absent. The suite builds here in about a minute, but the
-      # test executable never reaches its entry point on a hosted runner: given ninety seconds each,
-      # all eight stability areas plus the folder-menu suite were killed without printing a line,
-      # and the same commands finish in about a second on a desktop session. Its startup goes
-      # through the Windows App Runtime bootstrap, which needs an interactive session.
-      # Run them locally before a release:
-      #   dotnet run --project .\tests\TuckPane.LogicChecks\TuckPane.LogicChecks.csproj -c Release -p:Platform=x64 -- --stability storage
-      #   dotnet run --project .\tests\TuckPane.LogicChecks\TuckPane.LogicChecks.csproj -c Release -p:Platform=x64 -- --folder-context-menu
+      - name: Headless logic checks
+        shell: pwsh
+        run: |
+          dotnet build .\tests\TuckPane.LogicChecks\TuckPane.LogicChecks.csproj -c Release -p:Platform=x64 -p:WindowsAppSdkBootstrapInitialize=false
+          if ($LASTEXITCODE -ne 0) { throw "LogicChecks build failed" }
+          & .\tests\TuckPane.LogicChecks\bin\x64\Release\net10.0-windows10.0.22621.0\win-x64\TuckPane.LogicChecks.exe --ci-headless
+          if ($LASTEXITCODE -ne 0) { throw "Headless logic checks failed with exit code $LASTEXITCODE" }
+
+      - name: Note editor JS checks
+        shell: pwsh
+        run: |
+          foreach ($script in 'note-blank-lines-check.cjs', 'note-cut-history-check.cjs', 'note-image-commands-check.cjs') {
+            node ".\tests\$script"
+            if ($LASTEXITCODE -ne 0) { throw "Node check '$script' failed with exit code $LASTEXITCODE" }
+          }

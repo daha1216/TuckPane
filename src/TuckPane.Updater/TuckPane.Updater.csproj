@@ -8,10 +8,8 @@
     <SelfContained>true</SelfContained>
     <PublishSingleFile>true</PublishSingleFile>
     <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
     <DebugType>none</DebugType>
-    <Version>4.2.6</Version>
-    <AssemblyVersion>4.2.6.0</AssemblyVersion>
-    <FileVersion>4.2.6.0</FileVersion>
   </PropertyGroup>
   <ItemGroup><ProjectReference Include="..\TuckPane.Updates\TuckPane.Updates.csproj" /></ItemGroup>
 </Project>

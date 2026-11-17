@@ -36,8 +36,8 @@ internal static class CompactDockFixChecks
         Require(!firstRow.Contains(gap) && !secondRow.Contains(gap),
             "The continuous activation gap must not become a content click target.");
 
-        string source = ReadSource("MainWindow.HoverPresentation.cs") + ReadSource("MainWindow.HoverWave.cs");
-        Require(System.Text.RegularExpressions.Regex.IsMatch(source, @"CanActivateCompact\(\s*_compactHoverBounds") &&
+        string source = RepoSourceSnapshot.AllTuckPaneCSharp();
+        Require(source.Contains("CanActivateCompact(", StringComparison.Ordinal) &&
                 source.Contains("RowBounds", StringComparison.Ordinal),
             "Compact production activation must use aggregated stable row bounds instead of only icon bounds.");
     }

@@ -1,13 +1,28 @@
 [CmdletBinding()]
 param(
-    [ValidatePattern('^\d+\.\d+\.\d+$')]
-    [string]$Version = '4.2.6',
-    [ValidatePattern('^[a-zA-Z0-9.-]+$')]
-    [string]$OutputName = 'v4.2.6'
+    [string]$Version = '',
+    [string]$OutputName = ''
 )
 
 $ErrorActionPreference = 'Stop'
 $projectRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
+if ([string]::IsNullOrWhiteSpace($Version)) {
+    $buildProps = [xml](Get-Content -LiteralPath (Join-Path $projectRoot 'Directory.Build.props') -Raw)
+    $Version = ($buildProps.Project.PropertyGroup.Version | Select-Object -First 1). '#text'.Trim()
+    if ([string]::IsNullOrWhiteSpace($Version)) {
+        $Version = [string]($buildProps.Project.PropertyGroup.Version | Select-Object -First 1)
+    }
+    $Version = $Version.Trim()
+}
+if ($Version -notmatch '^\d+\.\d+\.\d+$') {
+    throw "Invalid semantic version '$Version'. Expected X.Y.Z."
+}
+if ([string]::IsNullOrWhiteSpace($OutputName)) {
+    $OutputName = "v$Version"
+}
+if ($OutputName -notmatch '^[a-zA-Z0-9.-]+$') {
+    throw "Invalid OutputName '$OutputName'."
+}
 $artifactsRoot = Join-Path $projectRoot 'artifacts'
 $publishRoot = Join-Path $artifactsRoot "publish\$OutputName"
 $releaseRoot = Join-Path $artifactsRoot "release\$OutputName"

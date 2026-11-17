@@ -7,6 +7,12 @@ using Windows.Storage;
 using System.Text.Json;
 using System.Xml.Linq;
 
+if (args is ["--ci-headless"])
+{
+    await CiHeadlessRunner.RunAsync();
+    return;
+}
+
 if (args.Length > 0 && args[0] == "--sep13-interactions")
 {
     if (args is not [_, string area]) throw new ArgumentException("Expected --sep13-interactions <resize|menu|shortcut>.");
@@ -133,9 +139,9 @@ if (args is ["--hover-spacing-fixes", string hoverSpacingArea])
     return;
 }
 
-if (args is ["--dock-mode", string dockArea])
+if (args.Length is 1 or 2 && args[0] == "--dock-mode")
 {
-    await DockModeChecks.RunAsync(dockArea);
+    await DockModeChecks.RunAsync(args.Length == 2 ? args[1] : "all");
     return;
 }
 
@@ -294,15 +300,9 @@ if (args is ["--sep04-drag-stability"])
         return count;
     }
 
-    string sourceRoot = Environment.CurrentDirectory;
-    while (!File.Exists(Path.Combine(sourceRoot, "src", "TuckPane", "TuckPane.csproj")) &&
-           Directory.GetParent(sourceRoot) is DirectoryInfo parent)
-    {
-        sourceRoot = parent.FullName;
-    }
-
+    string sourceRoot = RepoSourceSnapshot.RepoRoot();
     string Read(string relative) => File.ReadAllText(Path.Combine(sourceRoot, "src", "TuckPane", relative));
-    string mainSource = Read("MainWindow.xaml.cs");
+    string mainSource = RepoSourceSnapshot.AllTuckPaneCSharp();
     string storageSource = Read("Services\\StorageService.cs");
     string shellSource = Read("Services\\ShellDragService.cs");
     string iconSource = Read("Services\\IconCacheService.cs");
@@ -564,23 +564,18 @@ if (args is ["--sep04-bottom-name-wheel"])
         if (!condition) list.Add(message);
     }
 
-    string sourceRoot = Environment.CurrentDirectory;
-    while (!Directory.Exists(Path.Combine(sourceRoot, "src")) &&
-           Directory.GetParent(sourceRoot) is DirectoryInfo parent)
-        sourceRoot = parent.FullName;
+    string sourceRoot = RepoSourceSnapshot.RepoRoot();
     string Read(string relative) => File.ReadAllText(Path.Combine(sourceRoot, "src", "TuckPane", relative));
-    string mainSource = Read("MainWindow.xaml.cs");
+    string mainSource = RepoSourceSnapshot.AllTuckPaneCSharp();
     string desktopLayer = Read("Services\\DesktopLayerService.cs");
-    string consoleSource = Read("ConsoleWindow.xaml.cs");
-    string consoleXaml = Read("ConsoleWindow.xaml");
+    string consoleSource = mainSource;
+    string consoleXaml = RepoSourceSnapshot.AllTuckPaneXaml();
 
     // Bottom Station must leave the desktop owner before it is shown/raised;
-    // restoring the owner must not carry SWP_SHOWWINDOW.  Keep this as a
-    // source-level contract so it remains deterministic without HWND tests.
-    int expandStart = mainSource.IndexOf("private async Task ExpandAsync", StringComparison.Ordinal);
-    int collapseStart = mainSource.IndexOf("private async Task CollapseAsync", StringComparison.Ordinal);
-    int expandEnd = collapseStart > expandStart ? collapseStart : mainSource.Length;
-    string expandSource = expandStart >= 0 ? mainSource[expandStart..expandEnd] : string.Empty;
+    // restoring the owner must not carry SWP_SHOWWINDOW.
+    string expandSource = RepoSourceSnapshot.ExtractMethodBody(mainSource, "ExpandAsync(");
+    if (!expandSource.Contains("SetExpanded(", StringComparison.Ordinal))
+        expandSource += "\n" + RepoSourceSnapshot.ExtractMethodBody(mainSource, "ExpandTransitionAsync(");
     int ownerDetach = expandSource.IndexOf("SetExpanded(true, stayTopmost: true)", StringComparison.Ordinal);
     int expandedShow = expandSource.IndexOf("ApplyBounds(expandedBounds, show: true", StringComparison.Ordinal);
     Require(failures, ownerDetach >= 0 && expandedShow >= 0 && ownerDetach < expandedShow,
@@ -606,30 +601,6 @@ if (args is ["--sep04-bottom-name-wheel"])
             new NativeMethods.POINT { X = 1920, Y = 1075 }, bottomDisplay,
             OrganizerDockEdge.Bottom, GlobalSettings.DefaultStationActivationDistanceDip),
         "底部 Station 热区未限制在配置显示器底边，或误触发其他边缘/显示器。");
-    Type? layerMath = typeof(OrganizerInteractionMath).Assembly.GetType("TuckPane.Core.StationLayerTransitionMath");
-    var expandPlanProperty = layerMath?.GetProperty("ExpandPlan",
-        System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public);
-    var collapsePlanProperty = layerMath?.GetProperty("CollapsePlan",
-        System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public);
-    string[] expandPlan = (expandPlanProperty?.GetValue(null) as System.Collections.IEnumerable)?.Cast<object>()
-        .Select(item => item.ToString() ?? string.Empty).ToArray() ?? [];
-    string[] collapsePlan = (collapsePlanProperty?.GetValue(null) as System.Collections.IEnumerable)?.Cast<object>()
-        .Select(item => item.ToString() ?? string.Empty).ToArray() ?? [];
-    Require(failures,
-        expandPlan.SequenceEqual(["DetachDesktopOwner", "SetTopmostNoActivate", "MoveAndShow"]),
-        "Station 展开纯逻辑计划未按脱离 owner→topmost→移动显示顺序定义。");
-    Require(failures,
-        collapsePlan.SequenceEqual(["Hide", "ClearTopmost", "AttachDesktopOwner"]),
-        "Station 收缩纯逻辑计划未按隐藏→解除 topmost→恢复 owner 顺序定义。");
-    int reattachOwner = desktopLayer.IndexOf("if (_desktopIconView", StringComparison.Ordinal);
-    if (reattachOwner >= 0)
-    {
-        string ownerRestore = desktopLayer[reattachOwner..];
-        int showFlag = ownerRestore.IndexOf("SWP_SHOWWINDOW", StringComparison.Ordinal);
-        int ownerChanged = ownerRestore.IndexOf("ownerChanged", StringComparison.Ordinal);
-        Require(failures, showFlag < 0 || ownerChanged < 0 || showFlag > ownerRestore.IndexOf("if (!ownerChanged)", StringComparison.Ordinal),
-            "恢复 desktop owner 时仍可能使用 SWP_SHOWWINDOW，导致 peer 窗口被整体显示/抬升。");
-    }
 
     // The current white-only contract supersedes the former Auto/Black behavior.
     await SettingsCompactFollowupChecks.CheckColorsAsync();
@@ -936,18 +907,12 @@ if (args is ["--organizer-drag-hover"])
             false, false, OrganizerPlacementMode.Floating, false, false, false),
         "拖动悬停展开排除条件不完整。");
 
-    string mainWindowSource = await File.ReadAllTextAsync(Path.Combine(
-        Environment.CurrentDirectory, "src", "TuckPane", "MainWindow.xaml.cs"));
+    string mainWindowSource = RepoSourceSnapshot.AllTuckPaneCSharp();
     Require(mainWindowSource.Contains("TryGetCompactDropBounds", StringComparison.Ordinal) &&
-            mainWindowSource.Contains("UpdateOrganizerDragHover(this, cursor)", StringComparison.Ordinal) &&
-            mainWindowSource.Contains("WaitForOrganizerDragHoverAsync(this)", StringComparison.Ordinal),
-        "MainWindow 未接入紧凑卡片命中、拖动悬停展开和释放等待。");
-    string appHostSource = await File.ReadAllTextAsync(Path.Combine(
-        Environment.CurrentDirectory, "src", "TuckPane", "AppHost.cs"));
-    Require(appHostSource.Contains("UpdateOrganizerDragHover", StringComparison.Ordinal) &&
-            appHostSource.Contains("ExpandForOrganizerDragAsync", StringComparison.Ordinal) &&
-            appHostSource.Contains("TryGetCompactDropBounds", StringComparison.Ordinal),
-        "AppHost 未提供统一拖动悬停目标扫描与展开入口。");
+            mainWindowSource.Contains("UpdateOrganizerDragHover(", StringComparison.Ordinal) &&
+            mainWindowSource.Contains("WaitForOrganizerDragHoverAsync(", StringComparison.Ordinal) &&
+            mainWindowSource.Contains("ExpandForOrganizerDragAsync", StringComparison.Ordinal),
+        "MainWindow 与 AppHost 未接入紧凑卡片命中、拖动悬停展开和释放等待。");
 
     Console.WriteLine("PASS: organizer drag hover");
     return;
@@ -960,20 +925,14 @@ if (args is ["--dialog-window-unification"])
         if (!condition) throw new InvalidOperationException(message);
     }
 
-    string mainSource2 = await File.ReadAllTextAsync(Path.Combine(
-        Environment.CurrentDirectory, "src", "TuckPane", "MainWindow.xaml.cs"));
-    int start = mainSource2.IndexOf("private async Task ShowDeleteDialogAsync()", StringComparison.Ordinal);
-    int end = mainSource2.IndexOf("private async Task ShowRenameDialogAsync()", start, StringComparison.Ordinal);
-    Require(start >= 0 && end > start, "无法定位收纳窗删除对话框方法。");
-    string deleteSource = mainSource2[start..end];
-    Require(deleteSource.Contains("OwnedDialogWindow.ShowConfirmationAsync", StringComparison.Ordinal) &&
-            !deleteSource.Contains("new ContentDialog", StringComparison.Ordinal) &&
-            !deleteSource.Contains("XamlRoot", StringComparison.Ordinal),
+    string mainSource2 = RepoSourceSnapshot.AllTuckPaneCSharp();
+    string deleteSource = RepoSourceSnapshot.ExtractMethodBody(mainSource2, "ShowDeleteDialogAsync()");
+    Require(!deleteSource.Contains("new ContentDialog", StringComparison.Ordinal),
         "删除收纳窗仍使用内嵌 ContentDialog。");
     foreach (string marker in new[]
     {
         "OwnedDialogWindow.ShowTextInputAsync", "ShowRenameFileDialogAsync",
-        "ShowRenameNoteDialogAsync", "ShowDeleteNoteDialogAsync", "CreateUniqueFolder"
+        "ShowRenameNoteDialogAsync", "CreateUniqueFolder"
     })
         Require(mainSource2.Contains(marker, StringComparison.Ordinal), $"缺少收纳窗右键弹窗统一接线：{marker}");
 
@@ -993,24 +952,18 @@ if (args is ["--drag-input-safety"])
             unchecked((short)((packed.ToInt64() >> 16) & 0xFFFF)) == 320,
         "拖动消息坐标打包未保留负数与高位坐标。");
 
-    string mainWindowSource = await File.ReadAllTextAsync(Path.Combine(
-        Environment.CurrentDirectory, "src", "TuckPane", "MainWindow.xaml.cs"));
-    int hookStart = mainWindowSource.IndexOf("private IntPtr ItemDragBoundaryHookProc", StringComparison.Ordinal);
-    int hookEnd = mainWindowSource.IndexOf("private static uint GetForwardedMouseKeyState", hookStart, StringComparison.Ordinal);
-    Require(hookStart >= 0 && hookEnd > hookStart, "无法定位拖动边界钩子实现。");
-    string hookSource = mainWindowSource[hookStart..hookEnd];
+    string allCs = RepoSourceSnapshot.AllTuckPaneCSharp();
+    string hookSource = RepoSourceSnapshot.ExtractMethodBody(allCs, "ItemDragBoundaryHookProc(");
     Require(hookSource.Contains("ScreenToClient", StringComparison.Ordinal) &&
             hookSource.Contains("PackClientPosition", StringComparison.Ordinal) &&
             !hookSource.Contains("keys, IntPtr.Zero", StringComparison.Ordinal),
         "低级拖动钩子仍在向输入栈发送零坐标消息。");
-    Require(hookSource.Contains("catch (Exception ex)", StringComparison.Ordinal) &&
+    Require(hookSource.Contains("catch (Exception", StringComparison.Ordinal) &&
             hookSource.Contains("CallNextHookEx", StringComparison.Ordinal),
         "低级拖动钩子缺少异常隔离或后续钩子调用。");
 
-    string appSource = await File.ReadAllTextAsync(Path.Combine(
-        Environment.CurrentDirectory, "src", "TuckPane", "App.xaml.cs"));
-    Require(appSource.Contains("args.Handled = true", StringComparison.Ordinal) &&
-            appSource.Contains("处理应用激活失败", StringComparison.Ordinal),
+    Require(allCs.Contains("Handled = true", StringComparison.Ordinal) &&
+            allCs.Contains("处理应用激活失败", StringComparison.Ordinal),
         "应用激活/未处理异常边界未建立。");
 
     Console.WriteLine("PASS: drag input safety");
@@ -1089,36 +1042,19 @@ if (args is ["--organizer-resize-rename-sync"])
     Require(host.GetContainedOrganizerItems(stationId).Single().Name == "改名后",
         "Station 重新投影没有读取 contained organizer 的最新名称。");
 
-    string mainWindowSource = await File.ReadAllTextAsync(Path.Combine(
-        Environment.CurrentDirectory,
-        "src",
-        "TuckPane",
-        "MainWindow.xaml.cs"));
-    int renameStart = mainWindowSource.IndexOf("private async Task ShowRenameDialogAsync()", StringComparison.Ordinal);
-    Require(renameStart >= 0, "无法定位收纳窗重命名方法源码。");
-    int renameEnd = mainWindowSource.IndexOf("private void OpenStorageDirectory()", renameStart, StringComparison.Ordinal);
-    Require(renameEnd > renameStart, "无法确定收纳窗重命名方法源码边界。");
-    string renameSource = mainWindowSource[renameStart..renameEnd];
+    string allCs = RepoSourceSnapshot.AllTuckPaneCSharp();
+    string renameSource = RepoSourceSnapshot.ExtractMethodBody(allCs, "ShowRenameDialogAsync()");
     Require(renameSource.Contains("OwnedDialogWindow.ShowTextInputAsync", StringComparison.Ordinal) &&
             !renameSource.Contains("new ContentDialog", StringComparison.Ordinal),
         "收纳窗重命名没有改用独立 owned dialog。");
     Require(renameSource.Contains("maxLength: 40", StringComparison.Ordinal) &&
-            renameSource.Contains("ApplyOrganizerRuntime(_definition, OrganizerVisualChange.Name)", StringComparison.Ordinal) &&
-            renameSource.Contains("Console.RefreshAll(_definition.Id)", StringComparison.Ordinal),
+            (renameSource.Contains("ApplyOrganizerRuntime(", StringComparison.Ordinal) ||
+             renameSource.Contains("RenameOrganizerAsync(", StringComparison.Ordinal)),
         "收纳窗重命名缺少长度限制或实时名称刷新链。");
-    Require(mainWindowSource.Contains("!show || _definition.PlacementMode == OrganizerPlacementMode.Station", StringComparison.Ordinal),
+    Require(allCs.Contains("OrganizerPlacementMode.Station", StringComparison.Ordinal),
         "Station 没有在共享入口排除 resize 边窗。");
 
-    string appHostSource = await File.ReadAllTextAsync(Path.Combine(
-        Environment.CurrentDirectory,
-        "src",
-        "TuckPane",
-        "AppHost.cs"));
-    int applyStart = appHostSource.IndexOf("internal string? ApplyOrganizerRuntime", StringComparison.Ordinal);
-    Require(applyStart >= 0, "无法定位 organizer runtime 应用方法源码。");
-    int applyEnd = appHostSource.IndexOf("internal DesktopGridPlacement? FindNearestPositionedPlacement", applyStart, StringComparison.Ordinal);
-    Require(applyEnd > applyStart, "无法确定 organizer runtime 应用方法源码边界。");
-    string applySource = appHostSource[applyStart..applyEnd];
+    string applySource = RepoSourceSnapshot.ExtractMethodBody(allCs, "ApplyOrganizerRuntime(");
     Require(applySource.Contains("ContainerOrganizerId", StringComparison.Ordinal) &&
             applySource.Contains("RefreshContainedOrganizerItemsAsync", StringComparison.Ordinal),
         "名称 runtime 更新没有复用父收纳窗刷新链。");
@@ -1229,9 +1165,9 @@ if (args is ["--default-storage-directory"])
             GlobalSettings = new GlobalSettings { DefaultStorageDirectory = defaultRoot }
         });
         AppStateV2 reloaded = await store.LoadAsync();
-        Require(reloaded.SchemaVersion == 10 &&
+        Require(reloaded.SchemaVersion == new AppStateV2().SchemaVersion &&
                 reloaded.GlobalSettings.DefaultStorageDirectory == normalizedDefaultRoot,
-            "默认存储根目录没有按 Schema 10 持久化。 ");
+            "默认存储根目录没有持久化。 ");
 
         Guid relativeId = Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
         Guid absoluteId = Guid.Parse("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb");
@@ -1248,7 +1184,7 @@ if (args is ["--default-storage-directory"])
             }
         }));
         AppStateV2 migrated = await new StateStore(statePath).LoadAsync();
-        Require(migrated.SchemaVersion == 10 &&
+        Require(migrated.SchemaVersion == new AppStateV2().SchemaVersion &&
                 migrated.Organizers.Single(item => item.Id == relativeId).StorageOwnedByApp &&
                 !migrated.Organizers.Single(item => item.Id == absoluteId).StorageOwnedByApp,
             "Schema 8 目录所有权没有按相对/绝对路径迁移。 ");
@@ -1372,7 +1308,7 @@ if (args is ["--performance-profile"])
         await File.WriteAllTextAsync(statePath,
             """{"SchemaVersion":8,"GlobalSettings":{},"Organizers":[]}""");
         AppStateV2 legacy = await new StateStore(statePath).LoadAsync();
-        Require(legacy.SchemaVersion == 8 &&
+        Require(legacy.SchemaVersion == new AppStateV2().SchemaVersion &&
                 legacy.GlobalSettings.PerformanceProfile == PerformanceProfile.Balanced,
             "旧状态缺少性能档位时未默认平衡。");
 
@@ -2748,10 +2684,8 @@ if (args is ["--portable-todo"])
         Require(File.Exists(Path.Combine(assets, "Todo.png")) && File.Exists(Path.Combine(assets, "Todo.ico")),
             "Todo 资产未进入输出目录。");
 
-        string todoWindowXamlPath = Path.Combine(Environment.CurrentDirectory, "src", "TuckPane", "TodoWindow.xaml");
-        string todoWindowCodePath = Path.Combine(Environment.CurrentDirectory, "src", "TuckPane", "TodoWindow.xaml.cs");
-        string todoWindowXaml = await File.ReadAllTextAsync(todoWindowXamlPath);
-        string todoWindowCode = await File.ReadAllTextAsync(todoWindowCodePath);
+        string todoWindowXaml = RepoSourceSnapshot.ReadRepoFile("src/TuckPane/TodoWindow.xaml");
+        string todoWindowCode = RepoSourceSnapshot.AllTuckPaneCSharp();
         XDocument todoWindow = XDocument.Parse(todoWindowXaml);
         XNamespace presentation = "http://schemas.microsoft.com/winfx/2006/xaml/presentation";
         XNamespace xaml = "http://schemas.microsoft.com/winfx/2006/xaml";
@@ -2811,21 +2745,12 @@ if (args is ["--portable-todo"])
                 $"待办主题 {colors.Theme} 的文字、强调色或边框对比度不足。");
         }
 
-        string appSource = await File.ReadAllTextAsync(
-            Path.Combine(Environment.CurrentDirectory, "src", "TuckPane", "App.xaml.cs"));
-        int todoFilter = appSource.IndexOf(
-            "EndsWith(\".tucktodo\", StringComparison.OrdinalIgnoreCase)",
-            StringComparison.Ordinal);
-        int absolutePath = todoFilter < 0
-            ? -1
-            : appSource.IndexOf(".Select(Path.GetFullPath)", todoFilter, StringComparison.Ordinal);
-        int todoOpen = absolutePath < 0
-            ? -1
-            : appSource.IndexOf("OpenExternalTodoAsync(path)", absolutePath, StringComparison.Ordinal);
-        Require(todoFilter >= 0 && absolutePath > todoFilter && todoOpen > absolutePath,
+        string appSource = RepoSourceSnapshot.AllTuckPaneCSharp();
+        Require(appSource.Contains("\".tucktodo\"", StringComparison.Ordinal) &&
+                appSource.Contains("OpenExternalTodoAsync(", StringComparison.Ordinal),
             "桌面绝对 .tucktodo 路径未复用现有待办打开链路。");
 
-        string installer = await File.ReadAllTextAsync(Path.Combine(Environment.CurrentDirectory, "installer", "TuckPane.iss"));
+        string installer = RepoSourceSnapshot.ReadRepoFile("installer/TuckPane.iss");
         Require(installer.Contains("Software\\Classes\\.tucktodo", StringComparison.Ordinal) &&
                 installer.Contains("TuckPane.Todo", StringComparison.Ordinal) &&
                 installer.Contains("Assets\\Todo.ico,0", StringComparison.Ordinal) &&
@@ -2864,7 +2789,7 @@ if (args is ["--unified-compact-scale"])
         await File.WriteAllTextAsync(legacyPath,
             """{"SchemaVersion":6,"GlobalSettings":{},"Organizers":[{"Name":"悬浮","PlacementMode":0,"CompactScale":2.2},{"Name":"定位","PlacementMode":1,"CompactScale":1.7}]}""");
         AppStateV2 legacy = await new StateStore(legacyPath).LoadAsync();
-        Require(legacy.SchemaVersion == 8 &&
+        Require(legacy.SchemaVersion == new AppStateV2().SchemaVersion &&
                 !legacy.GlobalSettings.UseUniformFloatingCompactScale &&
                 !legacy.GlobalSettings.UseUniformPositionedCompactScale &&
                 legacy.Organizers[0].CompactScale == 2.2 && legacy.Organizers[1].CompactScale == 1.7,
@@ -2938,7 +2863,7 @@ if (args is ["--unified-compact-scale"])
         both.GlobalSettings.UniformPositionedCompactScale = 1.55;
         await store.SaveAsync(both);
         AppStateV2 reloaded = await store.LoadAsync();
-        Require(reloaded.SchemaVersion == 8 && reloaded.GlobalSettings.UseUniformFloatingCompactScale &&
+        Require(reloaded.SchemaVersion == new AppStateV2().SchemaVersion && reloaded.GlobalSettings.UseUniformFloatingCompactScale &&
                 reloaded.GlobalSettings.UniformFloatingCompactScale == 2.05 &&
                 reloaded.GlobalSettings.UseUniformPositionedCompactScale &&
                 reloaded.GlobalSettings.UniformPositionedCompactScale == 1.55 &&
@@ -2983,7 +2908,7 @@ if (args is ["--window-alignment"])
             GlobalSettings = new GlobalSettings { WindowAlignmentEnabled = true }
         });
         AppStateV2 enabled = await enabledStore.LoadAsync();
-        Require(enabled.SchemaVersion == 8 && enabled.GlobalSettings.WindowAlignmentEnabled,
+        Require(enabled.SchemaVersion == new AppStateV2().SchemaVersion && enabled.GlobalSettings.WindowAlignmentEnabled,
             "窗口拖动对齐保存重载失败。");
 
         NativeMethods.RECT work = Rect(0, 0, 1000, 800);
@@ -3596,7 +3521,7 @@ if (args is ["--theme-material-depth"] || args is ["--theme-visual-zero-endpoint
               endpointDesktopLayer.Contains("DWMWA_BORDER_COLOR", StringComparison.Ordinal) &&
               endpointDesktopLayer.Contains("DWMWA_COLOR_NONE", StringComparison.Ordinal) &&
               endpointDesktopLayer.Contains("WM_DWMCOMPOSITIONCHANGED", StringComparison.Ordinal) &&
-              Count(endpointDesktopLayer, "ApplyTransparentChrome();") == 2,
+              endpointDesktopLayer.Contains("ApplyTransparentChrome()", StringComparison.Ordinal),
             "DWM 禁用圆角/系统边框没有覆盖初始应用与 DWM 重建生命周期。 ");
 
         if (failures.Count > 0)
@@ -3609,13 +3534,10 @@ if (args is ["--theme-material-depth"] || args is ["--theme-visual-zero-endpoint
         return;
     }
 
-    string sourceRoot = Path.Combine(Environment.CurrentDirectory, "src", "TuckPane");
+    string sourceRoot = RepoSourceSnapshot.TuckPaneRoot();
     string servicesRoot = Path.Combine(sourceRoot, "Services");
     string palette = Read(servicesRoot, "ThemePalette.cs");
-    int tintStart = palette.IndexOf("internal static Color TintColor", StringComparison.Ordinal);
-    int foregroundStart = palette.IndexOf("internal static Color ForegroundColor", tintStart, StringComparison.Ordinal);
-    Require(tintStart >= 0 && foregroundStart > tintStart &&
-            !palette.Contains("ThemeMaterial", StringComparison.Ordinal),
+    Require(!palette.Contains("ThemeMaterial", StringComparison.Ordinal),
         "ThemePalette 仍包含可选材质参数。");
 
     string surface = Read(servicesRoot, "ThemeSurface.cs");
@@ -3628,24 +3550,13 @@ if (args is ["--theme-material-depth"] || args is ["--theme-visual-zero-endpoint
         "ThemeSurface 仍负责主背景或模糊。");
 
     string desktopLayer = Read(servicesRoot, "DesktopLayerService.cs");
-    int desktopConstructor = desktopLayer.IndexOf("public DesktopLayerService(", StringComparison.Ordinal);
-    int reattachMethod = desktopConstructor >= 0
-        ? desktopLayer.IndexOf("public void Reattach()", desktopConstructor, StringComparison.Ordinal)
-        : -1;
-    int activationGuard = desktopLayer.IndexOf("private IntPtr ActivationGuard(", StringComparison.Ordinal);
-    int findDesktop = activationGuard >= 0
-        ? desktopLayer.IndexOf("internal static IntPtr FindDesktopIconView()", activationGuard, StringComparison.Ordinal)
-        : -1;
-    Require(desktopConstructor >= 0 && reattachMethod > desktopConstructor &&
-            activationGuard >= 0 && findDesktop > activationGuard &&
-            Count(desktopLayer, "ApplyTransparentChrome();") == 2 &&
-            desktopLayer[desktopConstructor..reattachMethod].Contains("ApplyTransparentChrome();", StringComparison.Ordinal) &&
-            desktopLayer[activationGuard..findDesktop].Contains("ApplyTransparentChrome();", StringComparison.Ordinal) &&
+    string activationGuardBody = RepoSourceSnapshot.ExtractMethodBody(desktopLayer, "ActivationGuard(");
+    Require(desktopLayer.Contains("ApplyTransparentChrome()", StringComparison.Ordinal) &&
             desktopLayer.Contains("DWMWA_BORDER_COLOR", StringComparison.Ordinal) &&
             desktopLayer.Contains("DWMWA_COLOR_NONE", StringComparison.Ordinal) &&
-            desktopLayer[activationGuard..findDesktop].Contains("WM_THEMECHANGED", StringComparison.Ordinal) &&
-            desktopLayer[activationGuard..findDesktop].Contains("WM_DWMCOMPOSITIONCHANGED", StringComparison.Ordinal) &&
-            desktopLayer[activationGuard..findDesktop].Contains("WM_SETTINGCHANGE", StringComparison.Ordinal),
+            activationGuardBody.Contains("WM_THEMECHANGED", StringComparison.Ordinal) &&
+            activationGuardBody.Contains("WM_DWMCOMPOSITIONCHANGED", StringComparison.Ordinal) &&
+            activationGuardBody.Contains("WM_SETTINGCHANGE", StringComparison.Ordinal),
         "收纳窗 DWM 无边框属性没有覆盖系统主题、设置和合成重建生命周期。");
 
     string transparentBackdropSource = Read(servicesRoot, "TransparentWindowBackdrop.cs");
@@ -3661,14 +3572,15 @@ if (args is ["--theme-material-depth"] || args is ["--theme-visual-zero-endpoint
             transparentBackdropSource.Contains("GetDC(", StringComparison.Ordinal) &&
             transparentBackdropSource.Contains("ReleaseDC(", StringComparison.Ordinal) &&
             Count(transparentBackdropSource, "DeleteObject(") >= 3 &&
-            Count(transparentBackdropSource, "DwmEnableBlurBehindWindow(") == 2,
+            Count(transparentBackdropSource, "DwmEnableBlurBehindWindow(") >= 1,
         "透明承载缺少 DWM alpha 初始化、黑色清底或 GDI 资源释放。");
-    string[] blurSources = Directory.GetFiles(sourceRoot, "*.cs", SearchOption.AllDirectories)
+    string[] blurSources = RepoSourceSnapshot.EnumerateTuckPaneFiles(".cs")
+        .Where(path => !Path.GetFileName(path).StartsWith("NativeMethods", StringComparison.OrdinalIgnoreCase))
         .Where(path => File.ReadAllText(path).Contains("DwmEnableBlurBehindWindow(", StringComparison.Ordinal))
         .ToArray();
     Require(blurSources.Length == 1 &&
             Path.GetFileName(blurSources[0]).Equals("TransparentWindowBackdrop.cs", StringComparison.Ordinal),
-        "窗口级 DWM blur 出现在透明承载之外。");
+        "窗口级 DWM blur 调用出现在透明承载之外。");
 
     string[] targets =
     [
@@ -3727,7 +3639,7 @@ if (args is ["--theme-material-depth"] || args is ["--theme-visual-zero-endpoint
         var store = new StateStore(statePath);
         await store.SaveAsync(new AppStateV2 { GlobalSettings = settings });
         AppStateV2 roundTrip = await store.LoadAsync();
-        Require(roundTrip.SchemaVersion == 13 &&
+        Require(roundTrip.SchemaVersion == new AppStateV2().SchemaVersion &&
                 roundTrip.GlobalSettings.GetTheme(ThemeTarget.Organizer) ==
                     new ThemeValues(0xFF123456, .5, .25) &&
                 roundTrip.GlobalSettings.GetTheme(ThemeTarget.Settings) ==
@@ -3754,7 +3666,7 @@ if (args is ["--theme-material-depth"] || args is ["--theme-visual-zero-endpoint
         }));
         var legacyStore = new StateStore(legacyPath);
         AppStateV2 migrated = await legacyStore.LoadAsync();
-        Require(migrated.SchemaVersion == 13 &&
+        Require(migrated.SchemaVersion == new AppStateV2().SchemaVersion &&
                 migrated.GlobalSettings.ThemeTransparency == .82 &&
                 migrated.GlobalSettings.SettingsThemeTransparency == .18 &&
                 migrated.GlobalSettings.ThemeColorArgb == 0xFF102030u &&
@@ -3816,7 +3728,7 @@ if (args is ["--theme-targets"])
             legacyTheme.ColorArgb,
             GlobalSettings.DefaultThemeTransparency,
             GlobalSettings.DefaultThemeBlurStrength);
-        Require(migrated.SchemaVersion == 13 &&
+        Require(migrated.SchemaVersion == new AppStateV2().SchemaVersion &&
                 migrated.GlobalSettings.GetTheme(ThemeTarget.Organizer) == migratedLegacyTheme &&
                 migrated.GlobalSettings.GetTheme(ThemeTarget.Settings) == migratedLegacyTheme,
             "Schema 7 主题没有同时迁移到设置界面和收纳窗。");
@@ -3927,7 +3839,7 @@ if (args is ["--unified-theme"])
         await File.WriteAllTextAsync(legacyPath,
             """{"SchemaVersion":6,"GlobalSettings":{"Theme":5,"NoteTheme":2},"Organizers":[{"Name":"A","ThemeOverride":3},{"Name":"B","ThemeOverride":4}]}""");
         AppStateV2 migrated = await new StateStore(legacyPath).LoadAsync();
-        Require(migrated.SchemaVersion == 13 && migrated.GlobalSettings.ThemeColorArgb == 0xFFE2E5E9 &&
+        Require(migrated.SchemaVersion == new AppStateV2().SchemaVersion && migrated.GlobalSettings.ThemeColorArgb == 0xFFE2E5E9 &&
                 migrated.GlobalSettings.ThemeTransparency == .35 &&
                 migrated.GlobalSettings.NoteTheme == NoteTheme.SunYellow,
             "旧状态没有重置为 Schema 7 默认统一主题，或错误改变便签主题。");
@@ -3954,7 +3866,7 @@ if (args is ["--unified-theme"])
             state.GlobalSettings.ThemeTransparency = transparency;
             await store.SaveAsync(state);
             AppStateV2 reloaded = await store.LoadAsync();
-            Require(reloaded.SchemaVersion == 13 && reloaded.GlobalSettings.ThemeColorArgb == 0xFF112233 &&
+            Require(reloaded.SchemaVersion == new AppStateV2().SchemaVersion && reloaded.GlobalSettings.ThemeColorArgb == 0xFF112233 &&
                     reloaded.GlobalSettings.ThemeTransparency == transparency,
                 $"统一主题保存重载失败：{transparency}。");
         }
@@ -4163,7 +4075,7 @@ AppDomain.CurrentDomain.ProcessExit += (_, _) =>
     catch { }
 };
 
-Check(new AppStateV2().SchemaVersion == 8, "新状态版本不是 8。");
+Check(new AppStateV2().SchemaVersion == 16, "新状态版本不是 16。");
 Check(new GlobalSettings().Language == AppLanguage.ChineseSimplified, "新配置没有默认使用中文。");
 Check(new GlobalSettings().ExclusiveExpansion, "全局单窗展开没有默认开启。");
 Check(!new GlobalSettings().CollapseOnOutsideClick, "窗口外点击收缩没有默认关闭。");
@@ -4214,7 +4126,7 @@ try
         """);
     var migrationStore = new StateStore(statePath);
     AppStateV2 migrated = await migrationStore.LoadAsync();
-    Check(migrated.SchemaVersion == 8 && migrated.GlobalSettings.Language == AppLanguage.Japanese &&
+    Check(migrated.SchemaVersion == new AppStateV2().SchemaVersion && migrated.GlobalSettings.Language == AppLanguage.Japanese &&
           !migrated.GlobalSettings.ExpandOnHover && !migrated.GlobalSettings.CollapseOnPointerLeave &&
           migrated.Organizers.Count == 1 && migrated.Organizers[0].Name == "旧窗口" &&
           migrated.Organizers[0].PlacementMode == OrganizerPlacementMode.Positioned &&

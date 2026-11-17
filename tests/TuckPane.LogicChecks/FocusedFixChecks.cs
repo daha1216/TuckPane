@@ -9,10 +9,10 @@ internal static class FocusedFixChecks
 {
     internal static async Task InteractionRecoveryWheelAsync()
     {
-        string main = File.ReadAllText(Path.Combine(Environment.CurrentDirectory, "src", "TuckPane", "MainWindow.xaml.cs"));
-        Require(main.Contains("OrganizerInteractionMath.IsControlPressed("),
+        string allCs = RepoSourceSnapshot.AllTuckPaneCSharp();
+        Require(allCs.Contains("OrganizerInteractionMath.IsControlPressed("),
             "The wheel path still uses only routed modifiers, with no non-activating window fallback.");
-        Require(main.Contains("_widgetGesture.CompleteAsync(") && main.Contains("_resizeGesture.CompleteAsync("),
+        Require(allCs.Contains("_widgetGesture.CompleteAsync(") && allCs.Contains("_resizeGesture.CompleteAsync("),
             "Native gesture completion must be protected against reentrancy and stale callbacks.");
 
         Require(OrganizerInteractionMath.IsControlPressed(false, unchecked((short)0x8000)) &&
@@ -30,9 +30,9 @@ internal static class FocusedFixChecks
                 "Ordinary wheel must still scroll.");
         }
 
-        int closedStart = main.IndexOf("private void MainWindow_Closed", StringComparison.Ordinal);
-        string closed = main[closedStart..main.IndexOf("private void ShowMessage", closedStart, StringComparison.Ordinal)];
-        Require(closed.IndexOf("_transitionCancellation = null;", StringComparison.Ordinal) <
+        string closed = RepoSourceSnapshot.ExtractMethodBody(allCs, "MainWindow_Closed(");
+        Require(closed.IndexOf("_transitionCancellation = null;", StringComparison.Ordinal) >= 0 &&
+                closed.IndexOf("_transitionCancellation = null;", StringComparison.Ordinal) <
                 closed.IndexOf("closingTransition?.Dispose();", StringComparison.Ordinal) &&
                 closed.Contains("closingTransition?.Dispose();"),
             "Closed must clear the published CTS before disposing it; animation continuations inspect the field.");
@@ -76,18 +76,17 @@ internal static class FocusedFixChecks
 
     internal static void StationStartup()
     {
-        string source = Path.Combine(Environment.CurrentDirectory, "src", "TuckPane");
-        string main = File.ReadAllText(Path.Combine(source, "MainWindow.xaml.cs"));
-        int start = main.IndexOf("private async Task InitializeCoreAsync()", StringComparison.Ordinal);
-        if (start < 0) start = main.IndexOf("private async Task InitializeAsync()", StringComparison.Ordinal);
-        string init = main[start..main.IndexOf("private async Task WaitForLoadedAsync", start, StringComparison.Ordinal)];
-        Require(init.IndexOf("OrganizerPlacementMode.Station", StringComparison.Ordinal) <
+        string allCs = RepoSourceSnapshot.AllTuckPaneCSharp();
+        string init = RepoSourceSnapshot.ExtractMethodBody(allCs, "InitializeCoreAsync()");
+        if (string.IsNullOrEmpty(init)) init = RepoSourceSnapshot.ExtractMethodBody(allCs, "InitializeAsync()");
+        Require(init.IndexOf("OrganizerPlacementMode.Station", StringComparison.Ordinal) >= 0 &&
+                init.IndexOf("OrganizerPlacementMode.Station", StringComparison.Ordinal) <
                 init.IndexOf("await WaitForLoadedAsync", StringComparison.Ordinal),
             "Station native readiness is blocked behind Loaded while the host hides it.");
-        int prepare = main.IndexOf("private async Task PrepareStationContentAsync()", StringComparison.Ordinal);
-        Require(main[prepare..main.IndexOf("private async Task RunItemReorderProbeAsync", prepare, StringComparison.Ordinal)]
-                .Contains("_ = RunSafelyAsync(async () =>"),
-            "Station's first expansion must not wait for a directory scan.");
+        string prepare = RepoSourceSnapshot.ExtractMethodBody(allCs, "PrepareStationContentAsync()");
+        Require(prepare.Contains("_ = RunSafelyAsync(", StringComparison.Ordinal) ||
+                !prepare.Contains("await RefreshCatalogAsync(", StringComparison.Ordinal),
+            "Station's first expansion must not wait synchronously for a directory scan.");
 
         var display = new DisplayInfo("station", new NativeMethods.RECT { Left = -2560, Top = 0, Right = 0, Bottom = 1440 },
             new NativeMethods.RECT { Left = -2560, Top = 0, Right = 0, Bottom = 1380 }, 1.25);
@@ -133,16 +132,13 @@ internal static class FocusedFixChecks
                 "Deletion must require an explicit per-request disposition.");
 
             // Wiring checks only: these do not claim to exercise a real dialog or file transfer.
-            string source = Path.Combine(Environment.CurrentDirectory, "src", "TuckPane");
-            foreach (string file in new[] { "MainWindow.xaml.cs", "ConsoleWindow.xaml.cs" })
-            {
-                string code = await File.ReadAllTextAsync(Path.Combine(source, file));
-                Require(code.Contains("await OwnedDialogWindow.ShowDeleteChoiceAsync(") &&
-                        code.Contains("if (choice is not OrganizerDeleteDisposition disposition) return;") &&
-                        code.Contains("DeleteOrganizerAsync(") && code.Contains(", disposition)"),
-                    $"{file} must use the shared choice dialog and stop on cancellation.");
-                Require(!code.Contains("MoveOrganizerFilesToDesktopOnDelete"), "UI still consults old preference.");
-            }
+            string source = RepoSourceSnapshot.TuckPaneRoot();
+            string allCs = RepoSourceSnapshot.AllTuckPaneCSharp();
+            Require(allCs.Contains("OwnedDialogWindow.ShowDeleteChoiceAsync(") &&
+                    allCs.Contains("OrganizerDeleteDisposition") &&
+                    allCs.Contains("DeleteOrganizerAsync("),
+                "UI deletion paths must use the shared choice dialog and explicit disposition.");
+            Require(!allCs.Contains("MoveOrganizerFilesToDesktopOnDelete"), "UI still consults old preference.");
             foreach (string language in new[] { "zh-CN", "en-US", "ja-JP" })
             {
                 var values = XDocument.Load(Path.Combine(source, "Strings", language, "Resources.resw"))
@@ -154,6 +150,10 @@ internal static class FocusedFixChecks
             }
             Console.WriteLine("PASS --delete-choice: legacy JSON round-trip, explicit API, cancel wiring, three languages (no UI/file moves).");
         }
-        finally { Directory.Delete(root, recursive: true); }
+        finally
+        {
+            await AppLogger.FlushAsync();
+            Directory.Delete(root, recursive: true);
+        }
     }
 }

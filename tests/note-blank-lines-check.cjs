@@ -5,6 +5,41 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 
+function extractFunction(script, name) {
+  const header = new RegExp(`(?:async\\s+)?function\\s+${name}\\s*\\(`).exec(script);
+  assert.ok(header, `The production ${name} function was not found.`);
+  const start = header.index;
+  const openBrace = script.indexOf('{', start + header[0].length);
+  assert.ok(openBrace >= 0, `Missing body for ${name}.`);
+  let depth = 0;
+  let quote = null;
+  let lineComment = false;
+  let blockComment = false;
+  for (let i = openBrace; i < script.length; i++) {
+    const ch = script[i];
+    const next = script[i + 1];
+    if (lineComment) {
+      if (ch === '\n') lineComment = false;
+      continue;
+    }
+    if (blockComment) {
+      if (ch === '*' && next === '/') { blockComment = false; i++; }
+      continue;
+    }
+    if (quote) {
+      if (ch === '\\') { i++; continue; }
+      if (ch === quote) quote = null;
+      continue;
+    }
+    if (ch === '/' && next === '/') { lineComment = true; i++; continue; }
+    if (ch === '/' && next === '*') { blockComment = true; i++; continue; }
+    if (ch === '\'' || ch === '"' || ch === '`') { quote = ch; continue; }
+    if (ch === '{') depth++;
+    else if (ch === '}' && --depth === 0) return script.slice(start, i + 1);
+  }
+  assert.fail(`Unterminated body for ${name}.`);
+}
+
 const htmlPath = path.resolve(__dirname, '../src/TuckPane/Assets/NoteEditor.html');
 const html = fs.readFileSync(htmlPath, 'utf8');
 const inlineScript = html.match(/<script\b[^>]*>([\s\S]*?)<\/script>/i)?.[1];
@@ -12,8 +47,7 @@ assert.ok(inlineScript, 'NoteEditor.html must contain its inline script.');
 // Compilation only: no document/window, browser, selection or input automation.
 new vm.Script(inlineScript, { filename: htmlPath });
 
-const functionSource = inlineScript.match(/function blankLinesToAppend\([^)]*\)\s*\{[^{}]*\}/)?.[0];
-assert.ok(functionSource, 'The production blankLinesToAppend function was not found.');
+const functionSource = extractFunction(inlineScript, 'blankLinesToAppend');
 const append = vm.runInNewContext(`(${functionSource})`, {}, { timeout: 1000 });
 const cases = [
   ['implicit first line', 0, 0, 25.2, 0],

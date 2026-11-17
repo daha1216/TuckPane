@@ -3,16 +3,48 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+
+function extractFunction(script, name) {
+  const header = new RegExp(`(?:async\\s+)?function\\s+${name}\\s*\\(`).exec(script);
+  assert.ok(header, `Missing production ${name}`);
+  const start = header.index;
+  const openBrace = script.indexOf('{', start + header[0].length);
+  assert.ok(openBrace >= 0, `Missing body for ${name}`);
+  let depth = 0;
+  let quote = null;
+  let lineComment = false;
+  let blockComment = false;
+  for (let i = openBrace; i < script.length; i++) {
+    const ch = script[i];
+    const next = script[i + 1];
+    if (lineComment) {
+      if (ch === '\n') lineComment = false;
+      continue;
+    }
+    if (blockComment) {
+      if (ch === '*' && next === '/') { blockComment = false; i++; }
+      continue;
+    }
+    if (quote) {
+      if (ch === '\\') { i++; continue; }
+      if (ch === quote) quote = null;
+      continue;
+    }
+    if (ch === '/' && next === '/') { lineComment = true; i++; continue; }
+    if (ch === '/' && next === '*') { blockComment = true; i++; continue; }
+    if (ch === '\'' || ch === '"' || ch === '`') { quote = ch; continue; }
+    if (ch === '{') depth++;
+    else if (ch === '}' && --depth === 0) return script.slice(start, i + 1);
+  }
+  assert.fail(`Unterminated body for ${name}`);
+}
+
 const file = path.join(__dirname, '../src/TuckPane/Assets/NoteEditor.html');
 const script = fs.readFileSync(file, 'utf8').match(/<script\b[^>]*>([\s\S]*?)<\/script>/i)[1];
 new vm.Script(script, { filename: file });
 const names = ['captureEditTarget', 'validEditTarget', 'nativeImageEdit', 'rememberImageTarget',
   'hasImageSelection', 'clearsImageSelection', 'imageCommand', 'completeImageClipboard'];
-const functions = names.map(name => {
-  const match = script.match(new RegExp(`(?:async )?function ${name}\\([^)]*\\) \\{[\\s\\S]*?^      \\}`, 'm'));
-  assert.ok(match, `Missing production ${name}`);
-  return match[0];
-}).join('\n');
+const functions = names.map(name => extractFunction(script, name)).join('\n');
 
 function fixture() {
   const calls = [], messages = [], pastes = [];
@@ -102,7 +134,7 @@ function fixture() {
   assert.equal(replace.context.clearsImageSelection({ key: 'c', ctrlKey: true }), false);
   // Resource wiring and sanitation are inspected statically; no browser/clipboard/undo engine is run.
   assert.match(script, /editor\.addEventListener\('contextmenu'/);
-  assert.match(script, /editor\.addEventListener\('cut', onCutText\)/);
-  assert.doesNotMatch(script.match(/function cleanHtml\(html\)[\s\S]*?^      \}/m)[0], /data-selected|imageRequests/);
+  assert.match(script, /editor\.addEventListener\('cut',\s*onCutText\)/);
+  assert.doesNotMatch(extractFunction(script, 'cleanHtml'), /data-selected|imageRequests/);
   console.log('PASS note-image-commands: copy/cut acknowledgements, stale targets, image/text paste, after-image insertion, native edit transactions, size guard and syntax. Actual clipboard/undo/menu remain manual.');
 })().catch(error => { console.error(error); process.exitCode = 1; });
