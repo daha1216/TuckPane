@@ -61,6 +61,7 @@ internal sealed class DesktopAttachmentCoordinator
     public void PauseForWidgetDrag()
     {
         SetTimerRunning(_desktopRepairTimer, false);
+        SetTimerRunning(_desktopVisibilityTimer, false);
         SetTimerRunning(_stationPointerTimer, false);
     }
 
@@ -287,9 +288,10 @@ internal sealed class DesktopAttachmentCoordinator
 
     private void DesktopVisibilityTimer_Tick(DispatcherQueueTimer sender, object args)
     {
-        if (_window.IsClosing || _window.IsExpandedCore || _window.IsAnimating || _window.IsPressActive ||
+        if (_window.IsClosing || _window.IsAnimating || _window.IsPressActive ||
             _window.IsContainedWindow || !_window.IsRuntimeVisible) return;
-        if (_window.Definition.PlacementMode is not (OrganizerPlacementMode.Floating or OrganizerPlacementMode.Positioned)) return;
+        if (_window.Definition.PlacementMode is not (
+                OrganizerPlacementMode.Floating or OrganizerPlacementMode.Positioned or OrganizerPlacementMode.Dock)) return;
         if (_window.CaptureInteractionState().BlocksDesktopLayerRepair || _window.DesktopLayer is not { } desktopLayer) return;
 
         DesktopAttachmentState state = desktopLayer.RepairDesktopAttachment(out DesktopAttachmentState remaining);

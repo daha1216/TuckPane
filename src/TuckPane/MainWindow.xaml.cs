@@ -5063,7 +5063,7 @@ public sealed partial class MainWindow : Window
         bool repairDesktop = !_closing && !interactionDragActive && _desktopLayer is not null && !IsContained &&
             (_definition.PlacementMode == OrganizerPlacementMode.Station ? _stationVisible : _runtimeVisible);
         bool watchDesktop = repairDesktop &&
-            (_definition.PlacementMode is OrganizerPlacementMode.Floating or OrganizerPlacementMode.Positioned);
+            (_definition.PlacementMode is OrganizerPlacementMode.Floating or OrganizerPlacementMode.Positioned or OrganizerPlacementMode.Dock);
         _desktopCoordinator.RefreshSchedule(tuning, pollPointer, repairDesktop, watchDesktop);
 
         TimeSpan iconTransitionDuration = UseCustomAnimations ? TimeSpan.FromMilliseconds(120) : TimeSpan.Zero;
@@ -5683,6 +5683,7 @@ public sealed partial class MainWindow : Window
             _runtimeVisible = visible;
             if (visible) { _desktopLayer?.BringAboveDesktopPeers(); ApplyDockLayout(); }
             else { ResetHoverWave(); _appWindow.Hide(); }
+            RefreshPerformanceSettings();
             return;
         }
         ResetHoverWave();

@@ -83,6 +83,7 @@ internal readonly record struct OrganizerInteractionSnapshot(OrganizerBusyFlags 
 
     private const OrganizerBusyFlags DesktopLayerBusyMask =
         OrganizerBusyFlags.WidgetDragging |
+        OrganizerBusyFlags.CanvasResizing |
         OrganizerBusyFlags.ItemReordering |
         OrganizerBusyFlags.ShellDragActive |
         OrganizerBusyFlags.ShellContextMenuOpen |
