@@ -27,6 +27,7 @@ public sealed partial class ConsoleWindow : Window
     private const double ConsoleCornerRadiusDip = 18;
     private readonly AppHost _host;
     private readonly ConsoleSettingBinder _settingBinder = new();
+    private readonly WindowThemeBrushes _surfaceBrushes = new();
     private readonly Windows.UI.ViewManagement.UISettings _uiSettings = new();
     private readonly Windows.UI.ViewManagement.AccessibilitySettings _accessibilitySettings = new();
     private readonly OptionalEventSubscription? _accessibilitySubscription;
@@ -666,9 +667,19 @@ public sealed partial class ConsoleWindow : Window
     private void SetSurfaceBrush(string key, Windows.UI.Color color)
     {
         if (ConsoleRoot.Resources.TryGetValue(key, out object? existing) && existing is SolidColorBrush brush)
-            brush.Color = color;
-        else
-            ConsoleRoot.Resources[key] = new SolidColorBrush(color);
+        {
+            try
+            {
+                brush.Color = color;
+                return;
+            }
+            catch (UnauthorizedAccessException)
+            {
+                // System theme brushes inherited from XamlControlsResources are read-only;
+                // fall through to WindowThemeBrushes to register a mutable local override.
+            }
+        }
+        _surfaceBrushes.Set(ConsoleRoot.Resources, key, color);
     }
 
     private SolidColorBrush GetSurfaceBrush(string key) => (SolidColorBrush)ConsoleRoot.Resources[key];
