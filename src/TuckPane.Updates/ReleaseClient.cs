@@ -1,4 +1,5 @@
 using System.Net.Http.Headers;
+using System.Reflection;
 using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -59,10 +60,31 @@ public static class ReleaseRules
 
 public sealed class ReleaseClient(HttpClient http)
 {
+    private static readonly string UserAgentValue = BuildUserAgentValue();
+
+    private static string BuildUserAgentValue()
+    {
+        foreach (Assembly? assembly in new[] { Assembly.GetEntryAssembly(), typeof(ReleaseClient).Assembly })
+        {
+            if (assembly is null) continue;
+            string? name = assembly.GetName().Name;
+            if (name is null || !name.StartsWith("TuckPane", StringComparison.Ordinal)) continue;
+            string? info = assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion;
+            if (!string.IsNullOrWhiteSpace(info))
+            {
+                string core = info.Split('+', 2)[0].Trim();
+                if (core.Length > 0 && core != "1.0.0") return "TuckPane-Updater/" + core;
+            }
+            if (assembly.GetName().Version is { } v && (v.Major != 1 || v.Minor != 0 || v.Build > 0))
+                return $"TuckPane-Updater/{v.Major}.{v.Minor}.{Math.Max(0, v.Build)}";
+        }
+        return "TuckPane-Updater/4.2.6";
+    }
+
     private static HttpRequestMessage Request(string url)
     {
         var request = new HttpRequestMessage(HttpMethod.Get, url);
-        request.Headers.UserAgent.ParseAdd("TuckPane-Updater/4.2.6");
+        request.Headers.UserAgent.ParseAdd(UserAgentValue);
         request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/vnd.github+json"));
         return request;
     }

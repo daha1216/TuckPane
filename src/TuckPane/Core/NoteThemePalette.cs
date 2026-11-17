@@ -1,6 +1,5 @@
 namespace TuckPane.Core;
 
-using Microsoft.UI;
 using TuckPane.Models;
 using Windows.UI;
 
@@ -31,7 +30,7 @@ internal sealed record NoteThemeColors(
     internal Color TextColor => Parse(Text);
     internal Color MutedColor => Parse(Muted);
 
-    private static Color Parse(string value) => ColorHelper.FromArgb(
+    private static Color Parse(string value) => Color.FromArgb(
         255,
         Convert.ToByte(value.Substring(1, 2), 16),
         Convert.ToByte(value.Substring(3, 2), 16),

@@ -103,11 +103,20 @@ public partial class App : Application
         UnhandledException += (_, args) =>
         {
             AppLogger.Error("Unhandled UI exception", args.Exception);
-            AppLogger.Lifecycle("ui-exception", $"type={args.Exception.GetType().FullName} hresult=0x{args.Exception.HResult:X8} handled=true");
+            bool handled = !IsFatalException(args.Exception);
+            AppLogger.Lifecycle("ui-exception", $"type={args.Exception.GetType().FullName} hresult=0x{args.Exception.HResult:X8} handled={handled.ToString().ToLowerInvariant()}");
             // Keep recoverable async-void/UI callback failures from terminating
-            // the process. Native fail-fast crashes are still handled by WER.
-            args.Handled = true;
+            // the process, while letting fatal CLR exceptions fail fast.
+            if (handled) args.Handled = true;
         };
+    }
+
+    internal static bool IsFatalException(Exception? exception)
+    {
+        if (exception is null) return false;
+        if (exception is OutOfMemoryException or AccessViolationException or StackOverflowException) return true;
+        if (exception is AggregateException aggregate) return aggregate.InnerExceptions.Any(IsFatalException);
+        return IsFatalException(exception.InnerException);
     }
 
     protected override async void OnLaunched(Microsoft.UI.Xaml.LaunchActivatedEventArgs args)

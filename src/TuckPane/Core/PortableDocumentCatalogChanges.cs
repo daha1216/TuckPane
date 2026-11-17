@@ -3,10 +3,12 @@ namespace TuckPane.Core;
 internal static class PortableDocumentCatalogChanges
 {
     internal const string TemporaryPrefix = ".tuckpane-document-";
+    internal const string StagingPrefix = ".glassfolder-staging-";
 
     internal static bool IsInternalTemporary(string? name)
     {
         if (string.IsNullOrEmpty(name)) return false;
+        if (name.StartsWith(StagingPrefix, StringComparison.OrdinalIgnoreCase)) return true;
         if (name.StartsWith(TemporaryPrefix, StringComparison.OrdinalIgnoreCase) && name.EndsWith(".tmp", StringComparison.OrdinalIgnoreCase) &&
             Guid.TryParseExact(name[TemporaryPrefix.Length..^4], "N", out _)) return true;
         int replace = name.LastIndexOf("~RF", StringComparison.OrdinalIgnoreCase);

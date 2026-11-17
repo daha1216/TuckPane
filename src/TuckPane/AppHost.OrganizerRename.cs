@@ -13,7 +13,7 @@ public sealed partial class AppHost
         await _organizerNameGate.WaitAsync();
         try
         {
-            OrganizerDefinition definition = State.Organizers.First(item => item.Id == organizerId);
+            if (State.Organizers.FirstOrDefault(item => item.Id == organizerId) is not OrganizerDefinition definition) return;
             try { await OrganizerNameChange.RenameAsync(definition, name, SaveStateAsync); }
             finally
             {

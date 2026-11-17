@@ -9,7 +9,7 @@ public sealed partial class AppHost
     internal Task SetTodoShowSeparatorsAsync(bool enabled) =>
         _todoSeparators.SetAsync(State.GlobalSettings, enabled, SaveStateAsync, () =>
         {
-            foreach (TodoWindow window in _externalTodoWindows.Values.ToArray())
+            foreach (TodoWindow window in OpenExternalTodoWindows.ToArray())
                 window.ApplySeparatorSetting();
         });
 }

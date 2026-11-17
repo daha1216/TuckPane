@@ -12,7 +12,7 @@ public sealed partial class AppHost
         await _nameVisibilityGate.WaitAsync();
         try
         {
-            OrganizerDefinition organizer = State.Organizers.First(item => item.Id == id);
+            if (State.Organizers.FirstOrDefault(item => item.Id == id) is not OrganizerDefinition organizer) return;
             try { await OrganizerNameVisibility.SetAsync(organizer, hideName, SaveStateAsync); }
             finally
             {

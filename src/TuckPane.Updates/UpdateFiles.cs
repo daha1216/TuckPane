@@ -41,13 +41,19 @@ public static class UpdateFiles
     {
         string destination = Path.Combine(backupRoot, DateTime.UtcNow.ToString("yyyyMMdd-HHmmss") + "-" + version + "-" + Guid.NewGuid().ToString("N")[..8]);
         NoLinks(destination);
+        NoLinks(statePath);
         Directory.CreateDirectory(destination);
         // The saved state contains window positions and all storage associations.
         // Document bodies and actual organizer files remain in their original directories.
-        File.Copy(statePath, Path.Combine(destination, "state.json"));
+        bool statePresent = File.Exists(statePath);
+        if (statePresent)
+        {
+            string copiedState = Path.Combine(destination, "state.json");
+            File.Copy(statePath, copiedState);
+            if (Hash(statePath) != Hash(copiedState)) throw new IOException("Configuration backup verification failed.");
+        }
         if (File.Exists(statePath + ".bak")) File.Copy(statePath + ".bak", Path.Combine(destination, "state.json.bak"));
-        WriteJson(Path.Combine(destination, "backup.json"), new { version, source = statePath, createdUtc = DateTimeOffset.UtcNow });
-        if (Hash(statePath) != Hash(Path.Combine(destination, "state.json"))) throw new IOException("Configuration backup verification failed.");
+        WriteJson(Path.Combine(destination, "backup.json"), new { version, source = statePath, statePresent, createdUtc = DateTimeOffset.UtcNow });
         return destination;
     }
 }

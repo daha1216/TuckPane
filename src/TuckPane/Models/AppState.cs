@@ -114,7 +114,8 @@ public enum NoteTheme
 
 public sealed class AppStateV2
 {
-    public int SchemaVersion { get; set; } = 16;
+    public const int CurrentSchemaVersion = 16;
+    public int SchemaVersion { get; set; } = CurrentSchemaVersion;
     public GlobalSettings GlobalSettings { get; set; } = new();
     public ConsolePlacement? ConsolePlacement { get; set; }
     public List<OrganizerDefinition> Organizers { get; set; } = [];
@@ -411,6 +412,61 @@ public sealed class OrganizerDefinition
     public bool StorageOwnedByApp { get; set; }
     public List<string> ItemOrder { get; set; } = [];
     public List<NoteDefinition> Notes { get; set; } = [];
+
+    public OrganizerDefinition Clone()
+    {
+        var clone = new OrganizerDefinition
+        {
+            Id = Id,
+            Name = Name,
+            CreatedAtUtc = CreatedAtUtc,
+            DockCenter = DockCenter?.Clone(),
+            Position = Position?.Clone(),
+            ExpandedPosition = ExpandedPosition?.Clone(),
+            ContainerOrganizerId = ContainerOrganizerId,
+            StorageRelativePath = StorageRelativePath,
+            StorageAbsolutePath = StorageAbsolutePath,
+            StorageOwnedByApp = StorageOwnedByApp,
+            ItemOrder = [.. ItemOrder],
+            Notes = Notes.Select(note => note.Clone()).ToList()
+        };
+        clone.CopyEditableSettingsFrom(this);
+        return clone;
+    }
+
+    public void CopyEditableSettingsFrom(
+        OrganizerDefinition source,
+        bool copyPreferencesAndDock = true,
+        bool copyManualCanvasBase = true)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        if (copyPreferencesAndDock)
+        {
+            HideName = source.HideName;
+            ExpansionMode = source.ExpansionMode;
+            DockOrientation = source.DockOrientation;
+            DockIconSizeDip = source.DockIconSizeDip;
+            DockSpacingFactor = source.DockSpacingFactor;
+        }
+        PlacementMode = source.PlacementMode;
+        DockEdge = source.DockEdge;
+        Layout = source.Layout.Clone();
+        CompactScale = source.CompactScale;
+        CanvasScale = source.CanvasScale;
+        ItemScale = source.ItemScale;
+        NameScale = source.NameScale;
+        CompactListItemScale = source.CompactListItemScale;
+        IconContentScale = source.IconContentScale;
+        CompactListContentScale = source.CompactListContentScale;
+        ExpandedContentMode = source.ExpandedContentMode;
+        CompactListCanvasWidthDip = source.CompactListCanvasWidthDip;
+        CompactListCanvasHeightDip = source.CompactListCanvasHeightDip;
+        if (copyManualCanvasBase)
+        {
+            ManualCanvasBaseWidthDip = source.ManualCanvasBaseWidthDip;
+            ManualCanvasBaseHeightDip = source.ManualCanvasBaseHeightDip;
+        }
+    }
 }
 
 public sealed class NoteDefinition
@@ -421,6 +477,16 @@ public sealed class NoteDefinition
     public double FontSize { get; set; } = 14;
     public bool ShowRuledLines { get; set; }
     public NoteWindowPlacement? Placement { get; set; }
+
+    public NoteDefinition Clone() => new()
+    {
+        Id = Id,
+        Name = Name,
+        Theme = Theme,
+        FontSize = FontSize,
+        ShowRuledLines = ShowRuledLines,
+        Placement = Placement?.Clone()
+    };
 }
 
 public sealed class NoteWindowPlacement
@@ -430,6 +496,15 @@ public sealed class NoteWindowPlacement
     public double YDip { get; set; }
     public double WidthDip { get; set; } = 360;
     public double HeightDip { get; set; } = 300;
+
+    public NoteWindowPlacement Clone() => new()
+    {
+        MonitorDevice = MonitorDevice,
+        XDip = XDip,
+        YDip = YDip,
+        WidthDip = WidthDip,
+        HeightDip = HeightDip
+    };
 }
 
 public sealed class NoteDocument
@@ -446,6 +521,8 @@ public sealed class OrganizerLayout
 
     [JsonIgnore]
     public int VisibleItemCount => Rows * Columns;
+
+    public OrganizerLayout Clone() => new() { Mode = Mode, Rows = Rows, Columns = Columns };
 }
 
 // Kept only as the on-disk migration input for 0.1.x installations.
@@ -465,6 +542,15 @@ public sealed class WidgetPosition
     public double YDip { get; set; }
     public double SavedWorkAreaWidthDip { get; set; }
     public double SavedWorkAreaHeightDip { get; set; }
+
+    public WidgetPosition Clone() => new()
+    {
+        MonitorDevice = MonitorDevice,
+        XDip = XDip,
+        YDip = YDip,
+        SavedWorkAreaWidthDip = SavedWorkAreaWidthDip,
+        SavedWorkAreaHeightDip = SavedWorkAreaHeightDip
+    };
 }
 
 public enum WidgetItemKind

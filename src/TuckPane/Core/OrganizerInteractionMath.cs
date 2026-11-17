@@ -119,35 +119,12 @@ internal static class OrganizerInteractionMath
         }
     }
 
-    internal static OrganizerDefinition CopySettings(OrganizerDefinition source, string name) => new()
+    internal static OrganizerDefinition CopySettings(OrganizerDefinition source, string name)
     {
-        Name = name,
-        HideName = source.HideName,
-        PlacementMode = source.PlacementMode,
-        ExpansionMode = source.ExpansionMode,
-        DockEdge = source.DockEdge,
-        DockOrientation = source.DockOrientation,
-        DockIconSizeDip = source.DockIconSizeDip,
-        DockSpacingFactor = source.DockSpacingFactor,
-        Layout = new OrganizerLayout
-        {
-            Mode = source.Layout.Mode,
-            Rows = source.Layout.Rows,
-            Columns = source.Layout.Columns
-        },
-        CompactScale = source.CompactScale,
-        CanvasScale = source.CanvasScale,
-        ItemScale = source.ItemScale,
-        NameScale = source.NameScale,
-        CompactListItemScale = source.CompactListItemScale,
-        IconContentScale = source.IconContentScale,
-        CompactListContentScale = source.CompactListContentScale,
-        ExpandedContentMode = source.ExpandedContentMode,
-        CompactListCanvasWidthDip = source.CompactListCanvasWidthDip,
-        CompactListCanvasHeightDip = source.CompactListCanvasHeightDip,
-        ManualCanvasBaseWidthDip = source.ManualCanvasBaseWidthDip,
-        ManualCanvasBaseHeightDip = source.ManualCanvasBaseHeightDip
-    };
+        var copy = new OrganizerDefinition { Name = name };
+        copy.CopyEditableSettingsFrom(source);
+        return copy;
+    }
 
     internal static bool TryToggleExpandedContentMode(OrganizerDefinition organizer)
     {
