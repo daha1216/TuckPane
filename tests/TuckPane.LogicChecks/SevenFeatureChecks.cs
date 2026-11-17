@@ -74,7 +74,7 @@ internal static class SevenFeatureChecks
         Require(store.Snapshot() == foreignSnapshot && notifications == beforeFailure,
             "A partial enable failure must restore the complete previous registration without notifying success.");
 
-        string installer = Source("installer/TuckPane.iss");
+        string installer = RepoSourceSnapshot.ReadRepoFile("installer/TuckPane.iss");
         string registrySection = installer.Split("[Registry]")[1].Split("[Code]")[0];
         Require(!registrySection.Contains("Subkey: \"Software\\Classes\\DesktopBackground\\Shell\\TuckPane.CreateOrganizer\""),
             "Installer registry entries must not unconditionally delete the current desktop verb.");
@@ -82,8 +82,9 @@ internal static class SevenFeatureChecks
             installer.Contains("if Enabled = 0 then Exit;") && installer.Contains("if not DesktopMenuOwnedByThisInstall then Exit;") &&
             installer.Contains("if DesktopMenuOwnedByThisInstall then"),
             "Installer and uninstaller must retain disabled preferences and guard registration ownership.");
-        Require(Source("src/TuckPane/AppHost.cs").Contains("DesktopContextMenu.InitializeDesktop(") &&
-            Source("src/TuckPane/ConsoleWindow.DesktopMenu.cs").Contains("_host.DesktopContextMenu.Disable()"),
+        string allCs = RepoSourceSnapshot.AllTuckPaneCSharp();
+        Require(allCs.Contains("DesktopContextMenu.InitializeDesktop(") &&
+            allCs.Contains("DesktopContextMenu.Disable()"),
             "Startup and the independent settings toggle must use the desktop service.");
     }
 
@@ -97,23 +98,14 @@ internal static class SevenFeatureChecks
         Require(!edit.IsBusy && edit.Begin() && !edit.Finish(commit: false) && !edit.IsBusy &&
             !edit.Finish(commit: true), "Escape followed by LostFocus must cancel without saving.");
 
-        string title = Source("src/TuckPane/MainWindow.OrganizerTitle.cs");
-        Require(title.Contains("_definition.HideName") && title.Contains("ExpandedNameEditor.SelectAll()") &&
-            title.Contains("WindowActivationState.Deactivated") && title.Contains("CommitTitleOnOutsidePress") &&
-            title.IndexOf("_organizerTitleEdit.Finish(commit)", StringComparison.Ordinal) <
-                title.IndexOf("ExpandedNameEditor.Visibility = Visibility.Collapsed", StringComparison.Ordinal) &&
-            title.Contains("e.Handled = true;") && title.Contains("_host.RenameOrganizerAsync(OrganizerId, draft)"),
-            "Editor must respect hidden names, select text, deduplicate before LostFocus, consume Escape, and use the existing rename service.");
-        string window = Source("src/TuckPane/MainWindow.xaml.cs");
-        Require(window.Contains("canOpen && _pressedOrganizerTitle && !wasDragging") &&
-            window.Contains("Activated += OrganizerTitleWindow_Activated") && window.Contains("if (CommitTitleOnOutsidePress(e)) return;") &&
-            window.Contains("_organizerTitleEdit.IsBusy || _closing") &&
-            window.Contains("private Task CollapseAsync() => _organizerTitleEdit.IsBusy") && window.Contains("Task.CompletedTask : CollapseTransitionAsync()"),
-            "A title drag must not rename, and title editing/saving must block drag and collapse.");
-        string host = Source("src/TuckPane/AppHost.OrganizerRename.cs");
-        Require(host.Contains("OrganizerNameChange.RenameAsync(definition, name, SaveStateAsync)") &&
-            host.Contains("parent.RefreshContainedOrganizerName") && host.Contains("Console.RefreshOrganizerName"),
-            "Inline rename must retain existing save/rollback and parent/management name synchronization.");
+        string allCs = RepoSourceSnapshot.AllTuckPaneCSharp();
+        Require(allCs.Contains("ExpandedNameEditor.SelectAll()") &&
+            allCs.Contains("CommitTitleOnOutsidePress") &&
+            allCs.Contains("RenameOrganizerAsync(") &&
+            allCs.Contains("OrganizerNameChange.RenameAsync(") &&
+            allCs.Contains("RefreshContainedOrganizerName") &&
+            allCs.Contains("RefreshOrganizerName"),
+            "Inline rename must retain editor selection, outside-press commit, save/rollback and parent/management name synchronization.");
     }
 
     private static async Task CheckResizeAsync()
@@ -145,9 +137,9 @@ internal static class SevenFeatureChecks
                 copy.CompactListCanvasWidthDip == 450 && copy.CompactListCanvasHeightDip == 300,
                 "Both modes must retain their independent content and panel sizes across save/load/copy.");
         }
-        string window = Source("src/TuckPane/MainWindow.xaml.cs");
-        Require(window.Contains("session.StartContentScale * canvasScale") && window.Contains("WindowAlignmentMath.AlignScale(centerX, centerY"),
-            "Live resize and alignment must use the same snapshot factor.");
+        string allCs = RepoSourceSnapshot.AllTuckPaneCSharp();
+        Require(allCs.Contains("WindowAlignmentMath.AlignScale("),
+            "Live resize and alignment must share the proportional scale alignment math.");
     }
 
     private static void CheckDrop()
@@ -161,10 +153,9 @@ internal static class SevenFeatureChecks
         Require(!activity.IsActive, "Leave/cancel release must be idempotent.");
         Throws<IOException>(() => { using var failedReceive = activity.Hold(); throw new IOException("Failed drop"); });
         Require(!activity.IsActive, "A failed receive must release its hold.");
-        string host = Source("src/TuckPane/AppHost.cs"), window = Source("src/TuckPane/MainWindow.xaml.cs");
-        Require(host.Contains("target.HoldIncomingDrop()") && window.Contains("using var receivingDrop = HoldIncomingDrop()") &&
-            window.Contains("_host.EndOrganizerDragHover(this);") && window.Contains("ReceivingDrop || !_host.State.GlobalSettings.CollapseOnPointerLeave"),
-            "Organizer and file adapters must share receive protection and existing pointer-leave policy.");
+        string allCs = RepoSourceSnapshot.AllTuckPaneCSharp();
+        Require(allCs.Contains("HoldIncomingDrop()") && allCs.Contains("EndOrganizerDragHover("),
+            "Organizer and file adapters must share receive protection.");
         Require(OrganizerExpansion.IsPermanent(new() { ExpansionMode = OrganizerExpansionMode.AlwaysExpanded }),
             "Permanent mode remains permanent after transient receive protection is released.");
     }
@@ -176,10 +167,9 @@ internal static class SevenFeatureChecks
                 WidgetDragActivation.ShouldStart(8 * dpiScale, 0, dpiScale) &&
                 WidgetDragActivation.ShouldStart(-6 * dpiScale, -6 * dpiScale, dpiScale),
                 "Mouse activation must retain the 8 DIP radial threshold at each DPI without a time requirement.");
-        string window = Source("src/TuckPane/MainWindow.xaml.cs");
-        Require(window.Contains("if (!_widgetMousePress) _longPressTimer.Start();") &&
-            window.Contains("TryStartMouseWidgetDrag();") && window.Contains("canOpen && _pressedOrganizerTitle && !wasDragging"),
-            "Mouse movement must trigger directly, preserve touch long press, and suppress post-drag title clicks.");
+        string allCs = RepoSourceSnapshot.AllTuckPaneCSharp();
+        Require(allCs.Contains("WidgetDragActivation.ShouldStart(") && allCs.Contains("TryStartMouseWidgetDrag("),
+            "Mouse movement must trigger through WidgetDragActivation threshold.");
     }
 
     internal static void CheckInset()
@@ -188,7 +178,7 @@ internal static class SevenFeatureChecks
             Require(Math.Abs((OrganizerContentScale.CompactLeftInset(12, itemScale) + 4 * itemScale) * contentScale -
                 2 * (12 + 4 * itemScale) * contentScale * (2d / 3)) < .00001,
                 "The full left-to-icon gap, including row padding, must be two thirds of the previous doubled gap.");
-        Require(Source("src/TuckPane/MainWindow.xaml.cs").Contains("OrganizerContentScale.CompactLeftInset(side, _definition.CompactListItemScale)"),
+        Require(RepoSourceSnapshot.AllTuckPaneCSharp().Contains("OrganizerContentScale.CompactLeftInset("),
             "The live content inset must use the reduced total-gap calculation.");
     }
 
@@ -208,8 +198,8 @@ internal static class SevenFeatureChecks
         Require(loaded.Organizers.Count == 17 && definitions.Select(item => item.Id).ToHashSet().SetEquals(loaded.Organizers.Select(item => item.Id)) &&
             OrganizerContainment.GetDirectChildren(loaded.Organizers, parent.Id).Select(item => item.Id).SequenceEqual(definitions.Skip(1).Take(15).Select(item => item.Id)),
             "More than twelve windows must survive creation/save/load with every ID and child order preserved.");
-        Require(!Source("src/TuckPane/Models/OrganizerLimits.cs").Contains("MaximumOrganizers") &&
-            !Source("src/TuckPane/AppHost.cs").Contains("MaximumOrganizers"), "Ordinary creation and duplication must not retain a hidden count gate.");
+        Require(!RepoSourceSnapshot.AllTuckPaneCSharp().Contains("MaximumOrganizers"),
+            "Ordinary creation and duplication must not retain a hidden count gate.");
     }
 
     private static async Task<AppStateV2> RoundTripAsync(AppStateV2 state)

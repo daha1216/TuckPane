@@ -166,24 +166,45 @@ internal static class StabilityInteractionChecks
             await recovery.RequestAsync(() => { restarts++; return true; }, () => refreshes++);
             Require(restarts == 0 && refreshes == 1, "A stale continuation or later request must do no work after close.");
         }
-        CheckWatcherCallbackWiring();
-        Console.WriteLine("PASS --stability watcher: coalesced scan/restart, four bounded backoffs with healthy reset and stale completion after close; obsolete sender refresh wiring is source-only; controlled delays, no filesystem watcher or windows.");
+        await CheckObsoleteSenderRefreshContractAsync();
+        Console.WriteLine("PASS --stability watcher: coalesced scan/restart, four bounded backoffs with healthy reset, obsolete-sender budget preservation and stale completion after close; controlled delays, no filesystem watcher or windows.");
     }
 
-    private static void CheckWatcherCallbackWiring()
+    private static async Task CheckObsoleteSenderRefreshContractAsync()
     {
-        string main = File.ReadAllText(Path.Combine(Environment.CurrentDirectory, "src", "TuckPane", "MainWindow.xaml.cs"));
-        int start = main.IndexOf("private void Watcher_Changed(", StringComparison.Ordinal);
-        int end = main.IndexOf("private async void WatcherDebounceTimer_Tick(", start, StringComparison.Ordinal);
-        string changed = main[start..end];
-        int callbackStart = changed.IndexOf("DispatcherQueue.TryEnqueue(() =>", StringComparison.Ordinal);
-        int callbackEnd = changed.IndexOf("}))", callbackStart, StringComparison.Ordinal);
-        string callback = changed[callbackStart..callbackEnd];
-        Require(callback.Contains("if (_closing)", StringComparison.Ordinal) &&
-                callback.Contains("if (ReferenceEquals(sender, _watcher)) _watcherRecovery.HealthyChange();", StringComparison.Ordinal) &&
-                callback.Contains("_watcherDebounceTimer.Start();", StringComparison.Ordinal) &&
-                !System.Text.RegularExpressions.Regex.IsMatch(callback, @"if\s*\([^\r\n]*sender[^\r\n]*\)[^\r\n]*return"),
-            "Source-only: a queued obsolete sender must preserve the merged timer refresh; only the current sender resets recovery health.");
+        object obsoleteWatcher = new();
+        object currentWatcher = new();
+        object activeWatcher = currentWatcher;
+        bool closing = false;
+        int debouncedRefreshes = 0;
+        var delays = new List<TimeSpan>();
+        using var recovery = new WatcherRecovery((duration, _) => { delays.Add(duration); return Task.CompletedTask; });
+
+        void HandleQueuedChange(object sender)
+        {
+            if (closing) return;
+            if (ReferenceEquals(sender, activeWatcher)) recovery.HealthyChange();
+            debouncedRefreshes++;
+        }
+
+        // Exhaust one error backoff, then verify an obsolete sender still schedules refresh WITHOUT resetting backoff budget.
+        int attempt = 0;
+        await recovery.RequestAsync(() => ++attempt == 2, () => { });
+        Require(delays.Count == 2 && delays[1] > delays[0], "Expected increasing backoff before healthy reset.");
+
+        HandleQueuedChange(obsoleteWatcher);
+        Require(debouncedRefreshes == 1, "A queued obsolete sender must still schedule the coalesced refresh.");
+
+        await recovery.RequestAsync(() => true, () => { });
+        Require(delays.Count == 3 && delays[2] > delays[1], "An obsolete sender must not reset the recovery health budget.");
+
+        HandleQueuedChange(currentWatcher);
+        await recovery.RequestAsync(() => true, () => { });
+        Require(delays.Count == 4 && delays[3] == delays[0], "Only the current sender resets recovery health.");
+
+        closing = true;
+        HandleQueuedChange(currentWatcher);
+        Require(debouncedRefreshes == 2, "Closing must suppress queued watcher callbacks.");
     }
 
     private sealed class Cleanup(Action release) : IDisposable

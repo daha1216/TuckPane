@@ -108,16 +108,40 @@ begin
   Result := '"' + ExpandConstant('{app}\TuckPane.exe') + '" --create-organizer-in "%1"';
 end;
 
+function FolderMenuOwnedByThisInstall: Boolean;
+var
+  Command, Owner, Executable: String;
+begin
+  Result := False;
+  Executable := ExpandConstant('{app}\TuckPane.exe');
+  Owner := '';
+  RegQueryStringValue(HKCU, FolderMenuKey, 'OwnerExecutable', Owner);
+  if (Owner <> '') and (CompareText(Owner, Executable) <> 0) then Exit;
+  Command := '';
+  RegQueryStringValue(HKCU, FolderMenuKey + '\command', '', Command);
+  if Command <> '' then
+    Result := CompareText(Command, FolderMenuCommand) = 0
+  else
+    { Only our marker authorizes repair/removal of an incomplete registration. }
+    Result := CompareText(Owner, Executable) = 0;
+end;
+
 procedure RegisterFolderMenu;
 var
   Enabled: Cardinal;
-  Executable: String;
+  Executable, Owner: String;
   Success: Boolean;
 begin
   { Missing preference means first installation; an explicit off survives upgrades. }
   if RegQueryDWordValue(HKCU, FolderMenuPreferenceKey, 'Enabled', Enabled) then
     if Enabled = 0 then Exit;
   Executable := ExpandConstant('{app}\TuckPane.exe');
+  Owner := '';
+  RegQueryStringValue(HKCU, FolderMenuPreferenceKey, 'OwnerExecutable', Owner);
+  if (Owner <> '') and (CompareText(Owner, Executable) <> 0) then Exit;
+  { Automatic installation must never take over a portable or other installed copy. }
+  if RegKeyExists(HKCU, FolderMenuKey) then
+    if not FolderMenuOwnedByThisInstall then Exit;
   Success := RegWriteStringValue(HKCU, FolderMenuKey, '', '使用 TuckPane 创建收纳窗');
   Success := RegWriteStringValue(HKCU, FolderMenuKey, 'Icon', '"' + Executable + '",0') and Success;
   Success := RegWriteStringValue(HKCU, FolderMenuKey, 'MultiSelectModel', 'Single') and Success;

@@ -8,6 +8,12 @@ internal static class DockModeChecks
 {
     internal static async Task RunAsync(string area)
     {
+        if (area == "all")
+        {
+            foreach (string subArea in new[] { "state", "layout", "hover", "theme", "commands", "refinements" })
+                await RunAsync(subArea);
+            return;
+        }
         string root = Path.Combine(Path.GetTempPath(), "TuckPane-dock-" + Guid.NewGuid().ToString("N"));
         string? previousRoot = Environment.GetEnvironmentVariable("TUCKPANE_TEST_ROOT");
         Environment.SetEnvironmentVariable("TUCKPANE_TEST_ROOT", root);
@@ -180,8 +186,8 @@ internal static class DockModeChecks
     {
         DockGeometry horizontal = DockLayoutMath.Calculate(4, 64, DockOrientation.Horizontal);
         DockGeometry vertical = DockLayoutMath.Calculate(4, 64, DockOrientation.Vertical);
-        Require(horizontal.Width == vertical.Height && horizontal.Height == vertical.Width,
-            "Changing Dock orientation changed its item sizes or length instead of exchanging axes.");
+        Near(horizontal.Height, vertical.Width, "Cross-axis Dock thickness must stay 1.5x icon size in both orientations");
+        Near(horizontal.Pitch, vertical.Pitch, "Changing Dock orientation must preserve item pitch");
         foreach (DockGeometry geometry in new[] { horizontal, vertical })
         {
             bool row = geometry.Orientation == DockOrientation.Horizontal;
@@ -196,8 +202,10 @@ internal static class DockModeChecks
             Require(geometry.InsertionIndex(first - axisStep) == 0 && geometry.InsertionIndex(first + axisStep) == 1,
                 "Dropping across an icon centre must switch from inserting before to inserting after it.");
             Near(row ? first.Y : first.X, row ? last.Y : last.X, "All Dock items must share one cross-axis centre");
-            Near((first.X + last.X) / 2, geometry.Width / 2, "Item distribution must centre horizontally");
-            Near((first.Y + last.Y) / 2, geometry.Height / 2, "Item distribution must centre vertically");
+            Near((first.X + last.X) / 2, row ? geometry.Width / 2 : geometry.LeftInset + geometry.IconSize / 2,
+                "Item distribution must align horizontally with the orientation's icon lane");
+            Near((first.Y + last.Y) / 2, row ? geometry.TopInset + geometry.IconSize / 2 : geometry.Height / 2,
+                "Item distribution must align vertically with the orientation's icon lane");
             Require(geometry.Contains((first + geometry.ItemCenter(1)) / 2) &&
                     !geometry.Contains(Vector2.Zero),
                 "The transparent content gap must be interactive while the outside rounded corner remains excluded.");

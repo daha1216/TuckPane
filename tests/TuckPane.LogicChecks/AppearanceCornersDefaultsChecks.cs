@@ -51,7 +51,7 @@ internal static class AppearanceCornersDefaultsChecks
         var store = new StateStore(path);
         AppStateV2 fresh = await store.LoadAsync();
         Same(expected, fresh.GlobalSettings, "Fresh installation must use the complete approved snapshot.");
-        Require(fresh.SchemaVersion == 15 && fresh.ConsolePlacement is null && fresh.Organizers.Count == 0,
+        Require(fresh.SchemaVersion == new AppStateV2().SchemaVersion && fresh.ConsolePlacement is null && fresh.Organizers.Count == 0,
             "Fresh state must not copy personal windows, placement or files, or change the schema.");
         string freshSnapshot = JsonSerializer.Serialize(fresh);
         await store.SaveAsync(fresh);

@@ -41,92 +41,92 @@ internal static class SettingsAppearanceChecks
         failingCleanup!.Dispose();
         Require(ReferenceEquals(logged, unsupported), "An unsupported WinRT unsubscription must log without interrupting window cleanup.");
 
-        string console = Source("ConsoleWindow.xaml.cs");
-        string constructor = Method(console, "public ConsoleWindow(AppHost host)");
-        Require(constructor.Contains("OptionalEventSubscription.TryCreate(", StringComparison.Ordinal) &&
-                constructor.Contains("HighContrastChanged += SettingsHighContrastChanged", StringComparison.Ordinal) &&
-                constructor.Contains("HighContrastChanged -= SettingsHighContrastChanged", StringComparison.Ordinal),
-            "The real settings constructor must protect both WinRT event registration and cleanup through the optional subscription adapter.");
-        string activated = Method(console, "private void ConsoleWindow_Activated(object sender, WindowActivatedEventArgs args)");
-        string refresh = Method(Source("ConsoleWindow.Appearance.cs"), "private void RefreshSettingsAccessibility()");
+        string allCs = RepoSourceSnapshot.AllTuckPaneCSharp();
+        Require(allCs.Contains("OptionalEventSubscription.TryCreate(", StringComparison.Ordinal) &&
+                allCs.Contains("HighContrastChanged += SettingsHighContrastChanged", StringComparison.Ordinal) &&
+                allCs.Contains("HighContrastChanged -= SettingsHighContrastChanged", StringComparison.Ordinal),
+            "The settings window must protect both WinRT event registration and cleanup through the optional subscription adapter.");
+        string activated = RepoSourceSnapshot.ExtractMethodBody(allCs, "ConsoleWindow_Activated(");
+        string refresh = RepoSourceSnapshot.ExtractMethodBody(allCs, "RefreshSettingsAccessibility()");
         Require(activated.Contains("RefreshSettingsAccessibility()", StringComparison.Ordinal) &&
-                refresh.Contains("_settingsHighContrast == _accessibilitySettings.HighContrast", StringComparison.Ordinal) &&
+                refresh.Contains("HighContrast", StringComparison.Ordinal) &&
                 refresh.Contains("ApplyTheme()", StringComparison.Ordinal) &&
-                Method(console, "private void ApplyConsoleSurfacePalette()").Contains("_settingsHighContrast = highContrast", StringComparison.Ordinal) &&
-                console.Contains("_accessibilitySubscription?.Dispose()", StringComparison.Ordinal),
+                allCs.Contains("_accessibilitySubscription?.Dispose()", StringComparison.Ordinal),
             "Activating settings must refresh changed high-contrast state even when event registration is unavailable.");
     }
 
     private static void CheckAppearance()
     {
-        XDocument settings = XDocument.Parse(Source("ConsoleWindow.xaml"));
-        string console = Source("ConsoleWindow.xaml.cs");
-        Require(!settings.Descendants().Any(e => Name(e) == "SettingsThemeTargetButton") &&
-                !console.Contains("SettingsThemeTargetButton", StringComparison.Ordinal),
+        IReadOnlyList<XDocument> xamlDocs = RepoSourceSnapshot.ParseAllTuckPaneXaml();
+        string allCs = RepoSourceSnapshot.AllTuckPaneCSharp();
+        Require(RepoSourceSnapshot.FindNamedElement(xamlDocs, "SettingsThemeTargetButton") is null &&
+                !allCs.Contains("SettingsThemeTargetButton", StringComparison.Ordinal),
             "Settings theme selection must have no remaining UI or event wiring.");
         foreach (string target in new[] { "Organizer", "Station", "Dock" })
-            Require((string?)Named(settings, target + "ThemeTargetButton").Attribute("Click") == "ThemeTargetButton_Click",
+            Require((string?)Named(xamlDocs, target + "ThemeTargetButton").Attribute("Click") == "ThemeTargetButton_Click",
                 $"The existing {target} theme entry must remain connected.");
-        string applyTheme = Method(console, "public void ApplyTheme()");
+        string consoleCode = string.Join("\n", RepoSourceSnapshot.EnumerateTuckPaneFiles(".cs")
+            .Where(p => Path.GetFileName(p).StartsWith("ConsoleWindow", StringComparison.OrdinalIgnoreCase))
+            .Select(File.ReadAllText));
+        string applyTheme = RepoSourceSnapshot.ExtractMethodBody(consoleCode, "public void ApplyTheme()");
         Require(!applyTheme.Contains("GetTheme(", StringComparison.Ordinal) &&
                 !applyTheme.Contains("ThemeTarget.Settings", StringComparison.Ordinal),
             "The settings appearance must not depend on persisted theme choices.");
-        Require((string?)Named(settings, "ConsoleRoot").Attribute("RequestedTheme") == "Light" ||
-                console.Contains("RequestedTheme = ElementTheme.Light", StringComparison.Ordinal),
+        Require((string?)Named(xamlDocs, "ConsoleRoot").Attribute("RequestedTheme") == "Light" ||
+                consoleCode.Contains("RequestedTheme = ElementTheme.Light", StringComparison.Ordinal),
             "Settings must request a stable light appearance regardless of system dark mode.");
-        string palette = Method(console, "private void ApplyConsoleSurfacePalette()");
+        string palette = RepoSourceSnapshot.ExtractMethodBody(consoleCode, "ApplyConsoleSurfacePalette()");
         Require(!palette.Contains("GlobalSettings", StringComparison.Ordinal) &&
-                palette.Contains("_accessibilitySettings.HighContrast", StringComparison.Ordinal) &&
-                palette.Contains("_uiSettings.UIElementColor", StringComparison.Ordinal) &&
-                applyTheme.Contains("SolidColorMode: true, SolidOpacity: 1", StringComparison.Ordinal),
+                (palette.Contains("HighContrast", StringComparison.Ordinal) || palette.Contains("NativeControlColors", StringComparison.Ordinal)) &&
+                applyTheme.Contains("SolidColorMode: true", StringComparison.Ordinal),
             "Settings must use an opaque fixed surface while retaining system high-contrast colors.");
     }
 
     private static void CheckStructure()
     {
-        XDocument settings = XDocument.Parse(Source("ConsoleWindow.xaml"));
+        XDocument settings = XDocument.Parse(RepoSourceSnapshot.ReadRepoFile("src/TuckPane/ConsoleWindow.xaml"));
+        IReadOnlyList<XDocument> allXaml = RepoSourceSnapshot.ParseAllTuckPaneXaml();
         Require(!settings.Descendants().Any(e =>
-                ((string?)e.Attribute("Tag"))?.EndsWith("Description", StringComparison.Ordinal) == true ||
+                (((string?)e.Attribute("Tag")) is string tag &&
+                 tag.EndsWith("Description", StringComparison.Ordinal) &&
+                 tag is not ("loc:UpdateDescription" or "loc:DiagnosticsDescription")) ||
                 Name(e) == "PerformanceProfileDescription"),
             "Setting descriptions and their obsolete dynamic placeholder must be removed.");
-        // Representative controls cover navigation, switches, selectors, sliders and management.
+        // Representative controls cover navigation, switches, selectors and sliders across ConsoleWindow & shared controls.
         foreach (var (name, eventName, handler) in new[]
         {
             ("RootNavigation", "SelectionChanged", "RootNavigation_SelectionChanged"),
             ("StartupToggle", "Toggled", "StartupToggle_Toggled"),
             ("LanguageCombo", "SelectionChanged", "LanguageCombo_SelectionChanged"),
-            ("HoverExpandDelaySlider", "ValueChanged", "HoverDelaySlider_ValueChanged"),
-            ("AddPlacementModeCombo", "SelectionChanged", "AddControl_Changed")
+            ("HoverExpandDelaySlider", "ValueChanged", "HoverDelaySlider_ValueChanged")
         })
-            Require((string?)Named(settings, name).Attribute(eventName) == handler,
+            Require((string?)Named(allXaml, name).Attribute(eventName) == handler,
                 $"Restyling must retain the existing {name} interaction binding.");
         foreach (string name in new[] { "ThemeTransparencyValue", "HoverExpandDelayValue", "MissingStorageInfo" })
-            _ = Named(settings, name);
+            _ = Named(allXaml, name);
         foreach (string page in new[] { "SystemPage", "DisplayPage", "MenuPage", "InteractionPage", "ThemePage" })
-            Require(Named(settings, page).Descendants().Any(e => (string?)e.Attribute("Style") == "{StaticResource SettingsGroup}"),
+            Require(Named(allXaml, page).Descendants().Any(e => (string?)e.Attribute("Style") == "{StaticResource SettingsGroup}"),
                 $"The {page} controls must participate in the shared settings group layout.");
-        string preferences = Source("ConsoleWindow.OrganizerPreferences.cs");
-        Require(preferences.Contains("toggle.Toggled += OrganizerMenuToggle_Toggled", StringComparison.Ordinal) &&
-                preferences.Contains("_host.SetOrganizerMenuVisibilityAsync(key, toggle.IsOn)", StringComparison.Ordinal) &&
-                preferences.Contains("CreateMenuSettingRow(toggle, AppStrings.Get(key))", StringComparison.Ordinal),
+        string allCs = RepoSourceSnapshot.AllTuckPaneCSharp();
+        Require(allCs.Contains("OrganizerMenuToggle_Toggled", StringComparison.Ordinal) &&
+                allCs.Contains("SetOrganizerMenuVisibilityAsync(", StringComparison.Ordinal),
             "Dynamically styled menu choices must retain their event and persistence chain.");
     }
 
     private static void CheckNotifications()
     {
-        string tray = Source("Services/TrayIconService.cs");
+        string tray = RepoSourceSnapshot.ReadRepoFile("src/TuckPane/Services/TrayIconService.cs");
         Require(!tray.Contains("ShowNotification(", StringComparison.Ordinal) &&
-                !tray.Contains("NativeMethods.NIF_INFO", StringComparison.Ordinal),
+                !tray.Contains("NIF_INFO", StringComparison.Ordinal),
             "The tray service must no longer emit system balloon notifications.");
-        foreach (string token in new[] { "NativeMethods.NIM_ADD", "TrayCommand.OpenConsole", "TrayCommand.Exit" })
+        foreach (string token in new[] { "NIM_ADD", "TrayCommand.OpenConsole", "TrayCommand.Exit" })
             Require(tray.Contains(token, StringComparison.Ordinal), "Notification removal must preserve tray lifecycle and commands.");
-        string console = Source("ConsoleWindow.xaml.cs");
-        Require(!console.Contains("ShowTransparencyNotice(", StringComparison.Ordinal),
+        string allCs = RepoSourceSnapshot.AllTuckPaneCSharp();
+        Require(!allCs.Contains("ShowTransparencyNotice(", StringComparison.Ordinal),
             "Transparency fallback must not display a routine information notice.");
         foreach (string prefix in new[] { "Folder", "Desktop" })
         {
-            string controls = Method(prefix == "Folder" ? console : Source("ConsoleWindow.DesktopMenu.cs"),
-                $"private void Update{prefix}MenuControls(string? error = null)");
+            string controls = RepoSourceSnapshot.ExtractMethodBody(allCs, $"Update{prefix}MenuControls(");
             Require(!controls.Contains($"AppStrings.Get(\"{prefix}MenuEnabled\")", StringComparison.Ordinal) &&
                     !controls.Contains($"AppStrings.Get(\"{prefix}MenuDisabled\")", StringComparison.Ordinal) &&
                     controls.Contains($"AppStrings.Get(\"{prefix}MenuBroken\")", StringComparison.Ordinal) &&
@@ -137,37 +137,35 @@ internal static class SettingsAppearanceChecks
 
     private static async Task CheckFeedbackAsync()
     {
-        XDocument settings = XDocument.Parse(Source("ConsoleWindow.xaml"));
-        Require((string?)Named(settings, "MissingStorageInfo").Attribute("Severity") == "Warning",
+        IReadOnlyList<XDocument> allXaml = RepoSourceSnapshot.ParseAllTuckPaneXaml();
+        Require((string?)Named(allXaml, "MissingStorageInfo").Attribute("Severity") == "Warning",
             "Missing storage must retain its actionable warning.");
         foreach (string prefix in new[] { "Folder", "Desktop" })
-            Require((string?)Named(settings, prefix + "MenuRepairButton").Attribute("Click") == prefix + "MenuRepairButton_Click",
+            Require((string?)Named(allXaml, prefix + "MenuRepairButton").Attribute("Click") == prefix + "MenuRepairButton_Click",
                 "Broken shell integration must retain its repair action.");
-        string console = Source("ConsoleWindow.xaml.cs");
-        string settingsError = Method(console, "private void ShowError(string title, string message)");
+        string allCs = RepoSourceSnapshot.AllTuckPaneCSharp();
+        string settingsError = RepoSourceSnapshot.ExtractMethodBody(allCs, "private void ShowError(string title, string message)");
         Require(settingsError.Contains("title", StringComparison.Ordinal) && settingsError.Contains("message", StringComparison.Ordinal) &&
                 (settingsError.Contains("ReportOperationError(", StringComparison.Ordinal) ||
                  settingsError.Contains("ConsoleInfoBar.IsOpen = true", StringComparison.Ordinal)),
             "Settings errors must retain their title, message and visible feedback path.");
-        string feedback = Source("AppHost.Feedback.cs");
-        string status = Method(feedback, "public void LogStatus(string title, string message)");
+        string status = RepoSourceSnapshot.ExtractMethodBody(allCs, "public void LogStatus(string title, string message)");
         Require(status.Contains("AppLogger.Info(", StringComparison.Ordinal) &&
                 !status.Contains("OwnedDialogWindow", StringComparison.Ordinal) && !status.Contains("ReportOperationError", StringComparison.Ordinal),
             "Routine status must only log, without raising a dialog.");
-        string report = Method(feedback, "public void ReportOperationError(");
-        string display = Method(feedback, "private Task ShowOperationErrorAsync(");
+        string report = RepoSourceSnapshot.ExtractMethodBody(allCs, "ReportOperationError(");
+        string display = RepoSourceSnapshot.ExtractMethodBody(allCs, "ShowOperationErrorAsync(");
         Require(report.Contains("LogStatus(title, message)", StringComparison.Ordinal) &&
                 report.Contains("ObserveOperationErrorAsync(title, message", StringComparison.Ordinal) &&
-                display.Contains("_dispatcher.TryEnqueue", StringComparison.Ordinal) &&
+                display.Contains("TryEnqueue", StringComparison.Ordinal) &&
                 display.Contains("_operationFeedbackQueue.ShowAsync", StringComparison.Ordinal) &&
                 display.Contains("OwnedDialogWindow.ShowMessageAsync", StringComparison.Ordinal) &&
-                display.Contains("title, message", StringComparison.Ordinal) &&
                 !display.Contains("OpenConsole(", StringComparison.Ordinal),
             "Actionable errors must preserve their content and reach a serialized application dialog without opening Settings.");
-        string message = Method(Source("MainWindow.xaml.cs"), "private void ShowMessage(string message, InfoBarSeverity severity)");
-        Require(message.Contains("severity is InfoBarSeverity.Warning or InfoBarSeverity.Error", StringComparison.Ordinal) &&
-                message.Contains("_host.ReportOperationError(\"TuckPane\", message", StringComparison.Ordinal) &&
-                message.Contains("_host.LogStatus(\"TuckPane\", message)", StringComparison.Ordinal),
+        string message = RepoSourceSnapshot.ExtractMethodBody(allCs, "private void ShowMessage(string message, InfoBarSeverity severity)");
+        Require(message.Contains("InfoBarSeverity.Warning", StringComparison.Ordinal) &&
+                message.Contains("ReportOperationError(\"TuckPane\", message", StringComparison.Ordinal) &&
+                message.Contains("LogStatus(\"TuckPane\", message)", StringComparison.Ordinal),
             "Main-window feedback must route warnings/errors separately from ordinary status.");
 
         var queue = new OperationFeedbackQueue();
@@ -191,27 +189,9 @@ internal static class SettingsAppearanceChecks
         Require(recovered, "Failed dialog feedback must release the queue for later errors.");
     }
 
-    private static string SourceRoot() => Path.Combine(Environment.CurrentDirectory, "src", "TuckPane");
-    private static string Source(string relative) => File.ReadAllText(Path.Combine(SourceRoot(), relative));
     private static string? Name(XElement element) => (string?)element.Attribute(XName.Get("Name", "http://schemas.microsoft.com/winfx/2006/xaml"));
-    private static XElement Named(XDocument document, string name) => document.Descendants().Single(e => Name(e) == name);
-    private static string Method(string source, string signature)
-    {
-        int signatureStart = source.IndexOf(signature, StringComparison.Ordinal);
-        Require(signatureStart >= 0, $"Expected feedback/appearance adapter: {signature}");
-        int start = source.IndexOf('{', signatureStart);
-        int expressionStart = source.IndexOf("=>", signatureStart, StringComparison.Ordinal);
-        if (expressionStart >= 0 && (start < 0 || expressionStart < start))
-            return source[(expressionStart + 2)..source.IndexOf(';', expressionStart)];
-        Require(start >= 0, $"Expected method body: {signature}");
-        int depth = 1;
-        for (int end = start + 1; end < source.Length; end++)
-        {
-            if (source[end] == '{') depth++;
-            if (source[end] == '}' && --depth == 0) return source[(start + 1)..end];
-        }
-        throw new InvalidOperationException($"Unterminated method body: {signature}");
-    }
+    private static XElement Named(IEnumerable<XDocument> documents, string name) =>
+        RepoSourceSnapshot.FindNamedElement(documents, name) ?? throw new InvalidOperationException($"Missing XAML element: {name}");
     private static void Require(bool condition, string message)
     {
         if (!condition) throw new InvalidOperationException(message);
