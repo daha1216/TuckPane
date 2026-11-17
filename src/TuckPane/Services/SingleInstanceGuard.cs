@@ -1,9 +1,8 @@
 namespace TuckPane.Services;
 
-using System.Runtime.InteropServices;
-
 public sealed class SingleInstanceGuard : IDisposable
 {
+    private readonly object _sync = new();
     private readonly Mutex _mutex;
     private readonly Mutex? _legacyMutex;
     private readonly bool _ownsMutex;
@@ -11,6 +10,7 @@ public sealed class SingleInstanceGuard : IDisposable
     private readonly EventWaitHandle _activationEvent;
     private readonly EventWaitHandle _activationAcknowledged;
     private RegisteredWaitHandle? _wait;
+    private bool _disposed;
 
     public SingleInstanceGuard(string name, string? legacyName = null)
     {
@@ -36,15 +36,24 @@ public sealed class SingleInstanceGuard : IDisposable
 
     public void Listen(Action activated)
     {
-        if (!IsPrimary || _wait is not null) return;
-        _wait = ThreadPool.RegisterWaitForSingleObject(_activationEvent, (_, _) =>
+        lock (_sync)
         {
-            activated();
-            _activationAcknowledged.Set();
-        }, null, Timeout.Infinite, executeOnlyOnce: false);
+            if (_disposed || !IsPrimary || _wait is not null) return;
+            _wait = ThreadPool.RegisterWaitForSingleObject(_activationEvent, (_, _) =>
+            {
+                try { activated(); }
+                finally
+                {
+                    lock (_sync)
+                    {
+                        if (!_disposed) _activationAcknowledged.Set();
+                    }
+                }
+            }, null, Timeout.Infinite, executeOnlyOnce: false);
+        }
     }
 
-    public static void ShowLegacyInstanceMessage() => MessageBox(
+    public static void ShowLegacyInstanceMessage() => NativeMethods.MessageBox(
         IntPtr.Zero,
         AppStrings.Get("LegacyInstanceMessage"),
         "TuckPane",
@@ -52,7 +61,15 @@ public sealed class SingleInstanceGuard : IDisposable
 
     public void Dispose()
     {
-        _wait?.Unregister(null);
+        RegisteredWaitHandle? wait;
+        lock (_sync)
+        {
+            if (_disposed) return;
+            _disposed = true;
+            wait = _wait;
+            _wait = null;
+        }
+        wait?.Unregister(null);
         _activationAcknowledged.Dispose();
         _activationEvent.Dispose();
         if (_ownsLegacyMutex) _legacyMutex!.ReleaseMutex();
@@ -60,7 +77,4 @@ public sealed class SingleInstanceGuard : IDisposable
         if (_ownsMutex) _mutex.ReleaseMutex();
         _mutex.Dispose();
     }
-
-    [DllImport("user32.dll", CharSet = CharSet.Unicode, EntryPoint = "MessageBoxW")]
-    private static extern int MessageBox(IntPtr window, string text, string caption, uint type);
 }

@@ -1,5 +1,3 @@
-using System.Runtime.InteropServices;
-
 namespace TuckPane.Services;
 
 internal enum ShellMoveNotificationKind
@@ -24,12 +22,12 @@ internal static class ShellChangeNotificationService
         bool isDirectory = Directory.Exists(destinationPath);
         if (ClassifyMove(sourcePath, destinationPath) == ShellMoveNotificationKind.DeleteCreate)
         {
-            SHChangeNotify(
+            NativeMethods.SHChangeNotify(
                 isDirectory ? RemoveDirectory : DeleteItem,
                 PathUnicode | Flush,
                 sourcePath,
                 null);
-            SHChangeNotify(
+            NativeMethods.SHChangeNotify(
                 isDirectory ? MakeDirectory : CreateItem,
                 PathUnicode | Flush,
                 destinationPath,
@@ -37,7 +35,7 @@ internal static class ShellChangeNotificationService
             return;
         }
 
-        SHChangeNotify(
+        NativeMethods.SHChangeNotify(
             isDirectory ? RenameFolder : RenameItem,
             PathUnicode | Flush,
             sourcePath,
@@ -52,11 +50,4 @@ internal static class ShellChangeNotificationService
             ? ShellMoveNotificationKind.Rename
             : ShellMoveNotificationKind.DeleteCreate;
     }
-
-    [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
-    private static extern void SHChangeNotify(
-        uint eventId,
-        uint flags,
-        string item1,
-        string? item2);
 }

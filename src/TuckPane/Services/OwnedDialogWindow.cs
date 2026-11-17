@@ -96,7 +96,9 @@ internal sealed class OwnedDialogWindow : Window
             {
                 args.Cancel = true;
                 AppLogger.Error("Cannot close dialog backdrop safely.", ex);
+                return;
             }
+            RestoreOwner();
         };
         if (appWindow.Presenter is OverlappedPresenter presenter)
         {
@@ -295,6 +297,7 @@ internal sealed class OwnedDialogWindow : Window
     private void CloseDialog()
     {
         _backdrop.DetachAndClose();
+        RestoreOwner();
         Close();
     }
 
@@ -323,6 +326,7 @@ internal sealed class OwnedDialogWindow : Window
     {
         if (!_ownerDisabled) return;
         _ownerDisabled = false;
-        _ = NativeMethods.EnableWindow(_owner, true);
+        if (_owner != IntPtr.Zero && NativeMethods.IsWindow(_owner))
+            _ = NativeMethods.EnableWindow(_owner, true);
     }
 }

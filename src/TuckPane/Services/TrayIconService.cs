@@ -86,6 +86,7 @@ public sealed class TrayIconService : IDisposable
         // re-add the icon on every null message, so the check has to be guarded.
         if (_taskbarCreated != 0 && message == _taskbarCreated)
         {
+            DesktopLayerService.InvalidateCachedDesktopIconView();
             _ = NativeMethods.Shell_NotifyIcon(NativeMethods.NIM_ADD, ref _data);
             _ = NativeMethods.Shell_NotifyIcon(NativeMethods.NIM_SETVERSION, ref _data);
             try { AppLogger.Lifecycle("tray-restored", $"hwnd=0x{_window:X}"); }

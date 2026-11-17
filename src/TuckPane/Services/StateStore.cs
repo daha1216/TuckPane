@@ -39,8 +39,7 @@ public sealed class StateStore
             snapshotCaptured?.Invoke();
             Directory.CreateDirectory(Path.GetDirectoryName(_statePath)!);
             string temporary = _statePath + ".tmp";
-            string json = JsonSerializer.Serialize(Normalize(state), JsonOptions);
-            await File.WriteAllTextAsync(temporary, json);
+            await WriteStateTemporaryAsync(temporary, Normalize(state));
             if (File.Exists(_statePath)) File.Copy(_statePath, _backupPath, overwrite: true);
             await MoveIntoPlaceAsync(temporary, _statePath);
         }
@@ -60,13 +59,29 @@ public sealed class StateStore
             {
                 File.Copy(legacyPath, _backupPath, overwrite: true);
             }
-            await File.WriteAllTextAsync(temporary, JsonSerializer.Serialize(state, JsonOptions));
+            await WriteStateTemporaryAsync(temporary, state);
             await MoveIntoPlaceAsync(temporary, _statePath);
         }
         finally
         {
             _saveGate.Release();
         }
+    }
+
+    private static async Task WriteStateTemporaryAsync(string temporary, AppStateV2 state)
+    {
+        byte[] utf8 = JsonSerializer.SerializeToUtf8Bytes(state, JsonOptions);
+        await using var stream = new FileStream(temporary, new FileStreamOptions
+        {
+            Mode = FileMode.Create,
+            Access = FileAccess.Write,
+            Share = FileShare.None,
+            Options = FileOptions.Asynchronous | FileOptions.WriteThrough,
+            PreallocationSize = utf8.Length
+        });
+        await stream.WriteAsync(utf8);
+        await stream.FlushAsync();
+        stream.Flush(flushToDisk: true);
     }
 
     private static async Task MoveIntoPlaceAsync(string temporary, string destination)

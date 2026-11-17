@@ -1,5 +1,5 @@
-using System.Runtime.InteropServices;
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 using System.Runtime.InteropServices.ComTypes;
 using System.Text;
 using TuckPane.Models;
@@ -88,7 +88,7 @@ internal static class ShellDragService
 
     private static void SetClipboard(string path, uint preferredEffect)
     {
-        int oleResult = OleInitialize(IntPtr.Zero);
+        int oleResult = NativeMethods.OleInitialize(IntPtr.Zero);
         if (oleResult < 0) Marshal.ThrowExceptionForHR(oleResult);
         try
         {
@@ -97,8 +97,8 @@ internal static class ShellDragService
             try
             {
                 SetPreferredDropEffect((IDataObject)dataObject, preferredEffect);
-                Marshal.ThrowExceptionForHR(OleSetClipboard(data.Pointer));
-                Marshal.ThrowExceptionForHR(OleFlushClipboard());
+                Marshal.ThrowExceptionForHR(NativeMethods.OleSetClipboard(data.Pointer));
+                Marshal.ThrowExceptionForHR(NativeMethods.OleFlushClipboard());
             }
             finally
             {
@@ -107,7 +107,7 @@ internal static class ShellDragService
         }
         finally
         {
-            OleUninitialize();
+            NativeMethods.OleUninitialize();
         }
     }
 
@@ -115,13 +115,13 @@ internal static class ShellDragService
     {
         paths = [];
         move = false;
-        int oleResult = OleInitialize(IntPtr.Zero);
+        int oleResult = NativeMethods.OleInitialize(IntPtr.Zero);
         if (oleResult < 0) return false;
         IntPtr pointer = IntPtr.Zero;
         object? dataObject = null;
         try
         {
-            if (OleGetClipboard(out pointer) < 0 || pointer == IntPtr.Zero) return false;
+            if (NativeMethods.OleGetClipboard(out pointer) < 0 || pointer == IntPtr.Zero) return false;
             dataObject = Marshal.GetObjectForIUnknown(pointer);
             var clipboard = (IDataObject)dataObject;
             paths = ReadFileDropPaths(clipboard);
@@ -138,7 +138,7 @@ internal static class ShellDragService
         {
             if (dataObject is not null && Marshal.IsComObject(dataObject)) _ = Marshal.ReleaseComObject(dataObject);
             if (pointer != IntPtr.Zero) _ = Marshal.Release(pointer);
-            OleUninitialize();
+            NativeMethods.OleUninitialize();
         }
     }
 
@@ -193,15 +193,15 @@ internal static class ShellDragService
 
     private static void SetPreferredDropEffect(IDataObject dataObject, uint effect)
     {
-        FORMATETC format = CreateFormat(unchecked((short)RegisterClipboardFormat(PreferredDropEffectFormat)));
-        IntPtr memory = GlobalAlloc(GlobalMoveable | GlobalZeroInit, (UIntPtr)sizeof(uint));
+        FORMATETC format = CreateFormat(unchecked((short)NativeMethods.RegisterClipboardFormat(PreferredDropEffectFormat)));
+        IntPtr memory = NativeMethods.GlobalAlloc(GlobalMoveable | GlobalZeroInit, (UIntPtr)sizeof(uint));
         if (memory == IntPtr.Zero) throw new OutOfMemoryException();
         try
         {
-            IntPtr value = GlobalLock(memory);
+            IntPtr value = NativeMethods.GlobalLock(memory);
             if (value == IntPtr.Zero) throw new OutOfMemoryException();
             try { Marshal.WriteInt32(value, unchecked((int)effect)); }
-            finally { _ = GlobalUnlock(memory); }
+            finally { _ = NativeMethods.GlobalUnlock(memory); }
             var medium = new STGMEDIUM
             {
                 tymed = TYMED.TYMED_HGLOBAL,
@@ -213,7 +213,7 @@ internal static class ShellDragService
         }
         finally
         {
-            if (memory != IntPtr.Zero) _ = GlobalFree(memory);
+            if (memory != IntPtr.Zero) _ = NativeMethods.GlobalFree(memory);
         }
     }
 
@@ -224,38 +224,38 @@ internal static class ShellDragService
         dataObject.GetData(ref format, out STGMEDIUM medium);
         try
         {
-            uint count = DragQueryFile(medium.unionmember, uint.MaxValue, null, 0);
+            uint count = NativeMethods.DragQueryFile(medium.unionmember, uint.MaxValue, null, 0);
             var result = new List<string>(checked((int)count));
             for (uint index = 0; index < count; index++)
             {
-                uint length = DragQueryFile(medium.unionmember, index, null, 0);
+                uint length = NativeMethods.DragQueryFile(medium.unionmember, index, null, 0);
                 var buffer = new StringBuilder(checked((int)length + 1));
-                if (DragQueryFile(medium.unionmember, index, buffer, (uint)buffer.Capacity) > 0)
+                if (NativeMethods.DragQueryFile(medium.unionmember, index, buffer, (uint)buffer.Capacity) > 0)
                     result.Add(buffer.ToString());
             }
             return result.ToArray();
         }
         finally
         {
-            ReleaseStgMedium(ref medium);
+            NativeMethods.ReleaseStgMedium(ref medium);
         }
     }
 
     private static uint ReadPreferredDropEffect(IDataObject dataObject)
     {
-        FORMATETC format = CreateFormat(unchecked((short)RegisterClipboardFormat(PreferredDropEffectFormat)));
+        FORMATETC format = CreateFormat(unchecked((short)NativeMethods.RegisterClipboardFormat(PreferredDropEffectFormat)));
         if (dataObject.QueryGetData(ref format) != 0) return 0;
         dataObject.GetData(ref format, out STGMEDIUM medium);
         try
         {
-            IntPtr value = GlobalLock(medium.unionmember);
+            IntPtr value = NativeMethods.GlobalLock(medium.unionmember);
             if (value == IntPtr.Zero) return 0;
             try { return unchecked((uint)Marshal.ReadInt32(value)); }
-            finally { _ = GlobalUnlock(medium.unionmember); }
+            finally { _ = NativeMethods.GlobalUnlock(medium.unionmember); }
         }
         finally
         {
-            ReleaseStgMedium(ref medium);
+            NativeMethods.ReleaseStgMedium(ref medium);
         }
     }
 
@@ -333,13 +333,13 @@ internal static class ShellDragService
             desktopSnapshot,
             dragStarted,
             cancellationRequested);
-        int oleResult = OleInitialize(IntPtr.Zero);
+        int oleResult = NativeMethods.OleInitialize(IntPtr.Zero);
         if (oleResult < 0) Marshal.ThrowExceptionForHR(oleResult);
         IntPtr dropSourcePointer = IntPtr.Zero;
         try
         {
             dropSourcePointer = AcquireDropSourcePointer(dropSource);
-            int result = DoDragDrop(
+            int result = NativeMethods.DoDragDrop(
                 session.Data.Pointer,
                 dropSourcePointer,
                 DropEffectCopy | DropEffectMove | (allowLink ? DropEffectLink : 0),
@@ -363,7 +363,7 @@ internal static class ShellDragService
         finally
         {
             if (dropSourcePointer != IntPtr.Zero) _ = Marshal.Release(dropSourcePointer);
-            OleUninitialize();
+            NativeMethods.OleUninitialize();
             GC.KeepAlive(dropSource);
         }
     }
@@ -411,7 +411,7 @@ internal static class ShellDragService
     internal static ShellDataObject CreateDataObject(string path)
     {
         if (!File.Exists(path) && !Directory.Exists(path)) throw new FileNotFoundException(AppStrings.Get("ShellDragMissing"), path);
-        int result = SHCreateItemFromParsingName(path, IntPtr.Zero, ShellItemInterface, out IShellItem item);
+        int result = NativeMethods.SHCreateItemFromParsingName(path, IntPtr.Zero, ShellItemInterface, out NativeMethods.IShellItem item);
         Marshal.ThrowExceptionForHR(result);
         try
         {
@@ -604,9 +604,9 @@ internal static class ShellDragService
 
     internal sealed class ShellDataObject : IDisposable
     {
-        private IShellItem? _item;
+        private NativeMethods.IShellItem? _item;
 
-        internal ShellDataObject(IShellItem item, IntPtr pointer)
+        internal ShellDataObject(NativeMethods.IShellItem item, IntPtr pointer)
         {
             _item = item;
             Pointer = pointer;
@@ -667,67 +667,4 @@ internal static class ShellDragService
             }
         }
     }
-
-    [ComImport]
-    [Guid("43826D1E-E718-42EE-BC55-A1E261C37BFE")]
-    [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-    internal interface IShellItem
-    {
-        [PreserveSig] int BindToHandler(IntPtr bindContext, ref Guid handlerId, ref Guid interfaceId, out IntPtr result);
-        [PreserveSig] int GetParent(out IShellItem parent);
-        [PreserveSig] int GetDisplayName(uint displayNameType, out IntPtr name);
-        [PreserveSig] int GetAttributes(uint mask, out uint attributes);
-        [PreserveSig] int Compare(IShellItem other, uint hint, out int order);
-    }
-
-    [DllImport("shell32.dll", CharSet = CharSet.Unicode, PreserveSig = true)]
-    private static extern int SHCreateItemFromParsingName(
-        string path,
-        IntPtr bindContext,
-        in Guid interfaceId,
-        [MarshalAs(UnmanagedType.Interface)] out IShellItem item);
-
-    [DllImport("ole32.dll", PreserveSig = true)]
-    private static extern int DoDragDrop(
-        IntPtr dataObject,
-        IntPtr dropSource,
-        uint allowedEffects,
-        out uint performedEffect);
-
-    [DllImport("ole32.dll", PreserveSig = true)]
-    private static extern int OleInitialize(IntPtr reserved);
-
-    [DllImport("ole32.dll")]
-    private static extern void OleUninitialize();
-
-    [DllImport("ole32.dll", PreserveSig = true)]
-    private static extern int OleSetClipboard(IntPtr dataObject);
-
-    [DllImport("ole32.dll", PreserveSig = true)]
-    private static extern int OleGetClipboard(out IntPtr dataObject);
-
-    [DllImport("ole32.dll", PreserveSig = true)]
-    private static extern int OleFlushClipboard();
-
-    [DllImport("ole32.dll")]
-    private static extern void ReleaseStgMedium(ref STGMEDIUM medium);
-
-    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
-    private static extern uint RegisterClipboardFormat(string format);
-
-    [DllImport("kernel32.dll", SetLastError = true)]
-    private static extern IntPtr GlobalAlloc(uint flags, UIntPtr bytes);
-
-    [DllImport("kernel32.dll", SetLastError = true)]
-    private static extern IntPtr GlobalLock(IntPtr memory);
-
-    [DllImport("kernel32.dll", SetLastError = true)]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool GlobalUnlock(IntPtr memory);
-
-    [DllImport("kernel32.dll")]
-    private static extern IntPtr GlobalFree(IntPtr memory);
-
-    [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
-    private static extern uint DragQueryFile(IntPtr drop, uint fileIndex, StringBuilder? file, uint characterCount);
 }

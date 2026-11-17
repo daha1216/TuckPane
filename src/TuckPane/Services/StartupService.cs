@@ -12,15 +12,23 @@ public static class StartupService
     {
         if (AppPaths.IsTestMode) return;
 
-        using RegistryKey key = Registry.CurrentUser.CreateSubKey(RunKeyPath, writable: true);
-        key.DeleteValue(LegacyValueName, throwOnMissingValue: false);
-        if (!enabled)
+        try
         {
-            key.DeleteValue(ValueName, throwOnMissingValue: false);
-            return;
-        }
+            using RegistryKey? key = Registry.CurrentUser.CreateSubKey(RunKeyPath, writable: true);
+            if (key is null) return;
+            key.DeleteValue(LegacyValueName, throwOnMissingValue: false);
+            if (!enabled)
+            {
+                key.DeleteValue(ValueName, throwOnMissingValue: false);
+                return;
+            }
 
-        string executable = Environment.ProcessPath ?? throw new InvalidOperationException(AppStrings.Get("StartupPathUnavailable"));
-        key.SetValue(ValueName, $"\"{executable}\" --startup", RegistryValueKind.String);
+            string executable = Environment.ProcessPath ?? throw new InvalidOperationException(AppStrings.Get("StartupPathUnavailable"));
+            key.SetValue(ValueName, $"\"{executable}\" --startup", RegistryValueKind.String);
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Error("无法更新开机自启注册表项。", ex);
+        }
     }
 }

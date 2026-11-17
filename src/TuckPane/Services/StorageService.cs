@@ -86,7 +86,13 @@ public sealed class StorageService
 
     internal TransferOutcome AddFileShortcut(string sourcePath) => AddItemShortcut(sourcePath);
 
-    internal TransferOutcome AddItemShortcut(string sourcePath)
+    internal TransferOutcome AddItemShortcut(string sourcePath) =>
+        CreateShortcutCore(sourcePath, errorPrefix: "添加项目快捷方式失败");
+
+    private TransferOutcome CreateExecutableShortcut(string sourcePath) =>
+        CreateShortcutCore(sourcePath, errorPrefix: "创建程序快捷方式失败");
+
+    private TransferOutcome CreateShortcutCore(string sourcePath, string errorPrefix)
     {
         string? staging = null;
         try
@@ -113,7 +119,10 @@ public sealed class StorageService
                     Marshal.ThrowExceptionForHR(link.SetWorkingDirectory(directory ? source : Path.GetDirectoryName(source)!));
                     ((IPersistFile)instance).Save(staging, true);
                 }
-                finally { Marshal.FinalReleaseComObject(instance); }
+                finally
+                {
+                    if (Marshal.IsComObject(instance)) _ = Marshal.FinalReleaseComObject(instance);
+                }
             }
             string directoryName = Path.GetFileName(source);
             if (directory && directoryName.Length == 0) directoryName = source.TrimEnd('\\', '/').Replace(':', '_');
@@ -136,7 +145,7 @@ public sealed class StorageService
         }
         catch (Exception ex)
         {
-            AppLogger.Error($"添加项目快捷方式失败：{sourcePath}", ex);
+            AppLogger.Error($"{errorPrefix}：{sourcePath}", ex);
             return new(sourcePath, null, TransferStatus.Failed, ex.Message);
         }
         finally
@@ -164,10 +173,8 @@ public sealed class StorageService
         if (name.Length == 0) throw new InvalidOperationException(AppStrings.Get("FolderNameEmptyError"));
         if (name.Length > 120 || name.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0 || name.EndsWith('.') || name.EndsWith(' '))
             throw new InvalidOperationException(AppStrings.Get("FolderNameInvalidError"));
-        string deviceName = name.Split('.')[0].ToUpperInvariant();
-        if (deviceName is "CON" or "PRN" or "AUX" or "NUL" or
-            "COM1" or "COM2" or "COM3" or "COM4" or "COM5" or "COM6" or "COM7" or "COM8" or "COM9" or
-            "LPT1" or "LPT2" or "LPT3" or "LPT4" or "LPT5" or "LPT6" or "LPT7" or "LPT8" or "LPT9")
+        string deviceName = name.Split('.', 2)[0];
+        if (NoteStore.IsReservedDeviceName(deviceName))
             throw new InvalidOperationException(AppStrings.Get("FolderNameReservedError"));
         return name;
     }
@@ -175,6 +182,7 @@ public sealed class StorageService
     public IReadOnlyList<WidgetItem> ReadItems()
     {
         if (!Directory.Exists(_itemsRoot)) return [];
+        bool showExtensions = ExplorerShowsExtensions();
         var items = new List<WidgetItem>();
         foreach (string path in Directory.EnumerateFileSystemEntries(_itemsRoot, "*", SearchOption.TopDirectoryOnly))
         {
@@ -185,7 +193,7 @@ public sealed class StorageService
             {
                 continue;
             }
-            items.Add(new WidgetItem(GetDisplayName(relativeName, kind), path, relativeName, kind));
+            items.Add(new WidgetItem(GetDisplayName(relativeName, kind, showExtensions), path, relativeName, kind));
         }
         return items;
     }
@@ -198,20 +206,23 @@ public sealed class StorageService
         CancellationToken cancellationToken)
     {
         if (!Directory.Exists(_itemsRoot)) return new(_itemsRoot, null, TransferStatus.Moved, AppStrings.Get("StorageMissingDeleted"));
-        if (!_exportEmptyDirectory && !Directory.EnumerateFileSystemEntries(_itemsRoot).Any())
-        {
-            Directory.Delete(_itemsRoot);
-            return PublishedMoveCompletion.Complete(_itemsRoot, _itemsRoot, () => { }, DeleteEmptyParent)
-                with { DestinationPath = null, Message = AppStrings.Get("EmptyDeleted") };
-        }
-
-        string desktop = AppPaths.DesktopRoot;
-        if (string.IsNullOrWhiteSpace(desktop)) return new(_itemsRoot, null, TransferStatus.Failed, AppStrings.Get("DesktopUnavailable"));
-        Directory.CreateDirectory(desktop);
-        string destination = GetUniquePath(Path.Combine(desktop, AppStrings.Format("ExportFolderFormat", SanitizeName(windowName))), isDirectory: true);
 
         try
         {
+            if (!_exportEmptyDirectory && !Directory.EnumerateFileSystemEntries(_itemsRoot).Any())
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                Directory.Delete(_itemsRoot);
+                return PublishedMoveCompletion.Complete(_itemsRoot, _itemsRoot, () => { }, DeleteEmptyParent)
+                    with { DestinationPath = null, Message = AppStrings.Get("EmptyDeleted") };
+            }
+
+            string desktop = AppPaths.DesktopRoot;
+            if (string.IsNullOrWhiteSpace(desktop)) return new(_itemsRoot, null, TransferStatus.Failed, AppStrings.Get("DesktopUnavailable"));
+            Directory.CreateDirectory(desktop);
+            string formattedName = SanitizeName(AppStrings.Format("ExportFolderFormat", SanitizeName(windowName)), maxLength: 120);
+            string destination = GetUniquePath(Path.Combine(desktop, formattedName), isDirectory: true);
+
             if (SameVolume(_itemsRoot, destination))
             {
                 cancellationToken.ThrowIfCancellationRequested();
@@ -264,7 +275,7 @@ public sealed class StorageService
         bool isDirectory = Directory.Exists(source);
         if (!isDirectory && !File.Exists(source))
             return new(source, null, TransferStatus.Failed, AppStrings.Get("ShellDragMissing"));
-        string desktop = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
+        string desktop = AppPaths.DesktopRoot;
         if (string.IsNullOrWhiteSpace(desktop))
             return new(source, null, TransferStatus.Failed, AppStrings.Get("DesktopUnavailable"));
         return await Task.Run(
@@ -277,7 +288,7 @@ public sealed class StorageService
         IProgress<TransferProgress>? progress,
         CancellationToken cancellationToken)
     {
-        string desktop = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
+        string desktop = AppPaths.DesktopRoot;
         if (string.IsNullOrWhiteSpace(desktop))
             return new(sourcePath, null, TransferStatus.Failed, AppStrings.Get("DesktopUnavailable"));
         IReadOnlyList<TransferOutcome> outcomes = await new StorageService(desktop)
@@ -312,27 +323,6 @@ public sealed class StorageService
             AppLogger.Info($"目标名称被并发占用，重新编号：{destination}");
         }
         return new(source, null, TransferStatus.Failed, "目标目录冲突过于频繁，源项目已保留。");
-    }
-
-    private TransferOutcome CreateExecutableShortcut(string sourcePath)
-    {
-        try
-        {
-            string source = Path.GetFullPath(sourcePath);
-            string destination = GetUniquePath(Path.Combine(_itemsRoot, Path.GetFileNameWithoutExtension(source) + ".lnk"), isDirectory: false);
-            Type shellType = Type.GetTypeFromProgID("WScript.Shell") ?? throw new InvalidOperationException(AppStrings.Get("ShellUnavailable"));
-            dynamic shell = Activator.CreateInstance(shellType)!;
-            dynamic shortcut = shell.CreateShortcut(destination);
-            shortcut.TargetPath = source;
-            shortcut.WorkingDirectory = Path.GetDirectoryName(source)!;
-            shortcut.Save();
-            return new(source, destination, TransferStatus.ShortcutCreated, AppStrings.Get("ShortcutCreated"));
-        }
-        catch (Exception ex)
-        {
-            AppLogger.Error($"创建程序快捷方式失败：{sourcePath}", ex);
-            return new(sourcePath, null, TransferStatus.Failed, ex.Message);
-        }
     }
 
     private async Task<TransferOutcome> MoveOneAsync(
@@ -489,18 +479,19 @@ public sealed class StorageService
         }
     }
 
-    private static string GetDisplayName(string relativeName, WidgetItemKind kind)
+    private static string GetDisplayName(string relativeName, WidgetItemKind kind, bool showExtensions)
     {
         if (kind is WidgetItemKind.Folder or WidgetItemKind.Shortcut or WidgetItemKind.InternetShortcut or WidgetItemKind.PortableNote or WidgetItemKind.PortableTodo)
             return Path.GetFileNameWithoutExtension(relativeName);
-        return ExplorerShowsExtensions() ? relativeName : Path.GetFileNameWithoutExtension(relativeName);
+        return showExtensions ? relativeName : Path.GetFileNameWithoutExtension(relativeName);
     }
 
     private static bool ExplorerShowsExtensions()
     {
         try
         {
-            object? hidden = Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced")?.GetValue("HideFileExt");
+            using RegistryKey? key = Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced");
+            object? hidden = key?.GetValue("HideFileExt");
             return hidden is not int value || value == 0;
         }
         catch
@@ -520,11 +511,30 @@ public sealed class StorageService
         }
     }
 
-    private static string SanitizeName(string name)
+    internal static string SanitizeName(string name, int maxLength = 80)
     {
-        string safe = string.Concat((string.IsNullOrWhiteSpace(name) ? AppStrings.DefaultOrganizerName : name.Trim())
-            .Select(character => Path.GetInvalidFileNameChars().Contains(character) ? '_' : character));
-        return safe.Length <= 80 ? safe : safe[..80];
+        string fallback = AppStrings.DefaultOrganizerName;
+        if (string.IsNullOrWhiteSpace(fallback)) fallback = "TuckPane";
+        char[] invalid = Path.GetInvalidFileNameChars();
+        string safe = string.Concat((string.IsNullOrWhiteSpace(name) ? fallback : name.Trim())
+            .Select(character => Array.IndexOf(invalid, character) >= 0 ? '_' : character))
+            .TrimEnd(' ', '.');
+        if (safe.Length == 0)
+        {
+            safe = string.Concat(fallback.Select(character => Array.IndexOf(invalid, character) >= 0 ? '_' : character))
+                .TrimEnd(' ', '.');
+            if (safe.Length == 0) safe = "TuckPane";
+        }
+        if (safe.Length > maxLength)
+        {
+            int length = maxLength;
+            if (char.IsHighSurrogate(safe[length - 1]) && char.IsLowSurrogate(safe[length])) length--;
+            safe = safe[..length].TrimEnd(' ', '.');
+            if (safe.Length == 0) safe = "TuckPane";
+        }
+        string deviceName = safe.Split('.', 2)[0];
+        if (NoteStore.IsReservedDeviceName(deviceName)) safe = "_" + safe;
+        return safe;
     }
 
     private static bool SameVolume(string first, string second) =>

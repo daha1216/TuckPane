@@ -7,6 +7,9 @@ namespace TuckPane.Services;
 
 internal sealed class AppUpdateService : IDisposable
 {
+    private const int MaximumRetainedConfigBackups = 10;
+    private static readonly TimeSpan ConfigBackupRetention = TimeSpan.FromDays(30);
+
     private readonly HttpClient _http = new() { Timeout = Timeout.InfiniteTimeSpan };
     private readonly string _root = Path.Combine(AppPaths.LocalRoot, "updates");
     private readonly bool _installed = FolderContextMenuService.IsInstalledCopy();
@@ -14,6 +17,7 @@ internal sealed class AppUpdateService : IDisposable
     private CancellationTokenSource? _operation;
     private UpdateCheckCache? _cache;
     private bool _busy;
+    private bool _disposed;
     public event Action? Changed;
     public string CurrentVersion { get; } = typeof(AppUpdateService).Assembly.GetName().Version!.ToString(3);
     public UpdateRelease? Available { get; private set; }
@@ -53,17 +57,22 @@ internal sealed class AppUpdateService : IDisposable
             }
         }
         catch (Exception ex) { Error = ex.Message; }
-        // Sessions survive a successful install; reclaim old downloads without blocking startup.
-        _ = Task.Run(CleanupSessions);
+        // Sessions survive a successful install; reclaim old downloads and backups without blocking startup.
+        string? protectedBackup = BackupPath;
+        _ = Task.Run(() =>
+        {
+            CleanupSessions();
+            CleanupConfigBackups(protectedBackup);
+        });
     }
 
     public async Task CheckAsync(bool manual)
     {
-        if (_busy || (!manual && !ReleaseRules.AutoCheckDue(_cache?.LastAttemptUtc, DateTimeOffset.UtcNow))) return;
+        if (_disposed || _busy || (!manual && !ReleaseRules.AutoCheckDue(_cache?.LastAttemptUtc, DateTimeOffset.UtcNow))) return;
         _busy = true;
         StatusKey = "UpdateChecking";
         Error = null;
-        Changed?.Invoke();
+        NotifyChanged();
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token);
         timeout.CancelAfter(TimeSpan.FromSeconds(25));
         try
@@ -81,12 +90,12 @@ internal sealed class AppUpdateService : IDisposable
             StatusKey = "UpdateCheckFailed";
             Error = ex is OperationCanceledException ? AppStrings.Get("UpdateTimeout") : ex.Message;
         }
-        finally { _busy = false; Changed?.Invoke(); }
+        finally { _busy = false; NotifyChanged(); }
     }
 
     public async Task DownloadAndInstallAsync(Func<Func<Task>, Task<bool>> exitWithHandoff, Func<string[]> protectedPaths)
     {
-        if (_busy || Available is not { } release) return;
+        if (_disposed || _busy || Available is not { } release) return;
         _busy = true;
         Downloading = true;
         Progress = 0;
@@ -94,19 +103,22 @@ internal sealed class AppUpdateService : IDisposable
         StatusKey = "UpdateDownloading";
         _operation = CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token);
         _operation.CancelAfter(TimeSpan.FromMinutes(30));
-        Changed?.Invoke();
+        NotifyChanged();
+        string? session = null;
         try
         {
-            string session = Path.Combine(_root, "sessions", Guid.NewGuid().ToString("N"));
+            session = Path.Combine(_root, "sessions", Guid.NewGuid().ToString("N"));
             UpdateFiles.NoLinks(session);
             string package = await new ReleaseClient(_http).DownloadAsync(release, session,
-                new Progress<double>(value => { Progress = value; Changed?.Invoke(); }), _operation.Token);
+                new Progress<double>(value => { Progress = value; NotifyChanged(); }), _operation.Token);
             Downloading = false;
             StatusKey = "UpdatePreparing";
-            Changed?.Invoke();
+            NotifyChanged();
             bool exited = await exitWithHandoff(async () =>
             {
-                BackupPath = UpdateFiles.BackupConfiguration(AppPaths.StatePath, Path.Combine(_root, "config-backups"), CurrentVersion);
+                string backupRoot = Path.Combine(_root, "config-backups");
+                BackupPath = UpdateFiles.BackupConfiguration(AppPaths.StatePath, backupRoot, CurrentVersion);
+                CleanupConfigBackups(BackupPath);
                 string helper = Path.Combine(session, "TuckPane.Updater.exe");
                 File.Copy(Path.Combine(AppContext.BaseDirectory, "TuckPane.Updater.exe"), helper);
                 using Process parent = Process.GetCurrentProcess();
@@ -134,24 +146,55 @@ internal sealed class AppUpdateService : IDisposable
                     throw;
                 }
             });
-            if (!exited) StatusKey = "UpdateExitCancelled";
+            if (!exited)
+            {
+                StatusKey = "UpdateExitCancelled";
+                TryDeleteSession(session);
+            }
         }
-        catch (OperationCanceledException) { StatusKey = "UpdateCancelled"; }
-        catch (Exception ex) { StatusKey = "UpdateFailed"; Error = ex.Message; }
+        catch (OperationCanceledException)
+        {
+            StatusKey = "UpdateCancelled";
+            if (session is not null) TryDeleteSession(session);
+        }
+        catch (Exception ex)
+        {
+            StatusKey = "UpdateFailed";
+            Error = ex.Message;
+            if (session is not null) TryDeleteSession(session);
+        }
         finally
         {
             Downloading = false;
             _busy = false;
             _operation?.Dispose();
             _operation = null;
-            Changed?.Invoke();
+            NotifyChanged();
         }
+    }
+
+    private void NotifyChanged()
+    {
+        if (!_disposed) Changed?.Invoke();
     }
 
     private static string ReadResultMessage(string path)
     {
         try { return JsonSerializer.Deserialize<UpdateResult>(File.ReadAllText(path))?.Message ?? ""; }
         catch { return ""; }
+    }
+
+    private static void TryDeleteSession(string session)
+    {
+        try
+        {
+            if (!Directory.Exists(session)) return;
+            var directory = new DirectoryInfo(session);
+            if ((directory.Attributes & FileAttributes.ReparsePoint) != 0) return;
+            UpdateFiles.NoLinks(session);
+            DeleteSessionEntry(session);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
     }
 
     private void CleanupSessions()
@@ -182,6 +225,44 @@ internal sealed class AppUpdateService : IDisposable
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
     }
 
+    private void CleanupConfigBackups(string? protectedBackupPath)
+    {
+        try
+        {
+            string root = Path.Combine(_root, "config-backups");
+            if (!Directory.Exists(root)) return;
+            string? protectedFull = string.IsNullOrWhiteSpace(protectedBackupPath)
+                ? null
+                : Path.GetFullPath(protectedBackupPath).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            var backups = new List<DirectoryInfo>();
+            foreach (string candidate in Directory.EnumerateDirectories(root, "*", SearchOption.TopDirectoryOnly))
+            {
+                var info = new DirectoryInfo(candidate);
+                if ((info.Attributes & FileAttributes.ReparsePoint) != 0) continue;
+                string full = Path.GetFullPath(candidate).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+                if (protectedFull is not null && string.Equals(full, protectedFull, StringComparison.OrdinalIgnoreCase)) continue;
+                backups.Add(info);
+            }
+            backups.Sort((left, right) => right.LastWriteTimeUtc.CompareTo(left.LastWriteTimeUtc));
+            DateTime cutoff = DateTime.UtcNow - ConfigBackupRetention;
+            int removed = 0;
+            for (int index = 0; index < backups.Count; index++)
+            {
+                DirectoryInfo entry = backups[index];
+                if (index < MaximumRetainedConfigBackups && entry.LastWriteTimeUtc >= cutoff) continue;
+                try
+                {
+                    UpdateFiles.NoLinks(entry.FullName);
+                    DeleteSessionEntry(entry.FullName);
+                    removed++;
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+            }
+            if (removed > 0) AppLogger.Performance($"update-config-backups cleanup removed={removed}");
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+    }
+
     private static void DeleteSessionEntry(string directory)
     {
         foreach (string entry in Directory.EnumerateFileSystemEntries(directory))
@@ -195,5 +276,12 @@ internal sealed class AppUpdateService : IDisposable
     }
 
     public void CancelDownload() { if (Downloading) _operation?.Cancel(); }
-    public void Dispose() { _lifetime.Cancel(); _http.Dispose(); }
+
+    public void Dispose()
+    {
+        if (_disposed) return;
+        _disposed = true;
+        _lifetime.Cancel();
+        _http.Dispose();
+    }
 }
