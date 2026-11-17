@@ -1,4 +1,3 @@
-using Microsoft.UI;
 using TuckPane.Models;
 using Windows.UI;
 
@@ -54,12 +53,12 @@ internal static class ThemePalette
         double blackContrast = (luminance + .05) / .05;
         double whiteContrast = 1.05 / (luminance + .05);
         return blackContrast >= whiteContrast
-            ? ColorHelper.FromArgb(255, 31, 31, 31)
-            : ColorHelper.FromArgb(255, 245, 245, 245);
+            ? Color.FromArgb(255, 31, 31, 31)
+            : Color.FromArgb(255, 245, 245, 245);
     }
 
     internal static Color ResolveOrganizerTextColor(OrganizerTextColor mode, ThemeValues theme) =>
-        Colors.White;
+        Color.FromArgb(255, 255, 255, 255);
 
     internal static bool IsDark(ThemeValues theme) => ForegroundColor(theme).R > 128;
 
@@ -86,7 +85,7 @@ internal static class ThemePalette
         theme.SolidColorMode ? 0f : 4f * TintOpacity(theme) * (1f - TintOpacity(theme));
 
     internal static Color LuminosityColor(ThemeValues theme) =>
-        ColorHelper.FromArgb(255, 128, 128, 128);
+        Color.FromArgb(255, 128, 128, 128);
 
     internal static ThemeEffectParameters Effect() =>
         new(GlassBlurAmount, GlassSaturation, GlassLuminosityOpacity);
@@ -125,7 +124,7 @@ internal static class ThemePalette
             UseEffects: useEffects);
     }
 
-    internal static Color WithOpacity(Color color, float opacity) => ColorHelper.FromArgb(
+    internal static Color WithOpacity(Color color, float opacity) => Color.FromArgb(
         (byte)Math.Clamp(Math.Round(color.A * Math.Clamp(opacity, 0, 1)), 0, 255),
         color.R,
         color.G,
@@ -135,11 +134,11 @@ internal static class ThemePalette
 
     internal static IReadOnlyList<(float Offset, Color Color)> GlassHighlightStops { get; } =
     [
-        (0f, ColorHelper.FromArgb(0, 255, 255, 255)),
-        (.38f, ColorHelper.FromArgb(0, 255, 255, 255)),
-        (.49f, ColorHelper.FromArgb(42, 255, 255, 255)),
-        (.58f, ColorHelper.FromArgb(0, 255, 255, 255)),
-        (1f, ColorHelper.FromArgb(0, 255, 255, 255))
+        (0f, Color.FromArgb(0, 255, 255, 255)),
+        (.38f, Color.FromArgb(0, 255, 255, 255)),
+        (.49f, Color.FromArgb(42, 255, 255, 255)),
+        (.58f, Color.FromArgb(0, 255, 255, 255)),
+        (1f, Color.FromArgb(0, 255, 255, 255))
     ];
 
     // A restrained arc-like sheen used by local glass surfaces.  The broad
@@ -147,12 +146,12 @@ internal static class ThemePalette
     // without introducing another backdrop or bitmap resource.
     internal static IReadOnlyList<(float Offset, Color Color)> GlassArcStops { get; } =
     [
-        (0f, ColorHelper.FromArgb(0, 255, 255, 255)),
-        (.16f, ColorHelper.FromArgb(18, 255, 255, 255)),
-        (.28f, ColorHelper.FromArgb(34, 255, 255, 255)),
-        (.4f, ColorHelper.FromArgb(10, 255, 255, 255)),
-        (.62f, ColorHelper.FromArgb(0, 255, 255, 255)),
-        (1f, ColorHelper.FromArgb(0, 0, 0, 0))
+        (0f, Color.FromArgb(0, 255, 255, 255)),
+        (.16f, Color.FromArgb(18, 255, 255, 255)),
+        (.28f, Color.FromArgb(34, 255, 255, 255)),
+        (.4f, Color.FromArgb(10, 255, 255, 255)),
+        (.62f, Color.FromArgb(0, 255, 255, 255)),
+        (1f, Color.FromArgb(0, 0, 0, 0))
     ];
 
     // Deterministic pseudo-noise represented as many tiny gradient bands. It
@@ -160,58 +159,58 @@ internal static class ThemePalette
     // threshold so text and controls remain crisp.
     internal static IReadOnlyList<(float Offset, Color Color)> GlassTextureStops { get; } =
     [
-        (0f, ColorHelper.FromArgb(0, 255, 255, 255)),
-        (.07f, ColorHelper.FromArgb(5, 255, 255, 255)),
-        (.13f, ColorHelper.FromArgb(0, 255, 255, 255)),
-        (.21f, ColorHelper.FromArgb(4, 255, 255, 255)),
-        (.29f, ColorHelper.FromArgb(0, 255, 255, 255)),
-        (.37f, ColorHelper.FromArgb(5, 255, 255, 255)),
-        (.44f, ColorHelper.FromArgb(0, 255, 255, 255)),
-        (.53f, ColorHelper.FromArgb(4, 0, 0, 0)),
-        (.61f, ColorHelper.FromArgb(0, 0, 0, 0)),
-        (.69f, ColorHelper.FromArgb(5, 255, 255, 255)),
-        (.77f, ColorHelper.FromArgb(0, 255, 255, 255)),
-        (.86f, ColorHelper.FromArgb(4, 0, 0, 0)),
-        (.94f, ColorHelper.FromArgb(0, 0, 0, 0)),
-        (1f, ColorHelper.FromArgb(0, 0, 0, 0))
+        (0f, Color.FromArgb(0, 255, 255, 255)),
+        (.07f, Color.FromArgb(5, 255, 255, 255)),
+        (.13f, Color.FromArgb(0, 255, 255, 255)),
+        (.21f, Color.FromArgb(4, 255, 255, 255)),
+        (.29f, Color.FromArgb(0, 255, 255, 255)),
+        (.37f, Color.FromArgb(5, 255, 255, 255)),
+        (.44f, Color.FromArgb(0, 255, 255, 255)),
+        (.53f, Color.FromArgb(4, 0, 0, 0)),
+        (.61f, Color.FromArgb(0, 0, 0, 0)),
+        (.69f, Color.FromArgb(5, 255, 255, 255)),
+        (.77f, Color.FromArgb(0, 255, 255, 255)),
+        (.86f, Color.FromArgb(4, 0, 0, 0)),
+        (.94f, Color.FromArgb(0, 0, 0, 0)),
+        (1f, Color.FromArgb(0, 0, 0, 0))
     ];
 
     internal static IReadOnlyList<(float Offset, Color Color)> OrganizerGlassOuterEdgeStops { get; } =
     [
-        (0f, ColorHelper.FromArgb(112, 255, 255, 255)),
-        (.55f, ColorHelper.FromArgb(16, 255, 255, 255)),
-        (1f, ColorHelper.FromArgb(44, 0, 0, 0))
+        (0f, Color.FromArgb(112, 255, 255, 255)),
+        (.55f, Color.FromArgb(16, 255, 255, 255)),
+        (1f, Color.FromArgb(44, 0, 0, 0))
     ];
 
     internal static IReadOnlyList<(float Offset, Color Color)> OrganizerGlassInnerEdgeStops { get; } =
     [
-        (0f, ColorHelper.FromArgb(64, 255, 255, 255)),
-        (.45f, ColorHelper.FromArgb(8, 255, 255, 255)),
-        (1f, ColorHelper.FromArgb(32, 0, 0, 0))
+        (0f, Color.FromArgb(64, 255, 255, 255)),
+        (.45f, Color.FromArgb(8, 255, 255, 255)),
+        (1f, Color.FromArgb(32, 0, 0, 0))
     ];
 
     internal static IReadOnlyList<(float Offset, Color Color)> GlassEdgeHighlightStops { get; } =
     [
-        (0f, ColorHelper.FromArgb(0, 255, 255, 255)),
-        (.18f, ColorHelper.FromArgb(28, 255, 255, 255)),
-        (.38f, ColorHelper.FromArgb(42, 255, 255, 255)),
-        (.56f, ColorHelper.FromArgb(12, 255, 255, 255)),
-        (.82f, ColorHelper.FromArgb(4, 255, 255, 255)),
-        (1f, ColorHelper.FromArgb(0, 255, 255, 255))
+        (0f, Color.FromArgb(0, 255, 255, 255)),
+        (.18f, Color.FromArgb(28, 255, 255, 255)),
+        (.38f, Color.FromArgb(42, 255, 255, 255)),
+        (.56f, Color.FromArgb(12, 255, 255, 255)),
+        (.82f, Color.FromArgb(4, 255, 255, 255)),
+        (1f, Color.FromArgb(0, 255, 255, 255))
     ];
 
     internal static IReadOnlyList<(float Offset, Color Color)> GlassEdgeTextureStops { get; } =
     [
-        (0f, ColorHelper.FromArgb(0, 255, 255, 255)),
-        (.08f, ColorHelper.FromArgb(6, 255, 255, 255)),
-        (.16f, ColorHelper.FromArgb(0, 255, 255, 255)),
-        (.27f, ColorHelper.FromArgb(5, 255, 255, 255)),
-        (.39f, ColorHelper.FromArgb(0, 255, 255, 255)),
-        (.52f, ColorHelper.FromArgb(4, 255, 255, 255)),
-        (.65f, ColorHelper.FromArgb(0, 255, 255, 255)),
-        (.78f, ColorHelper.FromArgb(5, 255, 255, 255)),
-        (.91f, ColorHelper.FromArgb(0, 255, 255, 255)),
-        (1f, ColorHelper.FromArgb(0, 255, 255, 255))
+        (0f, Color.FromArgb(0, 255, 255, 255)),
+        (.08f, Color.FromArgb(6, 255, 255, 255)),
+        (.16f, Color.FromArgb(0, 255, 255, 255)),
+        (.27f, Color.FromArgb(5, 255, 255, 255)),
+        (.39f, Color.FromArgb(0, 255, 255, 255)),
+        (.52f, Color.FromArgb(4, 255, 255, 255)),
+        (.65f, Color.FromArgb(0, 255, 255, 255)),
+        (.78f, Color.FromArgb(5, 255, 255, 255)),
+        (.91f, Color.FromArgb(0, 255, 255, 255)),
+        (1f, Color.FromArgb(0, 255, 255, 255))
     ];
 
     internal static Color LayerColor(ThemeValues theme, byte lightAlpha, byte darkAlpha)
@@ -223,14 +222,14 @@ internal static class ThemePalette
         float neutralMix = Math.Clamp(layerAlpha / 255f * .75f, .04f, .28f);
         Color selected = SurfaceColor(theme);
         byte target = dark ? (byte)255 : (byte)0;
-        return ColorHelper.FromArgb(
+        return Color.FromArgb(
             layerAlpha,
             BlendChannel(selected.R, target, neutralMix),
             BlendChannel(selected.G, target, neutralMix),
             BlendChannel(selected.B, target, neutralMix));
     }
 
-    private static Color FromArgb(uint argb) => ColorHelper.FromArgb(
+    private static Color FromArgb(uint argb) => Color.FromArgb(
         (byte)(argb >> 24),
         (byte)(argb >> 16),
         (byte)(argb >> 8),

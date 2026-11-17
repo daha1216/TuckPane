@@ -11,12 +11,16 @@ internal enum DesktopAttachmentState
 public sealed class DesktopLayerService : IDisposable
 {
     private const uint SpawnWorkerMessage = 0x052C;
+    private static readonly UIntPtr ActivationSubclassId = new(0x47464C59UL);
+    private static readonly object CachedViewGate = new();
+    private static IntPtr _lastKnownDesktopIconView;
+    private static uint _lastKnownDesktopProcessId;
+
     private readonly IntPtr _window;
     private readonly IntPtr _expandedOwner;
     private readonly NativeMethods.SubclassProc _activationGuard;
-    private static readonly UIntPtr ActivationSubclassId = new(0x47464C59UL);
-    private static IntPtr _lastKnownDesktopIconView;
     private IntPtr _desktopIconView;
+    private uint _desktopIconViewPid;
     private bool _allowActivation;
     private bool _expanded;
     private bool _stayTopmost;
@@ -53,9 +57,9 @@ public sealed class DesktopLayerService : IDisposable
             return;
         }
 
-        if (_desktopIconView == IntPtr.Zero || !NativeMethods.IsWindow(_desktopIconView))
+        if (!IsValidDesktopIconView(_desktopIconView, _desktopIconViewPid))
         {
-            _desktopIconView = FindDesktopIconView();
+            SetDesktopIconView(FindDesktopIconView());
         }
 
         bool ownerChanged = _desktopIconView != IntPtr.Zero &&
@@ -67,8 +71,7 @@ public sealed class DesktopLayerService : IDisposable
 
         uint flags = NativeMethods.SWP_NOMOVE | NativeMethods.SWP_NOSIZE | NativeMethods.SWP_NOACTIVATE |
             NativeMethods.SWP_NOOWNERZORDER;
-        bool haveAnchor = TryGetDesktopInsertAnchor(out IntPtr anchor);
-        if (!ownerChanged || !haveAnchor) flags |= NativeMethods.SWP_NOZORDER;
+        if (!TryGetDesktopBandAnchor(out IntPtr anchor)) flags |= NativeMethods.SWP_NOZORDER;
         if (showWindow) flags |= NativeMethods.SWP_SHOWWINDOW;
         _ = NativeMethods.SetWindowPos(
             _window,
@@ -135,10 +138,28 @@ public sealed class DesktopLayerService : IDisposable
         remaining = state;
         if (state == DesktopAttachmentState.Ok) return state;
 
+        if (_expanded)
+        {
+            if (state == DesktopAttachmentState.Hidden)
+            {
+                _ = NativeMethods.SetWindowPos(
+                    _window,
+                    IntPtr.Zero,
+                    0,
+                    0,
+                    0,
+                    0,
+                    NativeMethods.SWP_NOMOVE | NativeMethods.SWP_NOSIZE |
+                    NativeMethods.SWP_NOACTIVATE | NativeMethods.SWP_NOZORDER | NativeMethods.SWP_HIDEWINDOW);
+            }
+            RepairExpandedZOrder();
+            remaining = ProbeDesktopAttachment();
+            return state;
+        }
+
         IntPtr iconView = _desktopIconView;
         if (state == DesktopAttachmentState.OwnerLost &&
-            iconView != IntPtr.Zero &&
-            NativeMethods.IsWindow(iconView))
+            IsValidDesktopIconView(iconView, _desktopIconViewPid))
         {
             _ = NativeMethods.SetWindowLongPtr(_window, NativeMethods.GWLP_HWNDPARENT, iconView);
         }
@@ -164,6 +185,25 @@ public sealed class DesktopLayerService : IDisposable
         return state;
     }
 
+    internal void RepairExpandedZOrder()
+    {
+        if (_window == IntPtr.Zero || !NativeMethods.IsWindow(_window)) return;
+        if (_stayTopmost)
+        {
+            _ = NativeMethods.SetWindowPos(
+                _window,
+                NativeMethods.HWND_TOPMOST,
+                0,
+                0,
+                0,
+                0,
+                NativeMethods.SWP_NOMOVE | NativeMethods.SWP_NOSIZE |
+                NativeMethods.SWP_NOACTIVATE | NativeMethods.SWP_SHOWWINDOW | NativeMethods.SWP_NOOWNERZORDER);
+            return;
+        }
+        RaiseAboveNormalWindows();
+    }
+
     private void ReassertDesktopAttachment()
     {
         uint flags = NativeMethods.SWP_NOMOVE |
@@ -173,6 +213,39 @@ public sealed class DesktopLayerService : IDisposable
             NativeMethods.SWP_SHOWWINDOW;
         if (!TryGetDesktopInsertAnchor(out IntPtr anchor)) flags |= NativeMethods.SWP_NOZORDER;
         _ = NativeMethods.SetWindowPos(_window, anchor, 0, 0, 0, 0, flags);
+    }
+
+    // Walks the contiguous peer band owned by _desktopIconView immediately above the desktop host.
+    // Returns false when _window is already seated inside that band (avoiding z-order churn between
+    // multiple desktop organizers on periodic repair ticks), or returns the safe insert-after anchor
+    // immediately above the peer band when _window has drifted above normal windows or behind Progman.
+    private bool TryGetDesktopBandAnchor(out IntPtr anchor)
+    {
+        anchor = IntPtr.Zero;
+        IntPtr root = DesktopHostRoot();
+        if (root == IntPtr.Zero || _desktopIconView == IntPtr.Zero) return false;
+
+        IntPtr cursor = root;
+        for (int step = 0; step < 256; step++)
+        {
+            IntPtr above = NativeMethods.GetWindow(cursor, NativeMethods.GW_HWNDPREV);
+            if (above == _window) return false;
+            if (above == IntPtr.Zero)
+            {
+                anchor = NativeMethods.HWND_TOP;
+                return true;
+            }
+            if (NativeMethods.IsWindow(above) &&
+                NativeMethods.GetWindowLongPtr(above, NativeMethods.GWLP_HWNDPARENT) == _desktopIconView)
+            {
+                cursor = above;
+                continue;
+            }
+            if (!NativeMethods.IsWindow(above) || above == NativeMethods.HWND_BOTTOM) return false;
+            anchor = above;
+            return true;
+        }
+        return TryGetDesktopInsertAnchor(out anchor);
     }
 
     // HWND_TOP is IntPtr.Zero, so "the host is unknown" and "the host is the top-most window" are
@@ -197,6 +270,7 @@ public sealed class DesktopLayerService : IDisposable
         // hWndInsertAfter places the window right behind the given window, so the window just in
         // front of the host is the right anchor for "immediately above the host".
         IntPtr above = NativeMethods.GetWindow(root, NativeMethods.GW_HWNDPREV);
+        if (above != IntPtr.Zero && !NativeMethods.IsWindow(above)) return false;
         anchor = above == IntPtr.Zero ? NativeMethods.HWND_TOP : above;
         // HWND_BOTTOM is 1, not 0, so it would sail past a plain "anchor == IntPtr.Zero" check.
         // Burying the window is the exact state this service exists to prevent.
@@ -206,13 +280,13 @@ public sealed class DesktopLayerService : IDisposable
     private IntPtr DesktopHostRoot()
     {
         IntPtr iconView = _desktopIconView;
-        if (iconView == IntPtr.Zero || !NativeMethods.IsWindow(iconView)) return IntPtr.Zero;
+        if (!IsValidDesktopIconView(iconView, _desktopIconViewPid)) return IntPtr.Zero;
         return NativeMethods.GetAncestor(iconView, NativeMethods.GA_ROOT);
     }
 
     private DesktopAttachmentState ProbeDesktopAttachment()
     {
-        if (_expanded || _window == IntPtr.Zero || !NativeMethods.IsWindow(_window))
+        if ((_expanded && _stayTopmost) || _window == IntPtr.Zero || !NativeMethods.IsWindow(_window))
         {
             return DesktopAttachmentState.Ok;
         }
@@ -223,9 +297,9 @@ public sealed class DesktopLayerService : IDisposable
             return DesktopAttachmentState.Ok;
         }
 
-        if (_desktopIconView == IntPtr.Zero || !NativeMethods.IsWindow(_desktopIconView))
+        if (!IsValidDesktopIconView(_desktopIconView, _desktopIconViewPid))
         {
-            _desktopIconView = FindDesktopIconView(allowWorkerSpawn: false);
+            SetDesktopIconView(FindDesktopIconView(allowWorkerSpawn: false));
         }
 
         if (_desktopIconView == IntPtr.Zero)
@@ -233,7 +307,7 @@ public sealed class DesktopLayerService : IDisposable
             return DesktopAttachmentState.Ok;
         }
 
-        if (NativeMethods.GetWindowLongPtr(_window, NativeMethods.GWLP_HWNDPARENT) != _desktopIconView)
+        if (!_expanded && NativeMethods.GetWindowLongPtr(_window, NativeMethods.GWLP_HWNDPARENT) != _desktopIconView)
         {
             return DesktopAttachmentState.OwnerLost;
         }
@@ -337,6 +411,15 @@ public sealed class DesktopLayerService : IDisposable
         }
     }
 
+    private void SetDesktopIconView(IntPtr view)
+    {
+        _desktopIconView = view;
+        if (view != IntPtr.Zero)
+            _ = NativeMethods.GetWindowThreadProcessId(view, out _desktopIconViewPid);
+        else
+            _desktopIconViewPid = 0;
+    }
+
     private void ApplyToolWindowStyle()
     {
         long windowStyle = NativeMethods.GetWindowLongPtr(_window, NativeMethods.GWL_STYLE).ToInt64();
@@ -360,7 +443,8 @@ public sealed class DesktopLayerService : IDisposable
             0,
             0,
             0,
-            NativeMethods.SWP_NOMOVE | NativeMethods.SWP_NOSIZE | NativeMethods.SWP_NOACTIVATE | NativeMethods.SWP_FRAMECHANGED);
+            NativeMethods.SWP_NOMOVE | NativeMethods.SWP_NOSIZE | NativeMethods.SWP_NOZORDER |
+            NativeMethods.SWP_NOACTIVATE | NativeMethods.SWP_FRAMECHANGED);
     }
 
     private void RaiseAboveNormalWindows()
@@ -368,8 +452,10 @@ public sealed class DesktopLayerService : IDisposable
         // HWND_TOP cannot reliably cross the foreground boundary for a no-activate window.
         const uint flags = NativeMethods.SWP_NOMOVE | NativeMethods.SWP_NOSIZE |
             NativeMethods.SWP_NOACTIVATE | NativeMethods.SWP_SHOWWINDOW;
-        _ = NativeMethods.SetWindowPos(_window, NativeMethods.HWND_TOPMOST, 0, 0, 0, 0, flags);
-        _ = NativeMethods.SetWindowPos(_window, NativeMethods.HWND_NOTOPMOST, 0, 0, 0, 0, flags);
+        if (NativeMethods.SetWindowPos(_window, NativeMethods.HWND_TOPMOST, 0, 0, 0, 0, flags))
+        {
+            _ = NativeMethods.SetWindowPos(_window, NativeMethods.HWND_NOTOPMOST, 0, 0, 0, 0, flags);
+        }
     }
 
     internal void ApplyTransparentChrome()
@@ -434,7 +520,7 @@ public sealed class DesktopLayerService : IDisposable
 
         if (found != IntPtr.Zero)
         {
-            Volatile.Write(ref _lastKnownDesktopIconView, found);
+            CacheDesktopIconView(found);
             return found;
         }
 
@@ -446,14 +532,60 @@ public sealed class DesktopLayerService : IDisposable
             _ = NativeMethods.SendMessageTimeout(progman, SpawnWorkerMessage, UIntPtr.Zero, IntPtr.Zero, 0, 1000, out _);
             found = NativeMethods.FindWindowEx(progman, IntPtr.Zero, "SHELLDLL_DefView", null);
         }
-        if (found != IntPtr.Zero) Volatile.Write(ref _lastKnownDesktopIconView, found);
+        if (found != IntPtr.Zero) CacheDesktopIconView(found);
         return found;
     }
 
     internal static IntPtr GetCachedDesktopIconView()
     {
-        IntPtr cached = Volatile.Read(ref _lastKnownDesktopIconView);
-        return cached != IntPtr.Zero && NativeMethods.IsWindow(cached) ? cached : IntPtr.Zero;
+        IntPtr cached;
+        uint pid;
+        lock (CachedViewGate)
+        {
+            cached = _lastKnownDesktopIconView;
+            pid = _lastKnownDesktopProcessId;
+        }
+        if (IsValidDesktopIconView(cached, pid)) return cached;
+        InvalidateCachedDesktopIconView();
+        return IntPtr.Zero;
+    }
+
+    internal static void InvalidateCachedDesktopIconView()
+    {
+        lock (CachedViewGate)
+        {
+            _lastKnownDesktopIconView = IntPtr.Zero;
+            _lastKnownDesktopProcessId = 0;
+        }
+    }
+
+    private static void CacheDesktopIconView(IntPtr view)
+    {
+        if (view == IntPtr.Zero) return;
+        _ = NativeMethods.GetWindowThreadProcessId(view, out uint pid);
+        lock (CachedViewGate)
+        {
+            _lastKnownDesktopIconView = view;
+            _lastKnownDesktopProcessId = pid;
+        }
+    }
+
+    internal static bool IsValidDesktopIconView(IntPtr view, uint expectedProcessId = 0)
+    {
+        if (view == IntPtr.Zero || !NativeMethods.IsWindow(view)) return false;
+        if (expectedProcessId != 0)
+        {
+            _ = NativeMethods.GetWindowThreadProcessId(view, out uint currentPid);
+            if (currentPid == 0 || currentPid != expectedProcessId) return false;
+        }
+        var className = new System.Text.StringBuilder(32);
+        if (NativeMethods.GetClassName(view, className, className.Capacity) <= 0 ||
+            !string.Equals(className.ToString(), "SHELLDLL_DefView", StringComparison.Ordinal))
+        {
+            return false;
+        }
+        IntPtr parent = NativeMethods.GetParent(view);
+        return parent != IntPtr.Zero && IsDesktopHostWindow(parent);
     }
 
     internal static bool IsDesktopHostClassName(string? className) =>

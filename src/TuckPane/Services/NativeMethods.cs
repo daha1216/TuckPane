@@ -3,27 +3,8 @@ using System.Text;
 
 namespace TuckPane.Services;
 
-internal static class NativeMethods
+internal static partial class NativeMethods
 {
-    internal static bool SupportsWindows11DwmAttributes =>
-        OperatingSystem.IsWindowsVersionAtLeast(10, 0, 22000);
-
-    internal static bool SetHostBackdropBrushEnabled(IntPtr window, bool enabled)
-    {
-        if (!SupportsWindows11DwmAttributes || window == IntPtr.Zero) return false;
-        int value = enabled ? 1 : 0;
-        int result = DwmSetWindowAttribute(window, DWMWA_USE_HOSTBACKDROPBRUSH, ref value, sizeof(int));
-        string state = enabled ? "启用" : "禁用";
-        if (result >= 0)
-            AppLogger.Info($"DwmSetWindowAttribute(DWMWA_USE_HOSTBACKDROPBRUSH，{state}) 完成，HRESULT=0x{result:X8}。");
-        else
-            AppLogger.Error($"DwmSetWindowAttribute(DWMWA_USE_HOSTBACKDROPBRUSH，{state}) 失败，HRESULT=0x{result:X8}。");
-        return result >= 0;
-    }
-
-    internal static bool EnableHostBackdropBrush(IntPtr window) =>
-        SetHostBackdropBrushEnabled(window, enabled: true);
-
     internal const int GWL_STYLE = -16;
     internal const int GWL_EXSTYLE = -20;
     internal const int GWLP_WNDPROC = -4;
@@ -66,6 +47,7 @@ internal static class NativeMethods
     internal const int DWMWA_COLOR_NONE = unchecked((int)0xFFFFFFFE);
     internal const int WH_MOUSE_LL = 14;
     internal const int WH_KEYBOARD_LL = 13;
+    internal const uint WM_ERASEBKGND = 0x0014;
     internal const int WM_LBUTTONDOWN = 0x0201;
     internal const int WM_LBUTTONUP = 0x0202;
     internal const int WM_MOUSEMOVE = 0x0200;
@@ -172,7 +154,6 @@ internal static class NativeMethods
 
     [StructLayout(LayoutKind.Sequential)]
     internal struct POINT { public int X; public int Y; }
-
 
     [StructLayout(LayoutKind.Sequential)]
     internal struct RECT
@@ -369,60 +350,6 @@ internal static class NativeMethods
     internal delegate IntPtr WindowProc(IntPtr hWnd, uint message, UIntPtr wParam, IntPtr lParam);
     internal delegate IntPtr SubclassProc(IntPtr hWnd, uint message, UIntPtr wParam, IntPtr lParam, UIntPtr subclassId, IntPtr referenceData);
 
-    [ComImport]
-    [Guid("46EB5926-582E-4017-9FDF-E8998DAA0950")]
-    [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-    internal interface IImageList
-    {
-        [PreserveSig] int Add(IntPtr image, IntPtr mask, out int index);
-        [PreserveSig] int ReplaceIcon(int index, IntPtr icon, out int newIndex);
-        [PreserveSig] int SetOverlayImage(int image, int overlay);
-        [PreserveSig] int Replace(int index, IntPtr image, IntPtr mask);
-        [PreserveSig] int AddMasked(IntPtr image, int maskColor, out int index);
-        [PreserveSig] int Draw(IntPtr drawParameters);
-        [PreserveSig] int Remove(int index);
-        [PreserveSig] int GetIcon(int index, uint flags, out IntPtr icon);
-    }
-
-    [ComImport]
-    [Guid("00021401-0000-0000-C000-000000000046")]
-    internal class ShellLink
-    {
-    }
-
-    [ComImport]
-    [Guid("000214F9-0000-0000-C000-000000000046")]
-    [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-    internal interface IShellLinkW
-    {
-        [PreserveSig] int GetPath(StringBuilder file, int capacity, IntPtr findData, uint flags);
-        [PreserveSig] int GetIDList(out IntPtr itemIdList);
-        [PreserveSig] int SetIDList(IntPtr itemIdList);
-        [PreserveSig] int GetDescription(StringBuilder description, int capacity);
-        [PreserveSig] int SetDescription(string description);
-        [PreserveSig] int GetWorkingDirectory(StringBuilder directory, int capacity);
-        [PreserveSig] int SetWorkingDirectory(string directory);
-        [PreserveSig] int GetArguments(StringBuilder arguments, int capacity);
-        [PreserveSig] int SetArguments(string arguments);
-        [PreserveSig] int GetHotkey(out ushort hotkey);
-        [PreserveSig] int SetHotkey(ushort hotkey);
-        [PreserveSig] int GetShowCmd(out int showCommand);
-        [PreserveSig] int SetShowCmd(int showCommand);
-        [PreserveSig] int GetIconLocation(StringBuilder iconPath, int capacity, out int iconIndex);
-        [PreserveSig] int SetIconLocation(string iconPath, int iconIndex);
-        [PreserveSig] int SetRelativePath(string path, uint reserved);
-        [PreserveSig] int Resolve(IntPtr hWnd, uint flags);
-        [PreserveSig] int SetPath(string path);
-    }
-
-    [ComImport]
-    [Guid("BCC18B79-BA16-442F-80C4-8A59C30C463B")]
-    [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-    internal interface IShellItemImageFactory
-    {
-        [PreserveSig] int GetImage(SIZE size, uint flags, out IntPtr bitmap);
-    }
-
     [DllImport("user32.dll", EntryPoint = "FindWindowW", CharSet = CharSet.Unicode)]
     internal static extern IntPtr FindWindow(string? className, string? windowName);
 
@@ -461,6 +388,10 @@ internal static class NativeMethods
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
     internal static extern bool EnumWindows(EnumWindowsProc callback, IntPtr lParam);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool EnumChildWindows(IntPtr hWndParent, EnumWindowsProc callback, IntPtr lParam);
 
     [DllImport("user32.dll", SetLastError = true)]
     internal static extern IntPtr SendMessageTimeout(IntPtr hWnd, uint message, UIntPtr wParam, IntPtr lParam, uint flags, uint timeout, out UIntPtr result);
@@ -595,7 +526,6 @@ internal static class NativeMethods
     [return: MarshalAs(UnmanagedType.Bool)]
     internal static extern bool PostMessage(IntPtr hWnd, uint message, UIntPtr wParam, IntPtr lParam);
 
-
     [DllImport("user32.dll", EntryPoint = "PostThreadMessageW")]
     [return: MarshalAs(UnmanagedType.Bool)]
     internal static extern bool PostThreadMessage(uint threadId, uint message, UIntPtr wParam, IntPtr lParam);
@@ -630,14 +560,18 @@ internal static class NativeMethods
     [DllImport("kernel32.dll")]
     internal static extern uint GetCurrentThreadId();
 
-    [DllImport("shell32.dll", EntryPoint = "CommandLineToArgvW", CharSet = CharSet.Unicode, SetLastError = true)]
-    internal static extern IntPtr CommandLineToArgvW(string commandLine, out int argumentCount);
-
     [DllImport("kernel32.dll")]
     internal static extern IntPtr LocalFree(IntPtr memory);
 
     [DllImport("kernel32.dll", SetLastError = true)]
     internal static extern IntPtr OpenProcess(uint desiredAccess, [MarshalAs(UnmanagedType.Bool)] bool inheritHandle, uint processId);
+
+    [DllImport("kernel32.dll", EntryPoint = "QueryFullProcessImageNameW", CharSet = CharSet.Unicode)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool QueryFullProcessImageName(IntPtr process, uint flags, StringBuilder name, ref int length);
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode)]
+    internal static extern int GetApplicationUserModelId(IntPtr process, ref uint length, StringBuilder? id);
 
     [DllImport("kernel32.dll", SetLastError = true)]
     internal static extern IntPtr VirtualAllocEx(IntPtr process, IntPtr address, UIntPtr size, uint allocationType, uint protect);
@@ -662,70 +596,8 @@ internal static class NativeMethods
     [return: MarshalAs(UnmanagedType.Bool)]
     internal static extern bool CloseHandle(IntPtr handle);
 
-    [DllImport("dwmapi.dll")]
-    internal static extern int DwmSetWindowAttribute(IntPtr hWnd, int attribute, ref int value, int size);
-
-    [DllImport("dwmapi.dll")]
-    internal static extern int DwmGetWindowAttribute(IntPtr hWnd, int attribute, out int value, int size);
-
-    [DllImport("dwmapi.dll")]
-    internal static extern int DwmExtendFrameIntoClientArea(IntPtr hWnd, ref MARGINS margins);
-
-    [DllImport("dwmapi.dll")]
-    internal static extern int DwmFlush();
-
-    [DllImport("dcomp.dll")]
-    private static extern int DCompositionBoostCompositorClock([MarshalAs(UnmanagedType.Bool)] bool enable);
-
-    internal static bool TrySetCompositorClockBoost(bool enabled)
-    {
-        try
-        {
-            return DCompositionBoostCompositorClock(enabled) >= 0;
-        }
-        catch (Exception ex) when (ex is DllNotFoundException or EntryPointNotFoundException or BadImageFormatException)
-        {
-            return false;
-        }
-    }
-
     [DllImport("user32.dll", EntryPoint = "GetClassNameW", CharSet = CharSet.Unicode)]
     internal static extern int GetClassName(IntPtr hWnd, StringBuilder className, int capacity);
-
-    [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    internal static extern bool Shell_NotifyIcon(uint message, ref NOTIFYICONDATA data);
-
-    [DllImport("shell32.dll", EntryPoint = "SHGetFileInfoW", CharSet = CharSet.Unicode)]
-    internal static extern UIntPtr SHGetFileInfo(string path, uint attributes, ref SHFILEINFO info, uint infoSize, uint flags);
-
-    [DllImport("shell32.dll", EntryPoint = "SHCreateItemFromParsingName", CharSet = CharSet.Unicode, PreserveSig = true)]
-    internal static extern int SHCreateItemFromParsingName(
-        string path,
-        IntPtr bindContext,
-        ref Guid interfaceId,
-        [MarshalAs(UnmanagedType.Interface)] out IShellItemImageFactory imageFactory);
-
-    [DllImport("shell32.dll", EntryPoint = "SHDefExtractIconW", CharSet = CharSet.Unicode)]
-    internal static extern int SHDefExtractIcon(
-        string iconFile,
-        int iconIndex,
-        uint flags,
-        out IntPtr largeIcon,
-        out IntPtr smallIcon,
-        uint iconSize);
-
-    [DllImport("kernel32.dll", EntryPoint = "GetPrivateProfileStringW", CharSet = CharSet.Unicode)]
-    internal static extern uint GetPrivateProfileString(
-        string section,
-        string key,
-        string defaultValue,
-        StringBuilder value,
-        uint size,
-        string filePath);
-
-    [DllImport("shell32.dll")]
-    internal static extern int SHGetImageList(int imageList, ref Guid interfaceId, [MarshalAs(UnmanagedType.Interface)] out IImageList list);
 
     [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     internal static extern IntPtr LoadImage(IntPtr instance, string name, uint type, int width, int height, uint loadFlags);
@@ -752,6 +624,9 @@ internal static class NativeMethods
     [return: MarshalAs(UnmanagedType.Bool)]
     internal static extern bool SetForegroundWindow(IntPtr hWnd);
 
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, EntryPoint = "MessageBoxW")]
+    internal static extern int MessageBox(IntPtr window, string text, string caption, uint type);
+
     [DllImport("comctl32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     internal static extern bool SetWindowSubclass(IntPtr hWnd, SubclassProc callback, UIntPtr id, IntPtr referenceData);
@@ -762,41 +637,4 @@ internal static class NativeMethods
 
     [DllImport("comctl32.dll")]
     internal static extern IntPtr DefSubclassProc(IntPtr hWnd, uint message, UIntPtr wParam, IntPtr lParam);
-
-    [DllImport("gdi32.dll")]
-    internal static extern IntPtr CreateCompatibleDC(IntPtr hdc);
-
-    [DllImport("gdi32.dll", EntryPoint = "GetObjectW")]
-    internal static extern int GetObject(IntPtr value, int size, out BITMAP bitmap);
-
-    [DllImport("gdi32.dll")]
-    internal static extern int GetDIBits(
-        IntPtr hdc,
-        IntPtr bitmap,
-        uint start,
-        uint lines,
-        byte[] bits,
-        ref BITMAPINFO bitmapInfo,
-        uint usage);
-
-    [DllImport("gdi32.dll")]
-    internal static extern IntPtr CreateSolidBrush(uint color);
-
-    [DllImport("gdi32.dll")]
-    internal static extern IntPtr CreateDIBSection(IntPtr hdc, ref BITMAPINFO bitmapInfo, uint usage, out IntPtr bits, IntPtr section, uint offset);
-
-    [DllImport("gdi32.dll")]
-    internal static extern IntPtr SelectObject(IntPtr hdc, IntPtr value);
-
-    [DllImport("gdi32.dll")]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    internal static extern bool DeleteObject(IntPtr value);
-
-    [DllImport("gdi32.dll")]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    internal static extern bool DeleteDC(IntPtr hdc);
-
-    [DllImport("user32.dll")]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    internal static extern bool DrawIconEx(IntPtr hdc, int x, int y, IntPtr icon, int width, int height, uint step, IntPtr brush, uint flags);
 }

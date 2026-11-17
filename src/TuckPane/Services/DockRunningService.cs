@@ -1,29 +1,75 @@
+using System.Collections.Concurrent;
 using System.Runtime.InteropServices;
 using System.Text;
 using TuckPane.Core;
 
 namespace TuckPane.Services;
 
-// External discovery runs on one background STA per completed sample. No UI calls,
+// External discovery runs on one persistent background STA worker. No UI calls,
 // application launches, title guesses or PID lifetime assumptions are made here.
-internal sealed class DockRunningService
+internal sealed class DockRunningService : IDisposable
 {
+    private readonly object _sync = new();
+    private readonly BlockingCollection<(string[] Paths, TaskCompletionSource<Dictionary<string, bool>> Completion)> _requests = new(8);
     private readonly Dictionary<string, (long Stamp, long Length, DockItemIdentity Identity)> _identities = new(StringComparer.OrdinalIgnoreCase);
 
+    private Thread? _worker;
+    private bool _disposed;
     private long _requestedEpoch, _cacheEpoch;
+
     internal void Invalidate() => Interlocked.Increment(ref _requestedEpoch);
 
     internal Task<Dictionary<string, bool>> SampleAsync(string[] paths)
     {
-        var completion = new TaskCompletionSource<Dictionary<string, bool>>(TaskCreationOptions.RunContinuationsAsynchronously);
-        var thread = new Thread(() =>
+        ArgumentNullException.ThrowIfNull(paths);
+        lock (_sync)
         {
-            try { completion.SetResult(Sample(paths)); }
-            catch (Exception ex) { completion.SetException(ex); }
-        }) { IsBackground = true, Name = "TuckPane Dock open-state" };
-        thread.SetApartmentState(ApartmentState.STA);
-        thread.Start();
-        return completion.Task;
+            if (_disposed) return Task.FromResult(new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase));
+            var completion = new TaskCompletionSource<Dictionary<string, bool>>(TaskCreationOptions.RunContinuationsAsynchronously);
+            if (!_requests.TryAdd((paths, completion)))
+            {
+                // Coalesce unexpected bursts gracefully without blocking the UI thread.
+                completion.TrySetResult(new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase));
+                return completion.Task;
+            }
+            if (_worker is null)
+            {
+                _worker = new Thread(Work) { IsBackground = true, Name = "TuckPane Dock open-state" };
+                _worker.SetApartmentState(ApartmentState.STA);
+                _worker.Start();
+            }
+            return completion.Task;
+        }
+    }
+
+    private void Work()
+    {
+        foreach (var request in _requests.GetConsumingEnumerable())
+        {
+            bool disposed;
+            lock (_sync) disposed = _disposed;
+            if (disposed)
+            {
+                request.Completion.TrySetResult(new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase));
+                continue;
+            }
+            try { request.Completion.TrySetResult(Sample(request.Paths)); }
+            catch (Exception ex) { request.Completion.TrySetException(ex); }
+        }
+        _identities.Clear();
+    }
+
+    public void Dispose()
+    {
+        lock (_sync)
+        {
+            if (_disposed) return;
+            _disposed = true;
+            _requests.CompleteAdding();
+            while (_requests.TryTake(out var pending))
+                pending.Completion.TrySetResult(new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase));
+        }
+        // A native Shell COM call cannot safely be aborted. Never join a stuck STA from the UI thread.
     }
 
     private Dictionary<string, bool> Sample(string[] paths)
@@ -116,22 +162,22 @@ internal sealed class DockRunningService
         {
             NativeMethods.GetWindowThreadProcessId(hwnd, out uint pid);
             if (processes.TryGetValue(pid, out var cached)) return cached;
-            IntPtr process = OpenProcess(0x1000, false, pid);
+            IntPtr process = NativeMethods.OpenProcess(NativeMethods.PROCESS_QUERY_LIMITED_INFORMATION, false, pid);
             if (process == IntPtr.Zero) return default;
             try
             {
                 var path = new StringBuilder(32768); int length = path.Capacity;
-                string? executable = QueryFullProcessImageName(process, 0, path, ref length) ? path.ToString() : null;
+                string? executable = NativeMethods.QueryFullProcessImageName(process, 0, path, ref length) ? path.ToString() : null;
                 uint idLength = 0;
                 string? id = null;
-                if (GetApplicationUserModelId(process, ref idLength, null) == 122 && idLength is > 1 and < 32768)
+                if (NativeMethods.GetApplicationUserModelId(process, ref idLength, null) == 122 && idLength is > 1 and < 32768)
                 {
                     var value = new StringBuilder((int)idLength);
-                    if (GetApplicationUserModelId(process, ref idLength, value) == 0) id = value.ToString();
+                    if (NativeMethods.GetApplicationUserModelId(process, ref idLength, value) == 0) id = value.ToString();
                 }
                 return processes[pid] = (executable, id);
             }
-            finally { CloseHandle(process); }
+            finally { _ = NativeMethods.CloseHandle(process); }
         }
         NativeMethods.EnumWindows((hwnd, _) =>
         {
@@ -143,7 +189,7 @@ internal sealed class DockRunningService
                 // Classic UWP frames belong to ApplicationFrameHost; the child
                 // owns the actual app identity. Do not descend arbitrary apps.
                 if (string.Equals(Path.GetFileName(identity.Path), "ApplicationFrameHost.exe", StringComparison.OrdinalIgnoreCase))
-                    EnumChildWindows(hwnd, (child, _) =>
+                    NativeMethods.EnumChildWindows(hwnd, (child, _) =>
                     {
                         var app = Identity(child);
                         if (!string.IsNullOrEmpty(app.Id)) result.Add(new(app.Path, app.Id, true));
@@ -156,9 +202,9 @@ internal sealed class DockRunningService
         return result;
     }
 
-    private static bool IsApplicationWindow(IntPtr hwnd) => IsWindowVisible(hwnd) &&
+    private static bool IsApplicationWindow(IntPtr hwnd) => NativeMethods.IsWindowVisible(hwnd) &&
         (NativeMethods.GetWindowLongPtr(hwnd, NativeMethods.GWL_EXSTYLE).ToInt64() & NativeMethods.WS_EX_TOOLWINDOW) == 0 &&
-        (NativeMethods.DwmGetWindowAttribute(hwnd, 14, out int cloaked, sizeof(int)) < 0 || cloaked == 0);
+        (NativeMethods.DwmGetWindowAttribute(hwnd, NativeMethods.DWMWA_CLOAKED, out int cloaked, sizeof(int)) < 0 || cloaked == 0);
 
     private static void CaptureFolders(object shell, HashSet<string> paths)
     {
@@ -190,13 +236,6 @@ internal sealed class DockRunningService
     {
         if (value is not null && Marshal.IsComObject(value)) Marshal.FinalReleaseComObject(value);
     }
-
-    [DllImport("user32.dll")] private static extern bool IsWindowVisible(IntPtr hwnd);
-    [DllImport("user32.dll")] private static extern bool EnumChildWindows(IntPtr hwnd, NativeMethods.EnumWindowsProc callback, IntPtr param);
-    [DllImport("kernel32.dll")] private static extern IntPtr OpenProcess(uint access, bool inherit, uint pid);
-    [DllImport("kernel32.dll", CharSet = CharSet.Unicode)] private static extern bool QueryFullProcessImageName(IntPtr process, uint flags, StringBuilder name, ref int length);
-    [DllImport("kernel32.dll", CharSet = CharSet.Unicode)] private static extern int GetApplicationUserModelId(IntPtr process, ref uint length, StringBuilder? id);
-    [DllImport("kernel32.dll")] private static extern bool CloseHandle(IntPtr handle);
 }
 
 internal static class ShellLinkTarget

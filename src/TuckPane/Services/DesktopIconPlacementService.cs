@@ -52,7 +52,7 @@ internal sealed class DesktopIconPlacementService
         object? shellWindowsObject = null;
         object? desktopDispatch = null;
         object? browserObject = null;
-        IShellView? shellView = null;
+        NativeMethods.IShellView? shellView = null;
         object? folderObject = null;
         IntPtr childPidl = IntPtr.Zero;
         try
@@ -62,7 +62,7 @@ internal sealed class DesktopIconPlacementService
                 throwOnError: true)!;
             shellWindowsObject = Activator.CreateInstance(shellWindowsType)
                 ?? throw new InvalidOperationException("无法创建桌面 ShellWindows 服务。");
-            var shellWindows = (IShellWindows)shellWindowsObject;
+            var shellWindows = (NativeMethods.IShellWindows)shellWindowsObject;
             object location = DesktopCsidl;
             object root = new();
             desktopDispatch = shellWindows.FindWindowSW(
@@ -71,7 +71,7 @@ internal sealed class DesktopIconPlacementService
                 ShellWindowClassDesktop,
                 out _,
                 FindWindowNeedDispatch);
-            if (desktopDispatch is not IServiceProvider serviceProvider)
+            if (desktopDispatch is not NativeMethods.IServiceProvider serviceProvider)
                 throw new InvalidCastException("桌面窗口未提供 IServiceProvider。");
 
             Guid service = TopLevelBrowserService;
@@ -87,7 +87,7 @@ internal sealed class DesktopIconPlacementService
                 _ = Marshal.Release(browserPointer);
             }
 
-            var browser = (IShellBrowser)browserObject;
+            var browser = (NativeMethods.IShellBrowser)browserObject;
             hresult = browser.QueryActiveShellView(out shellView);
             Marshal.ThrowExceptionForHR(hresult);
             hresult = shellView.GetWindow(out IntPtr activeViewWindow);
@@ -96,7 +96,7 @@ internal sealed class DesktopIconPlacementService
             if (expectedView == IntPtr.Zero || activeViewWindow != expectedView)
                 throw new InvalidOperationException("活动 Shell 视图不是当前桌面图标视图。");
 
-            var folderView = (IFolderView)shellView;
+            var folderView = (NativeMethods.IFolderView)shellView;
             var spacing = new NativeMethods.POINT();
             hresult = folderView.GetSpacing(ref spacing);
             Marshal.ThrowExceptionForHR(hresult);
@@ -114,7 +114,7 @@ internal sealed class DesktopIconPlacementService
             {
                 _ = Marshal.Release(folderPointer);
             }
-            var shellFolder = (IShellFolder)folderObject;
+            var shellFolder = (NativeMethods.IShellFolder)folderObject;
             hresult = shellFolder.ParseDisplayName(
                 IntPtr.Zero,
                 IntPtr.Zero,
@@ -201,96 +201,5 @@ internal sealed class DesktopIconPlacementService
     private static void ReleaseComObject(object? value)
     {
         if (value is not null && Marshal.IsComObject(value)) _ = Marshal.ReleaseComObject(value);
-    }
-
-    [ComImport]
-    [Guid("85CB6900-4D95-11CF-960C-0080C7F4EE85")]
-    [InterfaceType(ComInterfaceType.InterfaceIsIDispatch)]
-    private interface IShellWindows
-    {
-        [return: MarshalAs(UnmanagedType.IDispatch)]
-        object FindWindowSW(
-            [In, Out, MarshalAs(UnmanagedType.Struct)] ref object location,
-            [In, Out, MarshalAs(UnmanagedType.Struct)] ref object root,
-            int windowClass,
-            out int window,
-            int options);
-    }
-
-    [ComImport]
-    [Guid("6D5140C1-7436-11CE-8034-00AA006009FA")]
-    [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-    private interface IServiceProvider
-    {
-        [PreserveSig]
-        int QueryService(ref Guid service, ref Guid interfaceId, out IntPtr result);
-    }
-
-    [ComImport]
-    [Guid("000214E2-0000-0000-C000-000000000046")]
-    [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-    private interface IShellBrowser
-    {
-        [PreserveSig] int GetWindow(out IntPtr window);
-        [PreserveSig] int ContextSensitiveHelp([MarshalAs(UnmanagedType.Bool)] bool enterMode);
-        [PreserveSig] int InsertMenusSB(IntPtr menu, IntPtr widths);
-        [PreserveSig] int SetMenuSB(IntPtr menu, IntPtr oleMenu, IntPtr activeObject);
-        [PreserveSig] int RemoveMenusSB(IntPtr menu);
-        [PreserveSig] int SetStatusTextSB([MarshalAs(UnmanagedType.LPWStr)] string text);
-        [PreserveSig] int EnableModelessSB([MarshalAs(UnmanagedType.Bool)] bool enable);
-        [PreserveSig] int TranslateAcceleratorSB(IntPtr message, ushort id);
-        [PreserveSig] int BrowseObject(IntPtr itemIdList, uint flags);
-        [PreserveSig] int GetViewStateStream(uint mode, out IntPtr stream);
-        [PreserveSig] int GetControlWindow(uint id, out IntPtr window);
-        [PreserveSig] int SendControlMsg(uint id, uint message, UIntPtr wParam, IntPtr lParam, out IntPtr result);
-        [PreserveSig] int QueryActiveShellView(out IShellView shellView);
-    }
-
-    [ComImport]
-    [Guid("000214E3-0000-0000-C000-000000000046")]
-    [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-    private interface IShellView
-    {
-        [PreserveSig] int GetWindow(out IntPtr window);
-    }
-
-    [ComImport]
-    [Guid("CDE725B0-CCC9-4519-917E-325D72FAB4CE")]
-    [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-    private interface IFolderView
-    {
-        [PreserveSig] int GetCurrentViewMode(out uint viewMode);
-        [PreserveSig] int SetCurrentViewMode(uint viewMode);
-        [PreserveSig] int GetFolder(ref Guid interfaceId, out IntPtr folder);
-        [PreserveSig] int Item(int index, out IntPtr itemIdList);
-        [PreserveSig] int ItemCount(uint flags, out int count);
-        [PreserveSig] int Items(uint flags, ref Guid interfaceId, out IntPtr items);
-        [PreserveSig] int GetSelectionMarkedItem(out int index);
-        [PreserveSig] int GetFocusedItem(out int index);
-        [PreserveSig] int GetItemPosition(IntPtr itemIdList, out NativeMethods.POINT point);
-        [PreserveSig] int GetSpacing(ref NativeMethods.POINT point);
-        [PreserveSig] int GetDefaultSpacing(out NativeMethods.POINT point);
-        [PreserveSig] int GetAutoArrange();
-        [PreserveSig] int SelectItem(int index, uint flags);
-        [PreserveSig] int SelectAndPositionItems(
-            uint count,
-            [In, MarshalAs(UnmanagedType.LPArray, SizeParamIndex = 0)] IntPtr[] itemIdLists,
-            [In, MarshalAs(UnmanagedType.LPArray, SizeParamIndex = 0)] NativeMethods.POINT[] points,
-            uint flags);
-    }
-
-    [ComImport]
-    [Guid("000214E6-0000-0000-C000-000000000046")]
-    [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-    private interface IShellFolder
-    {
-        [PreserveSig]
-        int ParseDisplayName(
-            IntPtr owner,
-            IntPtr bindContext,
-            [MarshalAs(UnmanagedType.LPWStr)] string displayName,
-            IntPtr charactersEaten,
-            out IntPtr itemIdList,
-            IntPtr attributes);
     }
 }

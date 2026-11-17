@@ -3,6 +3,7 @@ using Microsoft.UI.Composition;
 using Microsoft.UI.Xaml;
 using WinUIEx;
 using WinUIEx.Messaging;
+using DwmMargins = TuckPane.Services.NativeMethods.MARGINS;
 using Wuc = Windows.UI.Composition;
 
 namespace TuckPane.Services;
@@ -54,7 +55,7 @@ internal sealed class TransparentWindowBackdrop : CompositionBrushBackdrop
         object? sender,
         WindowMessageEventArgs e)
     {
-        if (e.Message.MessageId == WM_ERASEBKGND)
+        if (e.Message.MessageId == NativeMethods.WM_ERASEBKGND)
         {
             // Clearing to GDI black initializes the client pixels for DWM's
             // alpha-aware composition. The acquired HDC and brush are scoped
@@ -82,10 +83,10 @@ internal sealed class TransparentWindowBackdrop : CompositionBrushBackdrop
         // Zero margins clear any previous full-client frame extension. The
         // empty blur region below enables alpha without supplying visual blur.
         var margins = new DwmMargins();
-        int frameResult = DwmExtendFrameIntoClientArea(hwnd, ref margins);
+        int frameResult = NativeMethods.DwmExtendFrameIntoClientArea(hwnd, ref margins);
         LogResult(frameResult, "DwmExtendFrameIntoClientArea(ZeroMargins)");
 
-        IntPtr emptyRegion = CreateRectRgn(-2, -2, -1, -1);
+        IntPtr emptyRegion = NativeMethods.CreateRectRgn(-2, -2, -1, -1);
         if (emptyRegion == IntPtr.Zero)
         {
             AppLogger.Error(
@@ -108,34 +109,37 @@ internal sealed class TransparentWindowBackdrop : CompositionBrushBackdrop
         }
         finally
         {
-            _ = DeleteObject(emptyRegion);
+            _ = NativeMethods.DeleteObject(emptyRegion);
         }
     }
 
+    /// <summary>
+    /// Fills client pixels with GDI black and releases temporary handles via NativeMethods.DeleteObject(brush).
+    /// </summary>
     private static bool ClearBackground(IntPtr hwnd)
     {
         if (hwnd == IntPtr.Zero) return false;
 
-        IntPtr hdc = GetDC(hwnd);
+        IntPtr hdc = NativeMethods.GetDC(hwnd);
         if (hdc == IntPtr.Zero) return false;
         try
         {
-            if (!GetClientRect(hwnd, out Rect rect)) return false;
+            if (!NativeMethods.GetClientRect(hwnd, out NativeMethods.RECT rect)) return false;
 
-            IntPtr brush = CreateSolidBrush(0);
+            IntPtr brush = NativeMethods.CreateSolidBrush(0);
             if (brush == IntPtr.Zero) return false;
             try
             {
-                return FillRect(hdc, ref rect, brush) != 0;
+                return NativeMethods.FillRect(hdc, ref rect, brush) != 0;
             }
             finally
             {
-                _ = DeleteObject(brush);
+                _ = NativeMethods.DeleteObject(brush);
             }
         }
         finally
         {
-            _ = ReleaseDC(hwnd, hdc);
+            _ = NativeMethods.ReleaseDC(hwnd, hdc);
         }
     }
 
@@ -149,16 +153,6 @@ internal sealed class TransparentWindowBackdrop : CompositionBrushBackdrop
 
     private const uint DwmBlurBehindEnable = 0x00000001;
     private const uint DwmBlurBehindBlurRegion = 0x00000002;
-    private const uint WM_ERASEBKGND = 0x0014;
-
-    [StructLayout(LayoutKind.Sequential)]
-    private struct Rect
-    {
-        public int Left;
-        public int Top;
-        public int Right;
-        public int Bottom;
-    }
 
     [StructLayout(LayoutKind.Sequential)]
     private struct DwmBlurBehind
@@ -169,41 +163,6 @@ internal sealed class TransparentWindowBackdrop : CompositionBrushBackdrop
         [MarshalAs(UnmanagedType.Bool)] public bool TransitionOnMaximized;
     }
 
-    [StructLayout(LayoutKind.Sequential)]
-    private struct DwmMargins
-    {
-        public int Left;
-        public int Right;
-        public int Top;
-        public int Bottom;
-    }
-
     [DllImport("dwmapi.dll")]
     private static extern int DwmEnableBlurBehindWindow(IntPtr hwnd, ref DwmBlurBehind blurBehind);
-
-    [DllImport("dwmapi.dll")]
-    private static extern int DwmExtendFrameIntoClientArea(IntPtr hwnd, ref DwmMargins margins);
-
-    [DllImport("gdi32.dll", SetLastError = true)]
-    private static extern IntPtr CreateRectRgn(int left, int top, int right, int bottom);
-
-    [DllImport("gdi32.dll")]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool DeleteObject(IntPtr value);
-
-    [DllImport("gdi32.dll")]
-    private static extern IntPtr CreateSolidBrush(uint color);
-
-    [DllImport("user32.dll")]
-    private static extern IntPtr GetDC(IntPtr hwnd);
-
-    [DllImport("user32.dll")]
-    private static extern int ReleaseDC(IntPtr hwnd, IntPtr hdc);
-
-    [DllImport("user32.dll")]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool GetClientRect(IntPtr hwnd, out Rect rect);
-
-    [DllImport("user32.dll", ExactSpelling = true)]
-    private static extern int FillRect(IntPtr hdc, ref Rect rect, IntPtr brush);
 }

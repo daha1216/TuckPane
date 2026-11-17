@@ -1,8 +1,8 @@
+using System.Globalization;
 using System.Runtime.InteropServices;
 using System.Runtime.InteropServices.WindowsRuntime;
 using System.Security.Cryptography;
 using System.Text;
-using System.Globalization;
 using Microsoft.UI.Xaml.Media.Imaging;
 using Windows.Graphics.Imaging;
 using Windows.Storage;
@@ -17,7 +17,18 @@ public sealed class IconCacheService
     private const int FallbackSize = 32;
     private const int MaximumShortcutIconDepth = 4;
     private const string CacheVersion = "v8-resource-icon-bounds";
-    private readonly Dictionary<string, (string Identity, BitmapImage Image)> _memoryCache = new(StringComparer.OrdinalIgnoreCase);
+
+    internal const int MaximumMemoryCachedIcons = 2048;
+    internal const int MaximumCachedIcons = 4096;
+    internal const long MaximumCacheBytes = 64L * 1024 * 1024;
+
+    private static readonly object InflightSync = new();
+    private static readonly Dictionary<string, Task> InflightRefreshes = new(StringComparer.OrdinalIgnoreCase);
+
+    private readonly record struct CacheEntry(string MemoryKey, string Identity, BitmapImage Image);
+    private readonly object _cacheSync = new();
+    private readonly Dictionary<string, LinkedListNode<CacheEntry>> _memoryCache = new(StringComparer.OrdinalIgnoreCase);
+    private readonly LinkedList<CacheEntry> _lru = new();
 
     internal static IntPtr CreateDragBitmap(string path, int size)
     {
@@ -35,9 +46,6 @@ public sealed class IconCacheService
             _ = NativeMethods.DestroyIcon(icon);
         }
     }
-
-    internal const int MaximumCachedIcons = 4096;
-    internal const long MaximumCacheBytes = 64L * 1024 * 1024;
 
     // Cache files have no expiry of their own, so leftovers are pruned once per startup:
     // interrupted writes leave .tmp files behind and the cache grows without bound.
@@ -99,24 +107,27 @@ public sealed class IconCacheService
 
     private async Task<BitmapImage?> GetIconCoreAsync(string path, bool refresh, bool dockPresentation)
     {
-        AppPaths.EnsureCreated();
         string key = Path.GetFullPath(path);
-        string identity = await Task.Run(() => BuildCacheIdentity(key));
         string memoryKey = dockPresentation ? $"dock-visible-v1|{key}" : key;
-        if (dockPresentation) identity = $"dock-visible-v1|{identity}";
-        if (_memoryCache.TryGetValue(memoryKey, out var cached) &&
-            (!refresh || string.Equals(cached.Identity, identity, StringComparison.Ordinal)))
+        if (!refresh && TryGetMemoryCached(memoryKey, requiredIdentity: null, out BitmapImage? fastHit))
         {
-            return cached.Image;
+            return fastHit;
         }
-        _memoryCache.Remove(memoryKey);
+
+        AppPaths.EnsureCreated();
+        string identity = await Task.Run(() => BuildCacheIdentity(key));
+        if (dockPresentation) identity = $"dock-visible-v1|{identity}";
+        if (TryGetMemoryCached(memoryKey, identity, out BitmapImage? verifiedHit))
+        {
+            return verifiedHit;
+        }
 
         string cachePath = Path.Combine(AppPaths.IconCacheRoot, $"{Hash(identity)}.png");
         if (!File.Exists(cachePath))
         {
             try
             {
-                await RefreshAsync(key, cachePath, dockPresentation);
+                await EnsureDiskCacheFileAsync(key, cachePath, dockPresentation);
             }
             catch (Exception ex)
             {
@@ -127,17 +138,94 @@ public sealed class IconCacheService
         if (!File.Exists(cachePath)) return null;
         try
         {
-            StorageFile file = await StorageFile.GetFileFromPathAsync(cachePath);
-            using IRandomAccessStream stream = await file.OpenAsync(FileAccessMode.Read);
+            await using var fileStream = new FileStream(
+                cachePath,
+                FileMode.Open,
+                FileAccess.Read,
+                FileShare.Read | FileShare.Delete,
+                4096,
+                FileOptions.Asynchronous | FileOptions.SequentialScan);
+            using IRandomAccessStream randomAccess = fileStream.AsRandomAccessStream();
             var image = new BitmapImage();
-            await image.SetSourceAsync(stream);
-            _memoryCache[memoryKey] = (identity, image);
+            await image.SetSourceAsync(randomAccess);
+            StoreMemoryCached(memoryKey, identity, image);
             return image;
         }
         catch (Exception ex)
         {
             AppLogger.Error($"图标缓存读取失败：{cachePath}", ex);
             return null;
+        }
+    }
+
+    private bool TryGetMemoryCached(string memoryKey, string? requiredIdentity, out BitmapImage? image)
+    {
+        lock (_cacheSync)
+        {
+            if (!_memoryCache.TryGetValue(memoryKey, out LinkedListNode<CacheEntry>? node))
+            {
+                image = null;
+                return false;
+            }
+            if (requiredIdentity is not null &&
+                !string.Equals(node.Value.Identity, requiredIdentity, StringComparison.Ordinal))
+            {
+                _lru.Remove(node);
+                _memoryCache.Remove(memoryKey);
+                image = null;
+                return false;
+            }
+            if (!ReferenceEquals(_lru.First, node))
+            {
+                _lru.Remove(node);
+                _lru.AddFirst(node);
+            }
+            image = node.Value.Image;
+            return true;
+        }
+    }
+
+    private void StoreMemoryCached(string memoryKey, string identity, BitmapImage image)
+    {
+        lock (_cacheSync)
+        {
+            if (_memoryCache.TryGetValue(memoryKey, out LinkedListNode<CacheEntry>? existing))
+            {
+                _lru.Remove(existing);
+                _memoryCache.Remove(memoryKey);
+            }
+            LinkedListNode<CacheEntry> added = _lru.AddFirst(new CacheEntry(memoryKey, identity, image));
+            _memoryCache[memoryKey] = added;
+            while (_memoryCache.Count > MaximumMemoryCachedIcons && _lru.Last is { } oldest)
+            {
+                _lru.RemoveLast();
+                _memoryCache.Remove(oldest.Value.MemoryKey);
+            }
+        }
+    }
+
+    private static Task EnsureDiskCacheFileAsync(string path, string cachePath, bool dockPresentation)
+    {
+        if (File.Exists(cachePath)) return Task.CompletedTask;
+        lock (InflightSync)
+        {
+            if (InflightRefreshes.TryGetValue(cachePath, out Task? existing)) return existing;
+            Task created = RunRefreshOnceAsync(path, cachePath, dockPresentation);
+            InflightRefreshes[cachePath] = created;
+            return created;
+        }
+    }
+
+    private static async Task RunRefreshOnceAsync(string path, string cachePath, bool dockPresentation)
+    {
+        try
+        {
+            if (!File.Exists(cachePath))
+                await RefreshAsync(path, cachePath, dockPresentation);
+        }
+        finally
+        {
+            lock (InflightSync) _ = InflightRefreshes.Remove(cachePath);
         }
     }
 
@@ -214,26 +302,46 @@ public sealed class IconCacheService
             IconSnapshot shellIcon = ExtractShellIconPixels(path);
             return dockPresentation ? NormalizeDockIcon(shellIcon) : shellIcon;
         });
-        StorageFolder cacheFolder = await StorageFolder.GetFolderFromPathAsync(AppPaths.IconCacheRoot);
-        string temporaryName = $"{Path.GetFileNameWithoutExtension(cachePath)}.{Guid.NewGuid():N}.tmp";
-        StorageFile temporary = await cacheFolder.CreateFileAsync(temporaryName, CreationCollisionOption.FailIfExists);
+
+        string directory = Path.GetDirectoryName(cachePath)!;
+        Directory.CreateDirectory(directory);
+        string temporaryPath = Path.Combine(directory, $"{Path.GetFileNameWithoutExtension(cachePath)}.{Guid.NewGuid():N}.tmp");
         try
         {
-            using IRandomAccessStream output = await temporary.OpenAsync(FileAccessMode.ReadWrite);
-            using SoftwareBitmap bitmap = SoftwareBitmap.CreateCopyFromBuffer(
+            using var memory = new InMemoryRandomAccessStream();
+            using (SoftwareBitmap bitmap = SoftwareBitmap.CreateCopyFromBuffer(
                 snapshot.Pixels.AsBuffer(),
                 BitmapPixelFormat.Bgra8,
                 snapshot.Width,
                 snapshot.Height,
-                BitmapAlphaMode.Premultiplied);
-            BitmapEncoder encoder = await BitmapEncoder.CreateAsync(BitmapEncoder.PngEncoderId, output);
-            encoder.SetSoftwareBitmap(bitmap);
-            await encoder.FlushAsync();
-            File.Move(temporary.Path, cachePath, overwrite: true);
+                BitmapAlphaMode.Premultiplied))
+            {
+                BitmapEncoder encoder = await BitmapEncoder.CreateAsync(BitmapEncoder.PngEncoderId, memory);
+                encoder.SetSoftwareBitmap(bitmap);
+                await encoder.FlushAsync();
+            }
+            memory.Seek(0);
+            await using (var output = new FileStream(temporaryPath, new FileStreamOptions
+            {
+                Mode = FileMode.CreateNew,
+                Access = FileAccess.Write,
+                Share = FileShare.None,
+                Options = FileOptions.Asynchronous | FileOptions.WriteThrough
+            }))
+            {
+                await memory.AsStreamForRead().CopyToAsync(output);
+                await output.FlushAsync();
+                output.Flush(flushToDisk: true);
+            }
+            File.Move(temporaryPath, cachePath, overwrite: true);
         }
         finally
         {
-            if (File.Exists(temporary.Path)) File.Delete(temporary.Path);
+            if (File.Exists(temporaryPath))
+            {
+                try { File.Delete(temporaryPath); }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+            }
         }
     }
 
@@ -358,10 +466,8 @@ public sealed class IconCacheService
         return false;
     }
 
-    private static bool TryGetInternetShortcutIcon(string path, int size, out IntPtr icon)
-    {
-        return TryGetShortcutIcon(path, size, out icon);
-    }
+    private static bool TryGetInternetShortcutIcon(string path, int size, out IntPtr icon) =>
+        TryGetShortcutIcon(path, size, out icon);
 
     private static string ReadInternetShortcutValue(string path, string key)
     {
@@ -370,10 +476,8 @@ public sealed class IconCacheService
         return value.ToString();
     }
 
-    private static bool TryGetShellLinkIcon(string path, int size, out IntPtr icon)
-    {
-        return TryGetShortcutIcon(path, size, out icon);
-    }
+    private static bool TryGetShellLinkIcon(string path, int size, out IntPtr icon) =>
+        TryGetShortcutIcon(path, size, out icon);
 
     private static bool TryGetShortcutIcon(string path, int size, out IntPtr icon)
     {

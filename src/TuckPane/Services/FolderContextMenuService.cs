@@ -1,5 +1,4 @@
 using Microsoft.Win32;
-using System.Runtime.InteropServices;
 
 namespace TuckPane.Services;
 
@@ -182,9 +181,7 @@ internal sealed class FolderContextMenuService
         values is not null && values.TryGetValue(name, out object? value) ? value as string : null;
     private static bool SameExecutable(string? left, string right) => string.Equals(left, right, StringComparison.OrdinalIgnoreCase);
 
-    private static void NotifyShell() => SHChangeNotify(0x08000000, 0, IntPtr.Zero, IntPtr.Zero);
-    [DllImport("shell32.dll")]
-    private static extern void SHChangeNotify(uint eventId, uint flags, IntPtr item1, IntPtr item2);
+    private static void NotifyShell() => NativeMethods.SHChangeNotify(0x08000000, 0, IntPtr.Zero, IntPtr.Zero);
 }
 
 internal sealed class CurrentUserFolderContextMenuStore : IFolderContextMenuStore

@@ -1,4 +1,3 @@
-using System.Runtime.InteropServices;
 using Microsoft.UI.Xaml;
 using WinRT.Interop;
 
@@ -8,19 +7,35 @@ namespace TuckPane.Services;
 internal sealed class UpdateWindowInput : IDisposable
 {
     private readonly List<(IntPtr Handle, bool Enabled)> _windows = [];
+
     public UpdateWindowInput(IEnumerable<Window> windows)
     {
-        foreach (Window window in windows)
+        ArgumentNullException.ThrowIfNull(windows);
+        try
         {
-            IntPtr handle = WindowNative.GetWindowHandle(window);
-            _windows.Add((handle, IsWindowEnabled(handle)));
-            EnableWindow(handle, false);
+            foreach (Window window in windows)
+            {
+                IntPtr handle = WindowNative.GetWindowHandle(window);
+                if (handle == IntPtr.Zero || !NativeMethods.IsWindow(handle)) continue;
+                bool wasEnabled = NativeMethods.IsWindowEnabled(handle);
+                _windows.Add((handle, wasEnabled));
+                _ = NativeMethods.EnableWindow(handle, false);
+            }
+        }
+        catch
+        {
+            Dispose();
+            throw;
         }
     }
+
     public void Dispose()
     {
-        foreach (var window in _windows) EnableWindow(window.Handle, window.Enabled);
+        foreach (var window in _windows)
+        {
+            if (window.Handle != IntPtr.Zero && NativeMethods.IsWindow(window.Handle))
+                _ = NativeMethods.EnableWindow(window.Handle, window.Enabled);
+        }
+        _windows.Clear();
     }
-    [DllImport("user32.dll")] private static extern bool EnableWindow(IntPtr hwnd, bool enabled);
-    [DllImport("user32.dll")] private static extern bool IsWindowEnabled(IntPtr hwnd);
 }
