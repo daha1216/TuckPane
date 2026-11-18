@@ -140,7 +140,8 @@ public sealed class DesktopLayerService : IDisposable
 
         if (_expanded)
         {
-            if (state == DesktopAttachmentState.Hidden)
+            bool hidden = state == DesktopAttachmentState.Hidden;
+            if (hidden)
             {
                 _ = NativeMethods.SetWindowPos(
                     _window,
@@ -152,7 +153,7 @@ public sealed class DesktopLayerService : IDisposable
                     NativeMethods.SWP_NOMOVE | NativeMethods.SWP_NOSIZE |
                     NativeMethods.SWP_NOACTIVATE | NativeMethods.SWP_NOZORDER | NativeMethods.SWP_HIDEWINDOW);
             }
-            RepairExpandedZOrder();
+            RepairExpandedZOrder(showWindow: hidden);
             remaining = ProbeDesktopAttachment();
             return state;
         }
@@ -185,7 +186,7 @@ public sealed class DesktopLayerService : IDisposable
         return state;
     }
 
-    internal void RepairExpandedZOrder()
+    internal void RepairExpandedZOrder(bool showWindow = false)
     {
         if (_window == IntPtr.Zero || !NativeMethods.IsWindow(_window)) return;
         if (_stayTopmost)
@@ -201,7 +202,18 @@ public sealed class DesktopLayerService : IDisposable
                 NativeMethods.SWP_NOACTIVATE | NativeMethods.SWP_SHOWWINDOW | NativeMethods.SWP_NOOWNERZORDER);
             return;
         }
-        RaiseAboveNormalWindows();
+        // Re-insert directly above the desktop host rather than jumping over normal user windows.
+        uint flags = NativeMethods.SWP_NOMOVE |
+            NativeMethods.SWP_NOSIZE |
+            NativeMethods.SWP_NOACTIVATE |
+            NativeMethods.SWP_NOOWNERZORDER;
+        if (showWindow) flags |= NativeMethods.SWP_SHOWWINDOW;
+        if (!TryGetDesktopInsertAnchor(out IntPtr anchor))
+        {
+            if (!showWindow) return;
+            flags |= NativeMethods.SWP_NOZORDER;
+        }
+        _ = NativeMethods.SetWindowPos(_window, anchor, 0, 0, 0, 0, flags);
     }
 
     private void ReassertDesktopAttachment()

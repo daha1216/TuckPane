@@ -42,6 +42,15 @@ internal static class ShellChangeNotificationService
             destinationPath);
     }
 
+    internal static void NotifyCreated(string path)
+    {
+        NativeMethods.SHChangeNotify(
+            Directory.Exists(path) ? MakeDirectory : CreateItem,
+            PathUnicode | Flush,
+            path,
+            null);
+    }
+
     internal static ShellMoveNotificationKind ClassifyMove(string sourcePath, string destinationPath)
     {
         string? sourceParent = Path.GetDirectoryName(Path.GetFullPath(sourcePath));

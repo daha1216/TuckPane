@@ -60,7 +60,8 @@ internal static class CiHeadlessRunner
         ["--window-alignment"],
         ["--theme-material-removal"],
         ["--theme-targets"],
-        ["--unified-theme"]
+        ["--unified-theme"],
+        ["--release-safety"]
     ];
 
     internal static async Task RunAsync()

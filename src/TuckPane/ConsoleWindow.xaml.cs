@@ -505,6 +505,7 @@ public sealed partial class ConsoleWindow : Window
         try { _themeBackdrop.DetachAndClose(); }
         catch (Exception ex) { AppLogger.Error("Console backdrop close failed.", ex); }
         _host.ThemeChanged -= Host_ThemeChanged;
+        _host.Updates.Changed -= UpdatesChanged;
         _accessibilitySubscription?.Dispose();
         foreach (var (row, token) in _settingRowVisibilityTokens)
             row.UnregisterPropertyChangedCallback(UIElement.VisibilityProperty, token);

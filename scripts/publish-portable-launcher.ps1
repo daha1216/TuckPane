@@ -1,7 +1,9 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
     [Parameter(Mandatory)]
-    [string]$PublishDirectory
+    [string]$PublishDirectory,
+
+    [string]$Version = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -12,7 +14,11 @@ $project = Join-Path $projectRoot 'src\TuckPane.Launcher\TuckPane.Launcher.cspro
 if (-not (Test-Path -LiteralPath (Join-Path $publishRoot 'TuckPane.exe'))) {
     throw 'Publish the application before adding its launcher.'
 }
-dotnet publish $project -c Release -o $launcherRoot
+$publishArgs = @($project, '-c', 'Release', '-o', $launcherRoot)
+if (-not [string]::IsNullOrWhiteSpace($Version)) {
+    $publishArgs += "-p:Version=$Version"
+}
+dotnet publish @publishArgs
 if ($LASTEXITCODE -ne 0) { throw 'Portable launcher publish failed.' }
 
 $launcherFiles = @('TuckPane.Launcher.exe', 'TuckPane.Launcher.dll',

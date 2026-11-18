@@ -56,6 +56,62 @@ public static class UpdateFiles
         WriteJson(Path.Combine(destination, "backup.json"), new { version, source = statePath, statePresent, createdUtc = DateTimeOffset.UtcNow });
         return destination;
     }
+
+    public const int BackupRetentionCount = 10;
+
+    /// <summary>
+    /// Keeps at most <paramref name="keep"/> newest valid configuration backups within
+    /// <paramref name="maxAge"/>. Only directories carrying a <c>backup.json</c> marker
+    /// that are not filesystem links are pruned, and <paramref name="current"/> is always retained.
+    /// </summary>
+    public static int PruneBackups(string backupRoot, string? current, int keep, TimeSpan? maxAge = null)
+    {
+        int removed = 0;
+        try
+        {
+            if (!Directory.Exists(backupRoot)) return 0;
+            string? protectedFull = string.IsNullOrWhiteSpace(current)
+                ? null
+                : Path.GetFullPath(current).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            DirectoryInfo[] backups = new DirectoryInfo(backupRoot)
+                .EnumerateDirectories("*", SearchOption.TopDirectoryOnly)
+                .Where(directory => (directory.Attributes & FileAttributes.ReparsePoint) == 0 &&
+                    File.Exists(Path.Combine(directory.FullName, "backup.json")) &&
+                    (protectedFull is null || !Path.GetFullPath(directory.FullName)
+                        .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+                        .Equals(protectedFull, StringComparison.OrdinalIgnoreCase)))
+                .OrderByDescending(directory => directory.CreationTimeUtc)
+                .ThenByDescending(directory => directory.Name, StringComparer.Ordinal)
+                .ToArray();
+            DateTime cutoff = maxAge is { } age ? DateTime.UtcNow - age : DateTime.MinValue;
+            int retainCount = Math.Max(1, keep);
+            for (int index = 0; index < backups.Length; index++)
+            {
+                DirectoryInfo candidate = backups[index];
+                if (index < retainCount && candidate.CreationTimeUtc >= cutoff) continue;
+                try
+                {
+                    NoLinks(candidate.FullName);
+                    DeleteBackupDirectory(candidate.FullName);
+                    removed++;
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+        return removed;
+    }
+
+    private static void DeleteBackupDirectory(string directory)
+    {
+        foreach (string entry in Directory.EnumerateFileSystemEntries(directory))
+        {
+            if ((File.GetAttributes(entry) & FileAttributes.ReparsePoint) != 0) continue;
+            if (Directory.Exists(entry)) DeleteBackupDirectory(entry);
+            else File.Delete(entry);
+        }
+        Directory.Delete(directory, recursive: false);
+    }
 }
 
 public sealed record UpdateCheckCache(DateTimeOffset LastAttemptUtc, string? ReleaseJson);

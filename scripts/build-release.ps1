@@ -8,10 +8,8 @@ $ErrorActionPreference = 'Stop'
 $projectRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 if ([string]::IsNullOrWhiteSpace($Version)) {
     $buildProps = [xml](Get-Content -LiteralPath (Join-Path $projectRoot 'Directory.Build.props') -Raw)
-    $Version = ($buildProps.Project.PropertyGroup.Version | Select-Object -First 1). '#text'.Trim()
-    if ([string]::IsNullOrWhiteSpace($Version)) {
-        $Version = [string]($buildProps.Project.PropertyGroup.Version | Select-Object -First 1)
-    }
+    $versionNode = $buildProps.Project.PropertyGroup.Version | Select-Object -First 1
+    $Version = if ($versionNode -is [System.Xml.XmlElement]) { $versionNode.InnerText } else { [string]$versionNode }
     $Version = $Version.Trim()
 }
 if ($Version -notmatch '^\d+\.\d+\.\d+$') {
@@ -67,7 +65,7 @@ Reset-BuildDirectory $shellArtifactsRoot
 
 $updaterRoot = Join-Path $artifactsRoot 'publish\updater'
 Reset-BuildDirectory $updaterRoot
-dotnet publish (Join-Path $projectRoot 'src\TuckPane.Updater\TuckPane.Updater.csproj') -c Release -o $updaterRoot
+dotnet publish (Join-Path $projectRoot 'src\TuckPane.Updater\TuckPane.Updater.csproj') -c Release -p:Version=$Version -o $updaterRoot
 if ($LASTEXITCODE -ne 0) { throw 'Updater publish failed.' }
 
 New-Item -ItemType Directory -Path $webView2Root -Force | Out-Null
@@ -103,6 +101,7 @@ dotnet publish $project `
     -p:RuntimeIdentifier=win-x64 `
     -p:SelfContained=true `
     -p:WindowsAppSDKSelfContained=true `
+    -p:Version=$Version `
     -p:DebugSymbols=false `
     -p:DebugType=None `
     -o $publishRoot
@@ -136,7 +135,7 @@ $publishLicenses = Join-Path $publishRoot 'licenses'
 New-Item -ItemType Directory -Path $publishLicenses -Force | Out-Null
 Copy-Item -Path (Join-Path $projectRoot 'licenses\*') -Destination $publishLicenses -Recurse -Force
 
-& (Join-Path $PSScriptRoot 'publish-portable-launcher.ps1') -PublishDirectory $publishRoot
+& (Join-Path $PSScriptRoot 'publish-portable-launcher.ps1') -PublishDirectory $publishRoot -Version $Version
 
 $privateArtifacts = @(Get-ChildItem -LiteralPath $publishRoot -Recurse -File | Where-Object {
     $_.Extension -eq '.pdb' -or $_.Name -in @('state.json', 'state.json.bak') -or $_.Extension -eq '.log'

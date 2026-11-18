@@ -312,14 +312,22 @@ internal sealed class ExternalItemDragCoordinator
             {
                 if (result.DesktopCopyRequested)
                 {
-                    TransferOutcome copied = await _window.Host.TransferQueue.RunAsync(
-                        token => _window.Storage.CopyItemToDesktopAsync(dragPath, progress: null, token));
+                    TransferOutcome copied = await _window.Host.TransferQueue.RunAsync(async token =>
+                    {
+                        try { return await _window.Storage.CopyItemToDesktopAsync(dragPath, progress: null, token); }
+                        catch (OperationCanceledException) { throw; }
+                        catch (Exception ex) { return new TransferOutcome(dragPath, null, TransferStatus.Failed, ex.Message); }
+                    });
                     if (copied.Status is not (TransferStatus.Copied or TransferStatus.ShortcutCreated))
                     {
                         dragCompleted = false;
                         _window.ShowOrganizerMessage(copied.Message, copied.Status == TransferStatus.Cancelled
                             ? InfoBarSeverity.Informational
                             : InfoBarSeverity.Error);
+                    }
+                    else if (copied.DestinationPath is { } copiedDestination)
+                    {
+                        await Task.Run(() => ShellChangeNotificationService.NotifyCreated(copiedDestination));
                     }
                 }
                 else

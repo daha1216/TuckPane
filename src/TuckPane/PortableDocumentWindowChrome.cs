@@ -510,6 +510,7 @@ internal sealed class PortableDocumentWindowChrome : IDisposable
     private void CancelRename()
     {
         if (!_renaming) return;
+        _errorBar.IsOpen = false;
         _titleBar.TitleEditor.Text = _getTitle();
         EndRename();
     }

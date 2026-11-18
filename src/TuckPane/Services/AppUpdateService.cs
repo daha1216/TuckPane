@@ -7,7 +7,6 @@ namespace TuckPane.Services;
 
 internal sealed class AppUpdateService : IDisposable
 {
-    private const int MaximumRetainedConfigBackups = 10;
     private static readonly TimeSpan ConfigBackupRetention = TimeSpan.FromDays(30);
 
     private readonly HttpClient _http = new() { Timeout = Timeout.InfiniteTimeSpan };
@@ -105,6 +104,8 @@ internal sealed class AppUpdateService : IDisposable
         _operation.CancelAfter(TimeSpan.FromMinutes(30));
         NotifyChanged();
         string? session = null;
+        bool helperStarted = false;
+        bool exited = false;
         try
         {
             session = Path.Combine(_root, "sessions", Guid.NewGuid().ToString("N"));
@@ -114,7 +115,7 @@ internal sealed class AppUpdateService : IDisposable
             Downloading = false;
             StatusKey = "UpdatePreparing";
             NotifyChanged();
-            bool exited = await exitWithHandoff(async () =>
+            exited = await exitWithHandoff(async () =>
             {
                 string backupRoot = Path.Combine(_root, "config-backups");
                 BackupPath = UpdateFiles.BackupConfiguration(AppPaths.StatePath, backupRoot, CurrentVersion);
@@ -130,6 +131,7 @@ internal sealed class AppUpdateService : IDisposable
                 var start = new ProcessStartInfo(helper) { UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = session };
                 start.ArgumentList.Add(Path.Combine(session, "request.json"));
                 using Process process = Process.Start(start) ?? throw new IOException("Updater did not start.");
+                helperStarted = true;
                 using var readyTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(90));
                 try
                 {
@@ -149,22 +151,21 @@ internal sealed class AppUpdateService : IDisposable
             if (!exited)
             {
                 StatusKey = "UpdateExitCancelled";
-                TryDeleteSession(session);
             }
         }
         catch (OperationCanceledException)
         {
             StatusKey = "UpdateCancelled";
-            if (session is not null) TryDeleteSession(session);
         }
         catch (Exception ex)
         {
             StatusKey = "UpdateFailed";
             Error = ex.Message;
-            if (session is not null) TryDeleteSession(session);
         }
         finally
         {
+            // Once the external updater helper starts, it owns the session directory.
+            if (!exited && !helperStarted && session is not null) TryDeleteSession(session);
             Downloading = false;
             _busy = false;
             _operation?.Dispose();
@@ -227,40 +228,12 @@ internal sealed class AppUpdateService : IDisposable
 
     private void CleanupConfigBackups(string? protectedBackupPath)
     {
-        try
-        {
-            string root = Path.Combine(_root, "config-backups");
-            if (!Directory.Exists(root)) return;
-            string? protectedFull = string.IsNullOrWhiteSpace(protectedBackupPath)
-                ? null
-                : Path.GetFullPath(protectedBackupPath).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-            var backups = new List<DirectoryInfo>();
-            foreach (string candidate in Directory.EnumerateDirectories(root, "*", SearchOption.TopDirectoryOnly))
-            {
-                var info = new DirectoryInfo(candidate);
-                if ((info.Attributes & FileAttributes.ReparsePoint) != 0) continue;
-                string full = Path.GetFullPath(candidate).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-                if (protectedFull is not null && string.Equals(full, protectedFull, StringComparison.OrdinalIgnoreCase)) continue;
-                backups.Add(info);
-            }
-            backups.Sort((left, right) => right.LastWriteTimeUtc.CompareTo(left.LastWriteTimeUtc));
-            DateTime cutoff = DateTime.UtcNow - ConfigBackupRetention;
-            int removed = 0;
-            for (int index = 0; index < backups.Count; index++)
-            {
-                DirectoryInfo entry = backups[index];
-                if (index < MaximumRetainedConfigBackups && entry.LastWriteTimeUtc >= cutoff) continue;
-                try
-                {
-                    UpdateFiles.NoLinks(entry.FullName);
-                    DeleteSessionEntry(entry.FullName);
-                    removed++;
-                }
-                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
-            }
-            if (removed > 0) AppLogger.Performance($"update-config-backups cleanup removed={removed}");
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+        int removed = UpdateFiles.PruneBackups(
+            Path.Combine(_root, "config-backups"),
+            protectedBackupPath,
+            UpdateFiles.BackupRetentionCount,
+            ConfigBackupRetention);
+        if (removed > 0) AppLogger.Performance($"update-config-backups cleanup removed={removed}");
     }
 
     private static void DeleteSessionEntry(string directory)

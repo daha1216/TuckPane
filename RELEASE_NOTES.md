@@ -1,3 +1,20 @@
+## 4.2.7
+
+本版完成全面可靠性加固与分阶段架构重构，修复多项数据丢失竞态、资源泄漏与展开态桌面层级问题，并恢复完整无头 CI 门禁与稳定语义化更新链路（基于 4.2.6，应用内更新只检查本 fork）。
+
+- **修复展开态收纳窗与 Dock 在 `Win+D` 后的桌面层级自愈（已知问题①）**：展开态（非置顶）Floating/Positioned 收纳窗及 Dock 现纳入 `DesktopVisibilityTimer` 监控与受控修复，并在被桌面宿主遮挡后通过 `TryGetDesktopInsertAnchor` 重新插入到桌面宿主正上方，始终保持在桌面壁纸之上且位于普通用户窗口之下，不再误跳到前台窗口上方；同步用 `SHELLDLL_DefView` 进程/类名校验（A2）与独立桌面锚定修复（A9）加固桌面图标视图缓存。
+- **修复两处数据丢失与并发竞态**：
+  - `.tucktodo` 外部重命名纳入 `PortableDocumentCoordinator` + `NoteRenameTransaction`，在移动文件与保存配置期间锁定 `TodoWindow` 自动保存并解除阻塞后同步路径，防止旧路径覆写导致文件分裂。
+  - `.tucknote` 窗口严格等待 WebView2 发出 `"ready"` 消息且 `documentEpoch > 0` 后才允许读取编辑器状态，关闭初始化空窗期隐藏/退出/改名导致空白覆盖磁盘的竞态。
+- **可靠性与资源清理（含 2026-10 审计收口）**：
+  - 正常托盘退出前落盘防抖中的窗口状态（F2）；`StateStore` 写入启用 `WriteThrough` 与设备刷盘（D1）；`StartupService.Apply` 增加容错保护（M3）；`App.UnhandledException` 对不可恢复的致命 CLR 异常（`OutOfMemoryException` / `AccessViolationException` / `StackOverflowException`）不再吞掉崩溃信号（F6）。
+  - `DockRunningService` 改为单常驻后台 STA 线程并确定性释放（消除每小时约 3,600 次线程创建销毁）；`StorageService` 修复 `RegistryKey` 句柄泄漏（K6）、用 `IShellLinkW` 替换 `WScript.Shell`（K3）、统一支持 `AppPaths.DesktopRoot`（K8）与空目录删除失败报错（K5）；`Ctrl` + 拖拽到桌面完整执行复制并通知资源管理器刷新（K1）。
+  - `IconCacheService` 升级为宿主共享的有界 2,048 项 LRU 缓存并先查内存再探盘与并发写合并（G1/L3/M5）；`AppUpdateService` 与 `UpdateFiles` 保护全新配置备份（C9）、仅按 `backup.json` 标记清理历史配置备份（C6）且在启动外部更新器后不再误删会话目录（O2）；安装脚本 `RegisterFolderMenu` 补齐副本归属校验（C8）。
+- **结构减重与交互细节对齐**：
+  - 统一 `NoteWindow` 与 `TodoWindow` 共享标题栏与窗口外壳（补齐待办高对比度主题、`AutomationId`、取消重命名清除错误栏，以及便签 `280×340..1600×1200` 尺寸钳制；节流 20Hz 待办完成刷新并移除退出时 `_saveGate.Dispose()` 竞态）。
+  - 合并 `ConsoleWindow` 新建与管理表单为共享 `OrganizerSettingsForm`，收口全局滑块按组刷盘与设置异步门控，预先声明可变本地画刷防止系统深色主题下的 `UnauthorizedAccessException`，并在窗口关闭时退订所有渲染与更新事件；`MainWindow` 统一 5 套交互繁忙守卫，剥离目录、外拖与桌面附着非热路径控制器，保留 60–240 Hz 悬停与 Win32 子类化热路径不动。
+- **工程化与发版流水线升级**：引入根目录 `Directory.Build.props` 单源版本号管理与 `build-release.ps1` `-p:Version` 参数透传，7 个工程全部纳入 `TuckPane.slnx` 并启用依赖锁文件；通过禁用 Bootstrapper 弹窗在 GitHub Actions 恢复 `56` 组无头 `LogicChecks`、`UpdateChecks`、`LauncherChecks` 与 3 个 WebView2 JS 校验。
+
 ## 4.2.6
 
 本版修复一类“双击图标没反应”的启动失败，并保留 4.2.5 的全部改动；应用内更新只检查本 fork。
