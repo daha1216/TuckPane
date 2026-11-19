@@ -9,7 +9,10 @@ public enum TrayCommand
     HideAll = 3,
     ToggleStartup = 4,
     CancelTransfer = 5,
-    Exit = 6
+    Exit = 6,
+    SearchOrganizers = 7,
+    TogglePeek = 8,
+    TidyEdgeStack = 9
 }
 
 public sealed class TrayIconService : IDisposable
@@ -20,6 +23,7 @@ public sealed class TrayIconService : IDisposable
     private readonly IntPtr _window;
     private readonly Func<bool> _isStartupEnabled;
     private readonly Func<bool> _isTransferActive;
+    private readonly Func<bool>? _isPeekActive;
     private readonly Action<TrayCommand> _command;
     private readonly NativeMethods.SubclassProc _subclass;
     private readonly Func<string>? _lifecycleContext;
@@ -28,11 +32,12 @@ public sealed class TrayIconService : IDisposable
     private IntPtr _icon;
 
     public TrayIconService(IntPtr window, Func<bool> isStartupEnabled, Func<bool> isTransferActive, Action<TrayCommand> command,
-        Func<string>? lifecycleContext = null)
+        Func<string>? lifecycleContext = null, Func<bool>? isPeekActive = null)
     {
         _window = window;
         _isStartupEnabled = isStartupEnabled;
         _isTransferActive = isTransferActive;
+        _isPeekActive = isPeekActive;
         _command = command;
         _subclass = WindowProc;
         _lifecycleContext = lifecycleContext;
@@ -115,6 +120,11 @@ public sealed class TrayIconService : IDisposable
         try
         {
             _ = NativeMethods.AppendMenu(menu, NativeMethods.MF_STRING, (UIntPtr)TrayCommand.OpenConsole, AppStrings.Get("TrayOpenConsole"));
+            _ = NativeMethods.AppendMenu(menu, NativeMethods.MF_STRING, (UIntPtr)TrayCommand.SearchOrganizers, AppStrings.Get("TraySearchOrganizers"));
+            uint peekFlags = NativeMethods.MF_STRING | (_isPeekActive?.Invoke() == true ? NativeMethods.MF_CHECKED : 0);
+            _ = NativeMethods.AppendMenu(menu, peekFlags, (UIntPtr)TrayCommand.TogglePeek, AppStrings.Get("TrayTogglePeek"));
+            _ = NativeMethods.AppendMenu(menu, NativeMethods.MF_STRING, (UIntPtr)TrayCommand.TidyEdgeStack, AppStrings.Get("TrayTidyEdgeStack"));
+            _ = NativeMethods.AppendMenu(menu, NativeMethods.MF_SEPARATOR, UIntPtr.Zero, null);
             _ = NativeMethods.AppendMenu(menu, NativeMethods.MF_STRING, (UIntPtr)TrayCommand.ShowAll, AppStrings.Get("TrayShowAll"));
             _ = NativeMethods.AppendMenu(menu, NativeMethods.MF_STRING, (UIntPtr)TrayCommand.HideAll, AppStrings.Get("TrayHideAll"));
             _ = NativeMethods.AppendMenu(menu, NativeMethods.MF_SEPARATOR, UIntPtr.Zero, null);

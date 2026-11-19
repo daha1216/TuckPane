@@ -24,6 +24,7 @@ public sealed class DesktopLayerService : IDisposable
     private bool _allowActivation;
     private bool _expanded;
     private bool _stayTopmost;
+    private bool _peekTopmost;
 
     public DesktopLayerService(IntPtr window, IntPtr expandedOwner)
     {
@@ -118,6 +119,38 @@ public sealed class DesktopLayerService : IDisposable
     }
 
     internal bool IsInputActivationEnabled => _allowActivation;
+    internal bool IsPeekTopmost => _peekTopmost;
+
+    public void SetPeekTopmost(bool active)
+    {
+        if (_peekTopmost == active) return;
+        _peekTopmost = active;
+        if (_window == IntPtr.Zero || !NativeMethods.IsWindow(_window)) return;
+
+        if (active)
+        {
+            _ = NativeMethods.SetWindowLongPtr(_window, NativeMethods.GWLP_HWNDPARENT, _expandedOwner);
+            _ = NativeMethods.SetWindowPos(
+                _window,
+                NativeMethods.HWND_TOPMOST,
+                0, 0, 0, 0,
+                NativeMethods.SWP_NOMOVE | NativeMethods.SWP_NOSIZE |
+                NativeMethods.SWP_NOACTIVATE | NativeMethods.SWP_SHOWWINDOW | NativeMethods.SWP_NOOWNERZORDER);
+        }
+        else
+        {
+            if (!_stayTopmost)
+            {
+                _ = NativeMethods.SetWindowPos(
+                    _window,
+                    NativeMethods.HWND_NOTOPMOST,
+                    0, 0, 0, 0,
+                    NativeMethods.SWP_NOMOVE | NativeMethods.SWP_NOSIZE |
+                    NativeMethods.SWP_NOACTIVATE | NativeMethods.SWP_NOOWNERZORDER);
+            }
+            Reattach(showWindow: false);
+        }
+    }
 
     internal string DescribeAttachment()
     {
@@ -298,7 +331,7 @@ public sealed class DesktopLayerService : IDisposable
 
     private DesktopAttachmentState ProbeDesktopAttachment()
     {
-        if ((_expanded && _stayTopmost) || _window == IntPtr.Zero || !NativeMethods.IsWindow(_window))
+        if (_peekTopmost || (_expanded && _stayTopmost) || _window == IntPtr.Zero || !NativeMethods.IsWindow(_window))
         {
             return DesktopAttachmentState.Ok;
         }

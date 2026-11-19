@@ -112,11 +112,12 @@ public sealed partial class AppHost : IDisposable
         Console = new ConsoleWindow(this);
         Console.InitializeHostWindow();
         _tray = new TrayIconService(Console.Hwnd, () => State.GlobalSettings.StartWithWindows, () => TransferQueue.IsActive,
-            HandleTrayCommand, LifecycleWindowCounts);
+            HandleTrayCommand, LifecycleWindowCounts, () => IsPeekActive);
         TransferQueue.StateChanged += (_, _) => _dispatcher.TryEnqueue(() => Console.UpdateTransferState());
 
         if (NormalizePositionedPlacementsOnStartup() | NormalizeStationPlacementsOnStartup()) await SaveStateAsync();
         foreach (OrganizerDefinition organizer in State.Organizers) CreateWindow(organizer);
+        InitializeProductivityServices();
         Console.RefreshAll();
         _ = Updates.CheckAsync(false);
         AppLogger.Performance($"startup organizers={State.Organizers.Count} elapsedMs={Environment.TickCount64 - startupStarted}");
@@ -2100,6 +2101,7 @@ public sealed partial class AppHost : IDisposable
         AppLogger.Lifecycle("exit-commit", $"source={source} {LifecycleWindowCounts()}");
         attempt.Commit();
         Updates.Dispose();
+        DisposeProductivityServices();
         DisposeDockRunningState();
         ShellLauncher.Dispose();
         foreach (NoteWindow window in noteWindows) window.ClosePermanentlyWithoutSave();
@@ -2166,25 +2168,20 @@ public sealed partial class AppHost : IDisposable
                     case TrayCommand.OpenConsole:
                         OpenConsole();
                         break;
+                    case TrayCommand.SearchOrganizers:
+                        OpenSearchWindow();
+                        break;
+                    case TrayCommand.TogglePeek:
+                        TogglePeekMode();
+                        break;
+                    case TrayCommand.TidyEdgeStack:
+                        _ = await TidyFloatingEdgeStackAsync();
+                        break;
                     case TrayCommand.ShowAll:
-                        foreach (MainWindow window in _windows.Values) window.SetVisible(true);
-                        foreach (Guid noteId in _trayHiddenNotes.ToArray())
-                        {
-                            if (_noteWindows.TryGetValue(noteId, out NoteWindow? noteWindow)) noteWindow.RestoreFromTray();
-                        }
-                        _trayHiddenNotes.Clear();
-                        _portableDocuments.RestoreAllFromTray();
+                        ShowAllWindows();
                         break;
                     case TrayCommand.HideAll:
-                        foreach (MainWindow window in _windows.Values) window.SetVisible(false);
-                        _trayHiddenNotes.Clear();
-                        foreach ((Guid noteId, NoteWindow noteWindow) in _noteWindows)
-                        {
-                            if (!noteWindow.IsVisible) continue;
-                            _trayHiddenNotes.Add(noteId);
-                            noteWindow.HideForTray();
-                        }
-                        _portableDocuments.HideAllForTray();
+                        HideAllWindows();
                         break;
                     case TrayCommand.ToggleStartup:
                         await SetStartupAsync(!State.GlobalSettings.StartWithWindows);
@@ -2210,6 +2207,7 @@ public sealed partial class AppHost : IDisposable
     public void Dispose()
     {
         _feedbackDisposed = true;
+        DisposeProductivityServices();
         DisposeDockRunningState();
         AppLogger.Lifecycle("host-dispose", LifecycleWindowCounts());
         _tray?.Dispose();

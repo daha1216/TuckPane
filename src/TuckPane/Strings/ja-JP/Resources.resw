@@ -442,4 +442,67 @@
   <data name="NoteCopyImage" xml:space="preserve"><value>画像をコピー</value></data>
   <data name="NoteDeleteImage" xml:space="preserve"><value>画像を削除</value></data>
   <data name="NoteImagePasteError" xml:space="preserve"><value>クリップボードの画像またはテキストを読み取れません。コピーし直してください。</value></data>
+  <data name="TraySearchOrganizers" xml:space="preserve"><value>すべての収納ボックスを検索…</value></data>
+  <data name="TrayTogglePeek" xml:space="preserve"><value>収納ボックスを最前面に表示（Peek）</value></data>
+  <data name="TrayTidyEdgeStack" xml:space="preserve"><value>端揃えフローティングを整理</value></data>
+  <data name="ContextItemOpen" xml:space="preserve"><value>開く</value></data>
+  <data name="ContextItemReveal" xml:space="preserve"><value>エクスプローラーで表示</value></data>
+  <data name="ContextItemCopyPath" xml:space="preserve"><value>フルパスをコピー</value></data>
+  <data name="ContextItemProperties" xml:space="preserve"><value>プロパティ</value></data>
+  <data name="ContextSort" xml:space="preserve"><value>並べ替え</value></data>
+  <data name="ContextSortNameAsc" xml:space="preserve"><value>名前（昇順）</value></data>
+  <data name="ContextSortNameDesc" xml:space="preserve"><value>名前（降順）</value></data>
+  <data name="ContextSortType" xml:space="preserve"><value>種類</value></data>
+  <data name="ContextSortDateModified" xml:space="preserve"><value>更新日時</value></data>
+  <data name="ContextSortSize" xml:space="preserve"><value>サイズ</value></data>
+  <data name="ContextTidyEdgeStack" xml:space="preserve"><value>画面端に沿って整列</value></data>
+  <data name="OrganizerFilterPlaceholder" xml:space="preserve"><value>このボックス内を絞り込み…（Esc でクリア）</value></data>
+  <data name="SearchWindowTitle" xml:space="preserve"><value>TuckPane クイック検索</value></data>
+  <data name="SearchPlaceholder" xml:space="preserve"><value>すべての収納ボックスからファイル・ショートカット・フォルダーを検索…</value></data>
+  <data name="SearchIndexing" xml:space="preserve"><value>収納ボックスをインデックス中…</value></data>
+  <data name="SearchFooterHint" xml:space="preserve"><value>Enter 開く · Ctrl+Enter エクスプローラーで表示 · Shift+Enter ボックスを開く · Ctrl+Shift+C パスをコピー · Esc 閉じる</value></data>
+  <data name="SearchNoResults" xml:space="preserve"><value>一致する項目がありません</value></data>
+  <data name="SearchResultCountFormat" xml:space="preserve"><value>{0} 件一致（全 {1} 件をインデックス済み）</value></data>
+  <data name="QuickHideHotkeyTitle" xml:space="preserve"><value>一括非表示 / 復元ショートカット</value></data>
+  <data name="SearchHotkeyTitle" xml:space="preserve"><value>グローバル検索ショートカット</value></data>
+  <data name="PeekHotkeyTitle" xml:space="preserve"><value>最前面 Peek ショートカット</value></data>
+  <data name="HotkeyOff" xml:space="preserve"><value>オフ</value></data>
+  <data name="HotkeyErrorTitle" xml:space="preserve"><value>グローバルショートカットの設定に失敗しました</value></data>
+  <data name="HotkeyDuplicateError" xml:space="preserve"><value>このキー組み合わせは別の TuckPane ショートカットで使用されています。</value></data>
+  <data name="HotkeyConflictError" xml:space="preserve"><value>このキー組み合わせは Windows または他のアプリで使用されています。</value></data>
+  <data name="LayoutSnapshotsAutoTitle" xml:space="preserve"><value>ディスプレイ構成変更時にレイアウトを自動復元</value></data>
+  <data name="LayoutSnapshotRestore" xml:space="preserve"><value>復元</value></data>
+  <data name="LayoutSnapshotSave" xml:space="preserve"><value>現在のスナップショットを保存</value></data>
+  <data name="LayoutSnapshotExport" xml:space="preserve"><value>エクスポート</value></data>
+  <data name="LayoutSnapshotImport" xml:space="preserve"><value>インポート</value></data>
+  <data name="LayoutSnapshotAutoTag" xml:space="preserve"><value>自動</value></data>
+  <data name="LayoutSnapshotManualTag" xml:space="preserve"><value>手動</value></data>
+  <data name="LayoutSnapshotDefaultPrefix" xml:space="preserve"><value>レイアウト</value></data>
+  <data name="LayoutSnapshotSavedFormat" xml:space="preserve"><value>スナップショット「{0}」（{1} 個のボックス）を保存しました。</value></data>
+  <data name="LayoutSnapshotRestoredFormat" xml:space="preserve"><value>{0} 個のボックスの位置を復元しました。</value></data>
+  <data name="LayoutSnapshotDeleted" xml:space="preserve"><value>レイアウトスナップショットを削除しました。</value></data>
+  <data name="LayoutSnapshotExportedFormat" xml:space="preserve"><value>スナップショットを {0} にエクスポートしました。</value></data>
+  <data name="LayoutSnapshotImportedFormat" xml:space="preserve"><value>{0} 件のレイアウトスナップショットをインポートしました。</value></data>
+  <data name="LayoutSnapshotsErrorTitle" xml:space="preserve"><value>レイアウトスナップショットの操作に失敗しました</value></data>
+  <data name="TidyEdgeStackDoneFormat" xml:space="preserve"><value>{0} 個のフローティングボックスを画面端に整列しました。</value></data>
+  <data name="AutoOrganizeTitle" xml:space="preserve"><value>デスクトップ / ダウンロード自動仕分けルール</value></data>
+  <data name="AutoOrganizeSourceDesktop" xml:space="preserve"><value>デスクトップを対象</value></data>
+  <data name="AutoOrganizeSourceDownloads" xml:space="preserve"><value>ダウンロードを対象</value></data>
+  <data name="AutoOrganizeExtensionsPlaceholder" xml:space="preserve"><value>拡張子をカンマ区切りで入力（例: .pdf, .docx, .xlsx）</value></data>
+  <data name="AutoOrganizePatternsPlaceholder" xml:space="preserve"><value>ファイル名のワイルドカード（例: 請求書*, Screenshot*）</value></data>
+  <data name="AutoOrganizePresetDocs" xml:space="preserve"><value>文書プリセット</value></data>
+  <data name="AutoOrganizePresetImages" xml:space="preserve"><value>画像プリセット</value></data>
+  <data name="AutoOrganizePresetArchives" xml:space="preserve"><value>アーカイブプリセット</value></data>
+  <data name="AutoOrganizePresetShortcuts" xml:space="preserve"><value>ショートカットプリセット</value></data>
+  <data name="AutoOrganizeSaveRule" xml:space="preserve"><value>ルールを保存</value></data>
+  <data name="AutoOrganizePreview" xml:space="preserve"><value>プレビュー</value></data>
+  <data name="AutoOrganizeRun" xml:space="preserve"><value>今すぐ整理</value></data>
+  <data name="AutoOrganizeUndo" xml:space="preserve"><value>直前の整理を元に戻す</value></data>
+  <data name="AutoOrganizeRuleSaved" xml:space="preserve"><value>このボックスの自動仕分けルールを保存しました。</value></data>
+  <data name="AutoOrganizeRuleCleared" xml:space="preserve"><value>このボックスの自動仕分けルールを削除しました。</value></data>
+  <data name="AutoOrganizePreviewEmpty" xml:space="preserve"><value>ルールに一致する新しいファイルはありません。</value></data>
+  <data name="AutoOrganizePreviewFormat" xml:space="preserve"><value>{0} 件一致：{1}</value></data>
+  <data name="AutoOrganizeRunResultFormat" xml:space="preserve"><value>完了：移動 {0} 件、ショートカット作成 {1} 件、失敗 {2} 件。</value></data>
+  <data name="AutoOrganizeUndoResultFormat" xml:space="preserve"><value>復元完了：戻した項目 {0} 件、スキップ {1} 件、失敗 {2} 件。</value></data>
+  <data name="DiagnosticsInternalErrorNoticeFormat" xml:space="preserve"><value>このセッションで {0} 件の回復済み UI 例外を記録しました。詳細は診断パッケージをエクスポートしてください。</value></data>
 </root>

@@ -10,7 +10,7 @@ internal static class OrganizerMenuVisibility
         "ContextAddItem", "ContextNewFolder", "ContextNewNote", "ContextNewTodo",
         "ContextPaste", "ContextDeleteWindow", "ContextOpenStorage", "ContextRename",
         "ContextManage", "ContextDuplicate", "ContextSwitchPlacement", "ContextSwitchContent",
-        "ContextSwitchExpansion", "ContextHideName"
+        "ContextSwitchExpansion", "ContextHideName", "ContextSort", "ContextTidyEdgeStack"
     ];
 
     internal static bool IsEnabled(GlobalSettings settings, string key) =>
@@ -24,6 +24,7 @@ internal static class OrganizerMenuVisibility
             "ContextDuplicate" or "ContextRename" => mode != OrganizerPlacementMode.Station,
             "ContextSwitchPlacement" or "ContextSwitchContent" or "ContextSwitchExpansion" or "ContextHideName"
                 => OrganizerKinds.IsRegular(mode),
+            "ContextTidyEdgeStack" => mode == OrganizerPlacementMode.Floating,
             _ => true
         };
     }

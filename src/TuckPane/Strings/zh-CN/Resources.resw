@@ -442,4 +442,67 @@
   <data name="NoteCopyImage" xml:space="preserve"><value>复制图片</value></data>
   <data name="NoteDeleteImage" xml:space="preserve"><value>删除图片</value></data>
   <data name="NoteImagePasteError" xml:space="preserve"><value>无法读取剪贴板中的图片或文字，请重新复制后再试。</value></data>
+  <data name="TraySearchOrganizers" xml:space="preserve"><value>快速搜索全部收纳窗…</value></data>
+  <data name="TrayTogglePeek" xml:space="preserve"><value>透视收纳窗（置顶）</value></data>
+  <data name="TrayTidyEdgeStack" xml:space="preserve"><value>整齐贴边排列悬浮窗</value></data>
+  <data name="ContextItemOpen" xml:space="preserve"><value>打开</value></data>
+  <data name="ContextItemReveal" xml:space="preserve"><value>在资源管理器中显示</value></data>
+  <data name="ContextItemCopyPath" xml:space="preserve"><value>复制完整路径</value></data>
+  <data name="ContextItemProperties" xml:space="preserve"><value>属性</value></data>
+  <data name="ContextSort" xml:space="preserve"><value>排序方式</value></data>
+  <data name="ContextSortNameAsc" xml:space="preserve"><value>按名称（A→Z）</value></data>
+  <data name="ContextSortNameDesc" xml:space="preserve"><value>按名称（Z→A）</value></data>
+  <data name="ContextSortType" xml:space="preserve"><value>按类型</value></data>
+  <data name="ContextSortDateModified" xml:space="preserve"><value>按修改日期</value></data>
+  <data name="ContextSortSize" xml:space="preserve"><value>按大小</value></data>
+  <data name="ContextTidyEdgeStack" xml:space="preserve"><value>整齐贴边排列</value></data>
+  <data name="OrganizerFilterPlaceholder" xml:space="preserve"><value>筛选当前收纳窗…（Esc 清除）</value></data>
+  <data name="SearchWindowTitle" xml:space="preserve"><value>TuckPane 快速搜索</value></data>
+  <data name="SearchPlaceholder" xml:space="preserve"><value>搜索全部收纳窗中的文件、快捷方式和文件夹…</value></data>
+  <data name="SearchIndexing" xml:space="preserve"><value>正在索引收纳窗…</value></data>
+  <data name="SearchFooterHint" xml:space="preserve"><value>Enter 打开 · Ctrl+Enter 定位文件 · Shift+Enter 打开所在收纳窗 · Ctrl+Shift+C 复制路径 · Esc 关闭</value></data>
+  <data name="SearchNoResults" xml:space="preserve"><value>未找到匹配项</value></data>
+  <data name="SearchResultCountFormat" xml:space="preserve"><value>找到 {0} 项（共索引 {1} 项）</value></data>
+  <data name="QuickHideHotkeyTitle" xml:space="preserve"><value>快速隐藏 / 恢复快捷键</value></data>
+  <data name="SearchHotkeyTitle" xml:space="preserve"><value>全局快速搜索快捷键</value></data>
+  <data name="PeekHotkeyTitle" xml:space="preserve"><value>收纳窗置顶透视快捷键</value></data>
+  <data name="HotkeyOff" xml:space="preserve"><value>已关闭</value></data>
+  <data name="HotkeyErrorTitle" xml:space="preserve"><value>全局快捷键设置失败</value></data>
+  <data name="HotkeyDuplicateError" xml:space="preserve"><value>该组合键已被其他 TuckPane 快捷键使用，请选择其他组合。</value></data>
+  <data name="HotkeyConflictError" xml:space="preserve"><value>该组合键已被系统或其他应用占用，请选择其他组合。</value></data>
+  <data name="LayoutSnapshotsAutoTitle" xml:space="preserve"><value>屏幕拓扑变化时自动恢复布局快照</value></data>
+  <data name="LayoutSnapshotRestore" xml:space="preserve"><value>恢复</value></data>
+  <data name="LayoutSnapshotSave" xml:space="preserve"><value>保存当前快照</value></data>
+  <data name="LayoutSnapshotExport" xml:space="preserve"><value>导出快照</value></data>
+  <data name="LayoutSnapshotImport" xml:space="preserve"><value>导入快照</value></data>
+  <data name="LayoutSnapshotAutoTag" xml:space="preserve"><value>自动</value></data>
+  <data name="LayoutSnapshotManualTag" xml:space="preserve"><value>手动</value></data>
+  <data name="LayoutSnapshotDefaultPrefix" xml:space="preserve"><value>布局快照</value></data>
+  <data name="LayoutSnapshotSavedFormat" xml:space="preserve"><value>已保存快照“{0}”（包含 {1} 个收纳窗）。</value></data>
+  <data name="LayoutSnapshotRestoredFormat" xml:space="preserve"><value>已从快照恢复 {0} 个收纳窗的位置。</value></data>
+  <data name="LayoutSnapshotDeleted" xml:space="preserve"><value>已删除该布局快照。</value></data>
+  <data name="LayoutSnapshotExportedFormat" xml:space="preserve"><value>已导出布局快照到 {0}。</value></data>
+  <data name="LayoutSnapshotImportedFormat" xml:space="preserve"><value>已导入 {0} 条布局快照。</value></data>
+  <data name="LayoutSnapshotsErrorTitle" xml:space="preserve"><value>布局快照操作失败</value></data>
+  <data name="TidyEdgeStackDoneFormat" xml:space="preserve"><value>已整齐贴边排列 {0} 个悬浮收纳窗。</value></data>
+  <data name="AutoOrganizeTitle" xml:space="preserve"><value>桌面 / 下载自动收纳规则</value></data>
+  <data name="AutoOrganizeSourceDesktop" xml:space="preserve"><value>扫描桌面</value></data>
+  <data name="AutoOrganizeSourceDownloads" xml:space="preserve"><value>扫描下载目录</value></data>
+  <data name="AutoOrganizeExtensionsPlaceholder" xml:space="preserve"><value>扩展名，逗号分隔（如 .pdf, .docx, .xlsx）</value></data>
+  <data name="AutoOrganizePatternsPlaceholder" xml:space="preserve"><value>文件名通配符（如 发票*, Screenshot*）</value></data>
+  <data name="AutoOrganizePresetDocs" xml:space="preserve"><value>文档预设</value></data>
+  <data name="AutoOrganizePresetImages" xml:space="preserve"><value>图片预设</value></data>
+  <data name="AutoOrganizePresetArchives" xml:space="preserve"><value>压缩包预设</value></data>
+  <data name="AutoOrganizePresetShortcuts" xml:space="preserve"><value>快捷方式预设</value></data>
+  <data name="AutoOrganizeSaveRule" xml:space="preserve"><value>保存规则</value></data>
+  <data name="AutoOrganizePreview" xml:space="preserve"><value>预览匹配</value></data>
+  <data name="AutoOrganizeRun" xml:space="preserve"><value>立即整理</value></data>
+  <data name="AutoOrganizeUndo" xml:space="preserve"><value>撤销上次整理</value></data>
+  <data name="AutoOrganizeRuleSaved" xml:space="preserve"><value>已保存该收纳窗的自动收纳规则。</value></data>
+  <data name="AutoOrganizeRuleCleared" xml:space="preserve"><value>已清除该收纳窗的自动收纳规则。</value></data>
+  <data name="AutoOrganizePreviewEmpty" xml:space="preserve"><value>当前没有符合自动收纳规则的新文件。</value></data>
+  <data name="AutoOrganizePreviewFormat" xml:space="preserve"><value>共匹配 {0} 项：{1}</value></data>
+  <data name="AutoOrganizeRunResultFormat" xml:space="preserve"><value>整理完成：移动 {0} 项，创建快捷方式 {1} 项，失败 {2} 项。</value></data>
+  <data name="AutoOrganizeUndoResultFormat" xml:space="preserve"><value>撤销完成：恢复 {0} 项，跳过 {1} 项，失败 {2} 项。</value></data>
+  <data name="DiagnosticsInternalErrorNoticeFormat" xml:space="preserve"><value>本次运行捕获到 {0} 次已恢复的界面异常，可导出诊断包查看详情。</value></data>
 </root>

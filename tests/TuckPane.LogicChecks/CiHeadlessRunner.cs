@@ -62,7 +62,8 @@ internal static class CiHeadlessRunner
         ["--theme-targets"],
         ["--unified-theme"],
         ["--release-safety"],
-        ["--startup-placement"]
+        ["--startup-placement"],
+        ["--endgame-productivity"]
     ];
 
     internal static async Task RunAsync()

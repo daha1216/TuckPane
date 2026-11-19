@@ -248,6 +248,7 @@ public sealed partial class ConsoleWindow : Window
         if (!_creationSession.IsSubmitting) PopulateManageList(selectId ?? _selectedId);
         UpdateTransferState();
         UpdateAddControls();
+        RefreshProductivityControls();
     }
 
     public void ApplyLanguage()
@@ -286,6 +287,7 @@ public sealed partial class ConsoleWindow : Window
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(StationHoverExpandDelaySlider, AppStrings.Get("StationHoverExpandDelayTitle"));
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(StationPointerLeaveCollapseDelaySlider, AppStrings.Get("StationPointerLeaveCollapseDelayTitle"));
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(ExclusiveExpansionToggle, AppStrings.Get("ExclusiveExpansionTitle"));
+        ApplyProductivityLanguage();
         SystemNavItem.Content = AppStrings.Get("NavSystem");
         DisplayNavItem.Content = AppStrings.Get("NavDisplay");
         MenuNavItem.Content = AppStrings.Get("NavMenus");

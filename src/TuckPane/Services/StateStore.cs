@@ -262,6 +262,9 @@ public sealed class StateStore
             state.GlobalSettings.StationActivationDistanceDip);
         state.GlobalSettings.StationHoverExpandDelayMs = GlobalSettings.NormalizeStationHoverExpandDelayMs(
             state.GlobalSettings.StationHoverExpandDelayMs);
+        state.GlobalSettings.QuickHideHotkey = GlobalHotkeyDefinitions.Normalize(state.GlobalSettings.QuickHideHotkey);
+        state.GlobalSettings.SearchHotkey = GlobalHotkeyDefinitions.Normalize(state.GlobalSettings.SearchHotkey);
+        state.GlobalSettings.PeekHotkey = GlobalHotkeyDefinitions.Normalize(state.GlobalSettings.PeekHotkey);
         state.GlobalSettings.UniformFloatingCompactScale = GlobalSettings.NormalizeCompactScale(
             OrganizerPlacementMode.Floating,
             state.GlobalSettings.UniformFloatingCompactScale);
@@ -297,6 +300,15 @@ public sealed class StateStore
                 ids.Add(organizer.Id);
             }
             organizer.Name = string.IsNullOrWhiteSpace(organizer.Name) ? "收纳窗" : organizer.Name.Trim();
+            organizer.AutoOrganizeRules ??= [];
+            foreach (AutoOrganizeRule rule in organizer.AutoOrganizeRules)
+            {
+                if (rule.Id == Guid.Empty) rule.Id = Guid.NewGuid();
+                if (!Enum.IsDefined(rule.Source)) rule.Source = AutoOrganizeSource.Desktop;
+                rule.MinAgeDays = Math.Clamp(rule.MinAgeDays, 0, 3650);
+                rule.Extensions ??= string.Empty;
+                rule.NamePatterns ??= string.Empty;
+            }
             if (organizer.CreatedAtUtc == default) organizer.CreatedAtUtc = DateTimeOffset.UtcNow;
             if (!Enum.IsDefined(organizer.PlacementMode)) organizer.PlacementMode = OrganizerPlacementMode.Floating;
             if (!Enum.IsDefined(organizer.DockEdge)) organizer.DockEdge = OrganizerDockEdge.Right;
