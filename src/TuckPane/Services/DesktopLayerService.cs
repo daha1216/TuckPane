@@ -432,9 +432,12 @@ public sealed class DesktopLayerService : IDisposable
             _desktopIconViewPid = 0;
     }
 
-    private void ApplyToolWindowStyle()
+    private void ApplyToolWindowStyle() => ApplyInitialToolWindowStyle(_window);
+
+    internal static void ApplyInitialToolWindowStyle(IntPtr window)
     {
-        long windowStyle = NativeMethods.GetWindowLongPtr(_window, NativeMethods.GWL_STYLE).ToInt64();
+        if (window == IntPtr.Zero || !NativeMethods.IsWindow(window)) return;
+        long windowStyle = NativeMethods.GetWindowLongPtr(window, NativeMethods.GWL_STYLE).ToInt64();
         windowStyle &= ~(
             NativeMethods.WS_CAPTION |
             NativeMethods.WS_THICKFRAME |
@@ -442,14 +445,14 @@ public sealed class DesktopLayerService : IDisposable
             NativeMethods.WS_MINIMIZEBOX |
             NativeMethods.WS_MAXIMIZEBOX);
         windowStyle |= NativeMethods.WS_POPUP;
-        _ = NativeMethods.SetWindowLongPtr(_window, NativeMethods.GWL_STYLE, new IntPtr(windowStyle));
+        _ = NativeMethods.SetWindowLongPtr(window, NativeMethods.GWL_STYLE, new IntPtr(windowStyle));
 
-        long style = NativeMethods.GetWindowLongPtr(_window, NativeMethods.GWL_EXSTYLE).ToInt64();
+        long style = NativeMethods.GetWindowLongPtr(window, NativeMethods.GWL_EXSTYLE).ToInt64();
         style |= NativeMethods.WS_EX_TOOLWINDOW | NativeMethods.WS_EX_NOACTIVATE;
         style &= ~NativeMethods.WS_EX_APPWINDOW;
-        _ = NativeMethods.SetWindowLongPtr(_window, NativeMethods.GWL_EXSTYLE, new IntPtr(style));
+        _ = NativeMethods.SetWindowLongPtr(window, NativeMethods.GWL_EXSTYLE, new IntPtr(style));
         _ = NativeMethods.SetWindowPos(
-            _window,
+            window,
             IntPtr.Zero,
             0,
             0,
@@ -470,22 +473,24 @@ public sealed class DesktopLayerService : IDisposable
         }
     }
 
-    internal void ApplyTransparentChrome()
+    internal void ApplyTransparentChrome() => ApplyTransparentChrome(_window);
+
+    internal static void ApplyTransparentChrome(IntPtr window)
     {
         if (!NativeMethods.SupportsWindows11DwmAttributes ||
-            _window == IntPtr.Zero ||
-            !NativeMethods.IsWindow(_window))
+            window == IntPtr.Zero ||
+            !NativeMethods.IsWindow(window))
             return;
 
         int corner = NativeMethods.DWMWCP_DONOTROUND;
         _ = NativeMethods.DwmSetWindowAttribute(
-            _window,
+            window,
             NativeMethods.DWMWA_WINDOW_CORNER_PREFERENCE,
             ref corner,
             sizeof(int));
         int border = NativeMethods.DWMWA_COLOR_NONE;
         _ = NativeMethods.DwmSetWindowAttribute(
-            _window,
+            window,
             NativeMethods.DWMWA_BORDER_COLOR,
             ref border,
             sizeof(int));

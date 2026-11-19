@@ -440,7 +440,21 @@ public sealed partial class MainWindow : Window
             presenter.IsMaximizable = false;
             presenter.IsMinimizable = false;
         }
-        if (_definition.PlacementMode == OrganizerPlacementMode.Station) _appWindow.Hide();
+        // Cloak, apply tool-window/no-activate styles, enable DWM alpha composition,
+        // and pre-position BEFORE Activate() so startup never flashes black default
+        // windows, never flashes taskbar icons, and never steals foreground focus.
+        BeginStartupCloak();
+        DesktopLayerService.ApplyInitialToolWindowStyle(_hwnd);
+        DesktopLayerService.ApplyTransparentChrome(_hwnd);
+        TransparentWindowBackdrop.EnsureAlphaComposition(_hwnd);
+        if (_definition.PlacementMode == OrganizerPlacementMode.Station || IsContained)
+        {
+            _appWindow.Hide();
+        }
+        else
+        {
+            PrePositionCompactHostWindow();
+        }
         IntPtr desktopIconView = DesktopLayerService.FindDesktopIconView();
         IntPtr initialOwner = desktopIconView != IntPtr.Zero ? desktopIconView : _host.Console.Hwnd;
         _ = NativeMethods.SetWindowLongPtr(_hwnd, NativeMethods.GWLP_HWNDPARENT, initialOwner);
@@ -467,122 +481,124 @@ public sealed partial class MainWindow : Window
         InitializeHostWindow();
         _ = NativeMethods.SetWindowSubclass(_hwnd, _gestureWindowProc, GestureSubclassId, IntPtr.Zero);
 
-        if (IsDock)
+        try
         {
-            await InitializeDockAsync();
-            return;
-        }
+            if (IsDock)
+            {
+                await InitializeDockAsync();
+                return;
+            }
 
-        // A Station starts hidden. Native readiness must not wait for its first XAML load.
-        if (_definition.PlacementMode == OrganizerPlacementMode.Station)
-        {
-            DisplayInfo stationDisplay = DisplayPlacementService.GetDisplay(_definition.Position?.MonitorDevice);
-            _stationDisplay = stationDisplay;
-            bool stationScalesNormalized = NormalizeVisualScales(stationDisplay);
-            _compactBounds = DisplayPlacementService.CalculateStationAnchor(stationDisplay, _definition.DockEdge, _definition.Position);
-            WidgetPosition stationPosition = DisplayPlacementService.Capture(_compactBounds);
-            bool correctedDisplay = !PositionsEqual(_definition.Position, stationPosition);
-            _definition.Position = stationPosition;
+            // A Station starts hidden. Native readiness must not wait for its first XAML load.
+            if (_definition.PlacementMode == OrganizerPlacementMode.Station)
+            {
+                DisplayInfo stationDisplay = DisplayPlacementService.GetDisplay(_definition.Position?.MonitorDevice);
+                _stationDisplay = stationDisplay;
+                bool stationScalesNormalized = NormalizeVisualScales(stationDisplay);
+                _compactBounds = DisplayPlacementService.CalculateStationAnchor(stationDisplay, _definition.DockEdge, _definition.Position);
+                WidgetPosition stationPosition = DisplayPlacementService.Capture(_compactBounds);
+                bool correctedDisplay = !PositionsEqual(_definition.Position, stationPosition);
+                _definition.Position = stationPosition;
+                _desktopLayer = new DesktopLayerService(_hwnd, IntPtr.Zero);
+                _appWindow?.Hide();
+                CompactView.Visibility = Visibility.Collapsed;
+                ExpandedView.Visibility = Visibility.Collapsed;
+                _stationReady = true;
+                RefreshPerformanceSettings();
+                AppLogger.Performance($"station-ready id={OrganizerId} display={stationDisplay.Device}");
+                if (correctedDisplay || stationScalesNormalized) await SaveStateAsync();
+                return;
+            }
+
+            await WaitForLoadedAsync();
+            if (_closing) return;
+            UpdateOrganizerName();
+            // Never reposition during startup scale setup: bounds are restored deterministically below.
+            ApplyCompactScale(repositionWindow: false);
+
+            DisplayInfo display = DisplayPlacementService.GetDisplay(_definition.Position?.MonitorDevice);
+            double windowScale = Math.Max(1, WindowRoot.XamlRoot?.RasterizationScale ?? 1);
+            if (_hwnd != IntPtr.Zero)
+            {
+                windowScale = Math.Max(windowScale, NativeMethods.GetDpiForWindow(_hwnd) / 96d);
+            }
+            if (display.Monitor.Left == 0 && display.Monitor.Top == 0)
+            {
+                windowScale = Math.Max(windowScale, NativeMethods.GetDpiForSystem() / 96d);
+            }
+            display = display with { Scale = Math.Max(display.Scale, windowScale) };
+            bool normalizedVisualScales = NormalizeVisualScales(display);
+            _compactBounds = RestoreCompactBoundsForDisplay(display, _appliedCompactScale);
+            if (!IsContained && _definition.PlacementMode == OrganizerPlacementMode.Positioned &&
+                _host.FindCurrentPositionedPlacement(_definition.Id, _compactBounds) is { } positionedPlacement)
+            {
+                MoveToPositionedPlacement(positionedPlacement.Bounds, positionedPlacement.CompactScale);
+                _definition.Position = DisplayPlacementService.Capture(_compactBounds);
+                normalizedVisualScales = true;
+            }
+            AppLogger.Info($"初始化 DPI={display.Scale:0.##}，收起窗口={_compactBounds.Width}x{_compactBounds.Height}px。");
+
             _desktopLayer = new DesktopLayerService(_hwnd, IntPtr.Zero);
-            _appWindow?.Hide();
-            CompactView.Visibility = Visibility.Collapsed;
-            ExpandedView.Visibility = Visibility.Collapsed;
-            _stationReady = true;
+            _runtimeVisible = !IsContained;
+            if (IsContained)
+            {
+                _appWindow?.Hide();
+            }
+            else
+            {
+                ApplyBounds(_compactBounds, show: true, preserveZOrder: true);
+                _desktopLayer.Reattach(showWindow: true);
+                WindowRoot.UpdateLayout();
+                UpdateSurfaceClips();
+                // Wait for WinUI DirectComposition to flush the first real transparent
+                // frame before removing the DWM startup cloak.
+                await WaitForNextRenderAsync(_windowLifetime.Token);
+            }
+            ReleaseStartupCloak();
+            if (normalizedVisualScales) await SaveStateAsync();
+
+            if (!_uiSettings.AdvancedEffectsEnabled)
+            {
+                _host.NotifyTransparencyFallback();
+            }
             RefreshPerformanceSettings();
-            AppLogger.Performance($"station-ready id={OrganizerId} display={stationDisplay.Device}");
-            if (correctedDisplay || stationScalesNormalized) await SaveStateAsync();
-            return;
-        }
-
-        await WaitForLoadedAsync();
-        UpdateOrganizerName();
-        ApplyCompactScale();
-
-        int initialWidth = DipToPx(GetCompactWidthDip(), 1);
-        int initialHeight = DipToPx(GetCompactHeightDip(), 1);
-        NativeMethods.RECT firstPass = DisplayPlacementService.Restore(_definition.Position, initialWidth, initialHeight);
-        ApplyBounds(firstPass, show: !IsContained);
-        DisplayInfo display = DisplayPlacementService.ForBounds(firstPass);
-        double windowScale = Math.Max(1, WindowRoot.XamlRoot.RasterizationScale);
-        if (display.Monitor.Left == 0 && display.Monitor.Top == 0)
-        {
-            windowScale = Math.Max(windowScale, NativeMethods.GetDpiForSystem() / 96d);
-        }
-        display = display with { Scale = Math.Max(display.Scale, windowScale) };
-        bool normalizedVisualScales = NormalizeVisualScales(display);
-        int compactWidth = DipToPx(GetCompactWidthDip(), display.Scale);
-        int compactHeight = DipToPx(GetCompactHeightDip(), display.Scale);
-        bool restoreAlignmentFrame = _definition.PlacementMode == OrganizerPlacementMode.Floating &&
-            (_host.State.GlobalSettings.WindowAlignmentEnabled ||
-             _definition.Position is { } savedPosition &&
-             (savedPosition.XDip < 0 || savedPosition.YDip < 0 ||
-              savedPosition.XDip * display.Scale + compactWidth > display.Work.Width ||
-              savedPosition.YDip * display.Scale + compactHeight > display.Work.Height));
-        _compactBounds = DisplayPlacementService.Restore(
-            _definition.Position,
-            compactWidth,
-            compactHeight);
-        ApplyBounds(_compactBounds, show: !IsContained);
-        WindowRoot.UpdateLayout();
-        if (restoreAlignmentFrame &&
-            TryGetCompactAlignmentInsets(_compactBounds, out WindowAlignmentInsets restoreInsets))
-        {
-            _compactBounds = DisplayPlacementService.Restore(
-                _definition.Position,
-                compactWidth,
-                compactHeight,
-                restoreInsets);
-        }
-        if (!IsContained && _definition.PlacementMode == OrganizerPlacementMode.Positioned &&
-            _host.FindCurrentPositionedPlacement(_definition.Id, _compactBounds) is { } positionedPlacement)
-        {
-            MoveToPositionedPlacement(positionedPlacement.Bounds, positionedPlacement.CompactScale);
-            _definition.Position = DisplayPlacementService.Capture(_compactBounds);
-            normalizedVisualScales = true;
-        }
-        AppLogger.Info($"初始化 DPI={display.Scale:0.##}，收起窗口={_compactBounds.Width}x{_compactBounds.Height}px。");
-        ApplyBounds(_compactBounds, show: !IsContained);
-        if (normalizedVisualScales) await SaveStateAsync();
-
-        _desktopLayer = new DesktopLayerService(_hwnd, IntPtr.Zero);
-        _runtimeVisible = !IsContained;
-        ApplyBounds(_compactBounds, show: !IsContained);
-        if (!_uiSettings.AdvancedEffectsEnabled)
-        {
-            _host.NotifyTransparencyFallback();
-        }
-        RefreshPerformanceSettings();
-        if (_storage.Exists) StartWatcher();
-        await RefreshCatalogAsync(notifyUnsupported: true, refreshIcons: true);
-        if (!IsContained) WindowRoot.Focus(FocusState.Programmatic);
-        if (IsPermanentlyExpanded || Environment.GetEnvironmentVariable("GLASSFOLDER_TEST_EXPANDED") == "1")
-        {
-            await ExpandAsync();
-        }
+            if (_storage.Exists) StartWatcher();
+            await RefreshCatalogAsync(notifyUnsupported: true, refreshIcons: true);
+            if (IsPermanentlyExpanded || Environment.GetEnvironmentVariable("GLASSFOLDER_TEST_EXPANDED") == "1")
+            {
+                await ExpandAsync();
+            }
 #if DEBUG
-        if (Environment.GetEnvironmentVariable("TUCKPANE_TEST_RESIZE_AUTORUN") == "1")
-        {
-            await RunCanvasResizeProbeAsync();
-        }
-        if (int.TryParse(Environment.GetEnvironmentVariable("GLASSFOLDER_TEST_ITEM_REORDER_CYCLES"), out int reorderCycles))
-        {
-            if (!_expanded) await ExpandAsync();
-            await RunItemReorderProbeAsync(Math.Clamp(reorderCycles, 0, 30));
-        }
-        if (Environment.GetEnvironmentVariable("GLASSFOLDER_TEST_ITEM_REORDER_MATRIX") == "1")
-        {
-            if (!_expanded) await ExpandAsync();
-            await RunItemReorderMatrixProbeAsync();
-        }
-        if (int.TryParse(Environment.GetEnvironmentVariable("GLASSFOLDER_TEST_TRANSITION_CYCLES"), out int testCycles))
-        {
-            for (int cycle = 0; cycle < Math.Clamp(testCycles, 0, 60); cycle++)
+            if (Environment.GetEnvironmentVariable("TUCKPANE_TEST_RESIZE_AUTORUN") == "1")
+            {
+                await RunCanvasResizeProbeAsync();
+            }
+            if (int.TryParse(Environment.GetEnvironmentVariable("GLASSFOLDER_TEST_ITEM_REORDER_CYCLES"), out int reorderCycles))
             {
                 if (!_expanded) await ExpandAsync();
-                await CollapseAsync();
+                await RunItemReorderProbeAsync(Math.Clamp(reorderCycles, 0, 30));
             }
-        }
+            if (Environment.GetEnvironmentVariable("GLASSFOLDER_TEST_ITEM_REORDER_MATRIX") == "1")
+            {
+                if (!_expanded) await ExpandAsync();
+                await RunItemReorderMatrixProbeAsync();
+            }
+            if (int.TryParse(Environment.GetEnvironmentVariable("GLASSFOLDER_TEST_TRANSITION_CYCLES"), out int testCycles))
+            {
+                for (int cycle = 0; cycle < Math.Clamp(testCycles, 0, 60); cycle++)
+                {
+                    if (!_expanded) await ExpandAsync();
+                    await CollapseAsync();
+                }
+            }
 #endif
+        }
+        finally
+        {
+            if (IsContained || _definition.PlacementMode == OrganizerPlacementMode.Station)
+                _appWindow?.Hide();
+            ReleaseStartupCloak();
+        }
     }
 
     private async Task WaitForLoadedAsync()
@@ -2833,6 +2849,8 @@ public sealed partial class MainWindow : Window
         // the hot zone never matches again. Drop it and let the pointer timer resolve it afresh.
         if (!IsDock && _definition.PlacementMode == OrganizerPlacementMode.Station && message is 0x02E0 or 0x007E)
             _stationDisplay = null;
+        if (!IsDock && _definition.PlacementMode != OrganizerPlacementMode.Station && message is 0x02E0 or 0x007E)
+            DispatcherQueue.TryEnqueue(ScheduleDisplayChangeReconciliation);
         if (message == NativeMethods.WM_MOUSEMOVE && _shellDragActive)
         {
             DragMessageRelay.Complete(ref _itemDragOleMouseMovePending);
@@ -3310,17 +3328,42 @@ public sealed partial class MainWindow : Window
         NativeMethods.RECT windowBounds,
         out WindowAlignmentInsets insets)
     {
+        if (windowBounds.Width > 0 && windowBounds.Height > 0)
+        {
+            WindowAlignmentInsets deterministic = CalculateDeterministicCompactAlignmentInsets(windowBounds);
+            if (deterministic.IsValidFor(windowBounds))
+            {
+                insets = deterministic;
+                return true;
+            }
+        }
         if (TryGetCompactAlignmentFrame(out NativeMethods.RECT frame))
         {
-            insets = WindowAlignmentInsets.From(windowBounds, frame);
-            return true;
+            WindowAlignmentInsets measured = WindowAlignmentInsets.From(windowBounds, frame);
+            if (measured.IsValidFor(windowBounds))
+            {
+                insets = measured;
+                return true;
+            }
         }
         insets = default;
         return false;
     }
 
-    private bool TryGetCompactAlignmentFrame(out NativeMethods.RECT bounds) =>
-        TryGetVisibleAlignmentFrame(CompactThumbnailHost, out bounds);
+    private bool TryGetCompactAlignmentFrame(out NativeMethods.RECT bounds)
+    {
+        if (TryGetLogicalWindowRect(out NativeMethods.RECT windowBounds) &&
+            windowBounds.Width > 0 && windowBounds.Height > 0)
+        {
+            WindowAlignmentInsets insets = CalculateDeterministicCompactAlignmentInsets(windowBounds);
+            if (insets.IsValidFor(windowBounds))
+            {
+                bounds = insets.ToFrame(windowBounds);
+                return bounds.Width > 0 && bounds.Height > 0;
+            }
+        }
+        return TryGetVisibleAlignmentFrame(CompactThumbnailHost, out bounds);
+    }
 
     private bool TryGetVisibleAlignmentFrame(FrameworkElement surface, out NativeMethods.RECT bounds)
     {
@@ -5411,6 +5454,8 @@ public sealed partial class MainWindow : Window
         _desktopCoordinator.Stop();
         _catalogController.Stop();
         _externalDragCoordinator.CancelShellPreparation();
+        _resourceScope.DisposeAll(ex => AppLogger.Error("窗口附加资源释放失败。", ex));
+        ReleaseStartupCloak();
         _interactionSaveTimer.Stop();
         _canvasResizeInputTimer.Stop();
         StopSmoothScrollRendering();
@@ -5550,7 +5595,9 @@ public sealed partial class MainWindow : Window
         if (_closing || _appWindow is not { IsVisible: true } ||
             IsContained || _animating || !OrganizerInteractionMath.ShouldUseWindowAlignment(
                 true, _expanded, _definition.PlacementMode, false, IsPermanentlyExpanded)) return false;
-        return TryGetVisibleAlignmentFrame(_expanded ? ExpandedPanel : CompactThumbnailHost, out bounds);
+        return _expanded
+            ? TryGetVisibleAlignmentFrame(ExpandedPanel, out bounds)
+            : TryGetCompactAlignmentFrame(out bounds);
     }
 
     internal void RefreshWindowAlignmentSetting()
@@ -6074,7 +6121,16 @@ public sealed partial class MainWindow : Window
             _compactBounds.Top = iconCenterY - DipToPx(19.5 * scale, display.Scale);
             _compactBounds.Right = _compactBounds.Left + width;
             _compactBounds.Bottom = _compactBounds.Top + height;
-            _compactBounds = DisplayPlacementService.Clamp(_compactBounds, display.Work);
+            bool clampVisibleFrame = _definition.PlacementMode == OrganizerPlacementMode.Floating &&
+                (_host.State.GlobalSettings.WindowAlignmentEnabled ||
+                 _compactBounds.Left < display.Work.Left || _compactBounds.Top < display.Work.Top ||
+                 _compactBounds.Right > display.Work.Right || _compactBounds.Bottom > display.Work.Bottom);
+            _compactBounds = clampVisibleFrame
+                ? WindowAlignmentMath.ClampFrame(
+                    _compactBounds,
+                    display.Work,
+                    CompactPlacementMath.CalculateCompactAlignmentInsets(width, height, scale, display.Scale))
+                : DisplayPlacementService.Clamp(_compactBounds, display.Work);
             if (repositionWindow && !IsContained) ApplyBounds(_compactBounds, show: true);
         }
         UpdateSurfaceClips();

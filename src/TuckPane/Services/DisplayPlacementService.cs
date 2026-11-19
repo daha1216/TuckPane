@@ -78,14 +78,19 @@ internal static class DisplayPlacementService
         int heightPx,
         WindowAlignmentInsets? alignmentInsets = null)
     {
-        int x = saved is null || string.IsNullOrWhiteSpace(saved.MonitorDevice)
-            ? display.Work.Left + (display.Work.Width - widthPx) / 2
-            : display.Work.Left + (int)Math.Round(saved.XDip * display.Scale);
-        int y = saved is null || string.IsNullOrWhiteSpace(saved.MonitorDevice)
-            ? display.Work.Top + (int)Math.Round(96 * display.Scale)
-            : display.Work.Top + (int)Math.Round(saved.YDip * display.Scale);
+        int x;
+        int y;
+        if (saved is null || string.IsNullOrWhiteSpace(saved.MonitorDevice))
+        {
+            x = display.Work.Left + (display.Work.Width - widthPx) / 2;
+            y = display.Work.Top + (int)Math.Round(96 * display.Scale);
+        }
+        else
+        {
+            (x, y) = CompactPlacementMath.ResolveRestoredOriginPx(saved, display, widthPx, heightPx, alignmentInsets);
+        }
         var bounds = new NativeMethods.RECT { Left = x, Top = y, Right = x + widthPx, Bottom = y + heightPx };
-        return alignmentInsets is WindowAlignmentInsets insets
+        return alignmentInsets is WindowAlignmentInsets insets && insets.IsValidFor(bounds)
             ? WindowAlignmentMath.ClampFrame(bounds, display.Work, insets)
             : Clamp(bounds, display.Work);
     }

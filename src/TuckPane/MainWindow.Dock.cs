@@ -61,6 +61,8 @@ public sealed partial class MainWindow
         _desktopLayer.SetExpanded(true, showWindow: false);
         ApplyDockLayout();
         ApplyTheme();
+        await WaitForNextRenderAsync(_windowLifetime.Token);
+        ReleaseStartupCloak();
         RefreshPerformanceSettings();
         if (_storage.Exists) StartWatcher();
         await RefreshCatalogAsync(notifyUnsupported: true, refreshIcons: true);
