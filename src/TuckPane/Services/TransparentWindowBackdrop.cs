@@ -76,6 +76,8 @@ internal sealed class TransparentWindowBackdrop : CompositionBrushBackdrop
         Configure(e.Message.Hwnd);
     }
 
+    internal static void EnsureAlphaComposition(IntPtr hwnd) => Configure(hwnd);
+
     private static void Configure(IntPtr hwnd)
     {
         if (hwnd == IntPtr.Zero) return;

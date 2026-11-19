@@ -23,6 +23,20 @@ internal static partial class NativeMethods
     internal static bool EnableHostBackdropBrush(IntPtr window) =>
         SetHostBackdropBrushEnabled(window, enabled: true);
 
+    internal static bool SetWindowCloaked(IntPtr window, bool cloaked)
+    {
+        if (window == IntPtr.Zero || !IsWindow(window)) return false;
+        int value = cloaked ? 1 : 0;
+        return DwmSetWindowAttribute(window, DWMWA_CLOAK, ref value, sizeof(int)) >= 0;
+    }
+
+    internal static bool DisableWindowTransitions(IntPtr window)
+    {
+        if (window == IntPtr.Zero || !IsWindow(window)) return false;
+        int value = 1;
+        return DwmSetWindowAttribute(window, DWMWA_TRANSITIONS_FORCEDISABLED, ref value, sizeof(int)) >= 0;
+    }
+
     internal static bool TrySetCompositorClockBoost(bool enabled)
     {
         try

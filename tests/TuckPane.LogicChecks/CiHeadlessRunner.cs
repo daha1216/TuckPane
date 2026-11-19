@@ -61,7 +61,8 @@ internal static class CiHeadlessRunner
         ["--theme-material-removal"],
         ["--theme-targets"],
         ["--unified-theme"],
-        ["--release-safety"]
+        ["--release-safety"],
+        ["--startup-placement"]
     ];
 
     internal static async Task RunAsync()

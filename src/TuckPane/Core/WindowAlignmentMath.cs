@@ -40,6 +40,12 @@ internal readonly record struct WindowAlignmentInsets(int Left, int Top, int Rig
         window.Right - frame.Right,
         window.Bottom - frame.Bottom);
 
+    internal bool IsValidFor(NativeMethods.RECT window) =>
+        Left >= 0 && Top >= 0 && Right >= 0 && Bottom >= 0 &&
+        window.Width > 0 && window.Height > 0 &&
+        (long)Left + Right < window.Width &&
+        (long)Top + Bottom < window.Height;
+
     internal NativeMethods.RECT ToFrame(NativeMethods.RECT window) => new()
     {
         Left = window.Left + Left,
@@ -70,6 +76,9 @@ internal static partial class WindowAlignmentMath
         NativeMethods.RECT work,
         WindowAlignmentInsets insets)
     {
+        if (!insets.IsValidFor(window))
+            return DisplayPlacementService.Clamp(window, work);
+
         NativeMethods.RECT frame = insets.ToFrame(window);
         int width = Math.Min(Math.Max(1, frame.Width), work.Width);
         int height = Math.Min(Math.Max(1, frame.Height), work.Height);

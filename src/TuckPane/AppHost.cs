@@ -2148,6 +2148,8 @@ public sealed partial class AppHost : IDisposable
         else
         {
             window.Activate();
+            // Ensure initialization always starts even when WS_EX_NOACTIVATE suppresses WM_ACTIVATE.
+            _ = window.InitializeAsync();
             if (organizer.ContainerOrganizerId is not null) window.SetContained(true);
         }
     }

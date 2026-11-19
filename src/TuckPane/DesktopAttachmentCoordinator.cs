@@ -245,7 +245,8 @@ internal sealed class DesktopAttachmentCoordinator
         else
         {
             NativeMethods.RECT compactBounds = _window.CompactBounds;
-            NativeMethods.RECT work = DisplayPlacementService.ForBounds(compactBounds).Work;
+            DisplayInfo currentDisplay = DisplayPlacementService.ForBounds(compactBounds);
+            NativeMethods.RECT work = currentDisplay.Work;
             bool hasVisibleEdgePosition = compactBounds.Left < work.Left || compactBounds.Top < work.Top ||
                 compactBounds.Right > work.Right || compactBounds.Bottom > work.Bottom;
             WindowAlignmentInsets alignmentInsets = default;
@@ -258,8 +259,15 @@ internal sealed class DesktopAttachmentCoordinator
             if (!MainWindow.AreRectsEqual(corrected, compactBounds))
             {
                 _window.SetCompactBounds(corrected, applyAndShow: true);
-                definition.Position = DisplayPlacementService.Capture(_window.CompactBounds, _window.Hwnd);
-                _ = _window.SaveOrganizerStateAsync();
+                // Do not overwrite canonical user coordinates when the display work area
+                // transiently shrank (boot display init, RDP, sleep/wake, fullscreen games,
+                // or monitor hot-plug). WM_DISPLAYCHANGE reconciles back to saved Position.
+                if (definition.PlacementMode != OrganizerPlacementMode.Floating ||
+                    CompactPlacementMath.ShouldPersistClampedFloatingPosition(definition.Position, currentDisplay))
+                {
+                    definition.Position = DisplayPlacementService.Capture(_window.CompactBounds, _window.Hwnd);
+                    _ = _window.SaveOrganizerStateAsync();
+                }
             }
         }
 

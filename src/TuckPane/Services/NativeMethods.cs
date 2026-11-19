@@ -37,6 +37,8 @@ internal static partial class NativeMethods
     internal const uint LWA_ALPHA = 0x00000002;
     internal const uint MONITOR_DEFAULTTONEAREST = 2;
     internal const uint MONITOR_DEFAULTTOPRIMARY = 1;
+    internal const int DWMWA_TRANSITIONS_FORCEDISABLED = 3;
+    internal const int DWMWA_CLOAK = 13;
     internal const int DWMWA_CLOAKED = 14;
     internal const int DWMWA_WINDOW_CORNER_PREFERENCE = 33;
     internal const int DWMWA_BORDER_COLOR = 34;
