@@ -118,6 +118,14 @@
                 <MenuFlyoutItem x:Name="ToggleContentModeMenuItem" Tag="ContextSwitchContent" Click="ToggleContentModeMenuItem_Click" Text="改为精简" />
                 <MenuFlyoutItem x:Name="ToggleExpansionModeMenuItem" Tag="ContextSwitchExpansion" Click="ToggleExpansionModeMenuItem_Click" Text="改为展开" />
                 <ToggleMenuFlyoutItem x:Name="HideNameMenuItem" Tag="ContextHideName" Style="{StaticResource OrganizerHideNameMenuStyle}" Click="HideNameMenuItem_Click" Text="隐藏名称" />
+                <MenuFlyoutSubItem x:Name="SortMenuItem" Tag="ContextSort" Text="排序方式">
+                    <MenuFlyoutItem x:Name="SortByNameAscMenuItem" Click="SortByNameAscMenuItem_Click" Tag="ContextSortNameAsc" Text="按名称（A→Z）" />
+                    <MenuFlyoutItem x:Name="SortByNameDescMenuItem" Click="SortByNameDescMenuItem_Click" Tag="ContextSortNameDesc" Text="按名称（Z→A）" />
+                    <MenuFlyoutItem x:Name="SortByTypeMenuItem" Click="SortByTypeMenuItem_Click" Tag="ContextSortType" Text="按类型" />
+                    <MenuFlyoutItem x:Name="SortByDateModifiedMenuItem" Click="SortByDateModifiedMenuItem_Click" Tag="ContextSortDateModified" Text="按修改日期" />
+                    <MenuFlyoutItem x:Name="SortBySizeMenuItem" Click="SortBySizeMenuItem_Click" Tag="ContextSortSize" Text="按大小" />
+                </MenuFlyoutSubItem>
+                <MenuFlyoutItem x:Name="TidyEdgeStackMenuItem" Tag="ContextTidyEdgeStack" Click="TidyEdgeStackMenuItem_Click" Text="整齐贴边排列" />
             </MenuFlyout>
         </Grid.Resources>
 
@@ -274,6 +282,60 @@
             <Grid x:Name="ExpandedPanel" Grid.Row="1">
                 <SystemBackdropElement x:Name="ExpandedSurfaceHost" IsHitTestVisible="False" />
                 <Grid x:Name="ExpandedContentLayer" Background="Transparent">
+                <Border
+                    x:Name="ExpandedFilterBar"
+                    Canvas.ZIndex="3"
+                    HorizontalAlignment="Center"
+                    VerticalAlignment="Top"
+                    Margin="20,6,48,0"
+                    Padding="10,2,6,2"
+                    MinWidth="220"
+                    MaxWidth="360"
+                    CornerRadius="14"
+                    Background="#CC1F242D"
+                    BorderThickness="1"
+                    BorderBrush="#33FFFFFF"
+                    Visibility="Collapsed">
+                    <Grid ColumnSpacing="6">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <FontIcon Grid.Column="0" Glyph="&#xE721;" FontSize="12" Foreground="White" Opacity="0.8" VerticalAlignment="Center" />
+                        <TextBox
+                            x:Name="ExpandedFilterBox"
+                            Grid.Column="1"
+                            MinWidth="120"
+                            BorderThickness="0"
+                            Background="Transparent"
+                            Foreground="White"
+                            FontSize="12"
+                            Padding="2,4"
+                            TextChanged="ExpandedFilterBox_TextChanged"
+                            KeyDown="ExpandedFilterBox_KeyDown"
+                            LostFocus="ExpandedFilterBox_LostFocus" />
+                        <TextBlock
+                            x:Name="ExpandedFilterCountText"
+                            Grid.Column="2"
+                            FontSize="11"
+                            Foreground="White"
+                            Opacity="0.7"
+                            VerticalAlignment="Center" />
+                        <Button
+                            x:Name="ExpandedFilterClearButton"
+                            Grid.Column="3"
+                            Width="22"
+                            Height="22"
+                            Padding="0"
+                            Background="Transparent"
+                            BorderThickness="0"
+                            Click="ExpandedFilterClearButton_Click">
+                            <FontIcon Glyph="&#xE711;" FontSize="10" Foreground="White" />
+                        </Button>
+                    </Grid>
+                </Border>
                 <Button
                 x:Name="CollapseButton"
                 Width="28"

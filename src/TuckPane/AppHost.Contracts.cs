@@ -77,6 +77,11 @@ internal interface IOrganizerHost
     void RebindPortableWindowAfterMove(string oldPath, string newPath);
     Task<bool> FlushPortableWindowAsync(string path);
     void ClosePortableWindowWithoutSave(string path);
+
+    bool IsPeekActive { get; }
+    void ExitPeekMode();
+    Task<int> TidyFloatingEdgeStackAsync(Guid? anchorOrganizerId = null);
+    Task NotifyDisplayTopologyChangedAsync();
 }
 
 internal interface IConsoleHost
@@ -139,6 +144,23 @@ internal interface IConsoleHost
     Task SetOrganizerMenuVisibilityAsync(string key, bool enabled);
     void SetHoverMagnificationScales(double compactScale, double dockScale);
     Task SetHoverMagnificationAsync(bool dock, bool enabled);
+
+    Task<string?> SetQuickHideHotkeyAsync(QuickHideHotkeyPreset preset);
+    Task<string?> SetSearchHotkeyAsync(SearchHotkeyPreset preset);
+    Task<string?> SetPeekHotkeyAsync(PeekHotkeyPreset preset);
+    Task SetAutoApplyTopologySnapshotsAsync(bool enabled);
+    LayoutSnapshotService LayoutSnapshots { get; }
+    AutoOrganizeService AutoOrganize { get; }
+    Task<LayoutSnapshot> SaveNamedLayoutSnapshotAsync(string name);
+    Task<int> RestoreLayoutSnapshotAsync(Guid snapshotId);
+    Task<bool> DeleteLayoutSnapshotAsync(Guid snapshotId);
+    Task ExportLayoutSnapshotsAsync(string path);
+    Task<int> ImportLayoutSnapshotsAsync(string path);
+    Task<int> TidyFloatingEdgeStackAsync(Guid? anchorOrganizerId = null);
+    IReadOnlyList<AutoOrganizePlannedMove> PreviewAutoOrganize();
+    Task<AutoOrganizeRunSummary> RunAutoOrganizeAsync();
+    Task<AutoOrganizeUndoSummary> UndoAutoOrganizeAsync();
+    Task SaveOrganizerAutoOrganizeRulesAsync(Guid organizerId, IReadOnlyList<AutoOrganizeRule> rules);
 }
 
 public sealed partial class AppHost : IOrganizerHost, IConsoleHost
@@ -245,9 +267,27 @@ public sealed partial class AppHost : IOrganizerHost, IConsoleHost
         FlushPortableWindowAsync(path);
     void IOrganizerHost.ClosePortableWindowWithoutSave(string path) =>
         ClosePortableWindowWithoutSave(path);
+    bool IOrganizerHost.IsPeekActive => IsPeekActive;
+    void IOrganizerHost.ExitPeekMode() => ExitPeekMode();
+    Task<int> IOrganizerHost.TidyFloatingEdgeStackAsync(Guid? anchorOrganizerId) =>
+        TidyFloatingEdgeStackAsync(anchorOrganizerId);
+    Task IOrganizerHost.NotifyDisplayTopologyChangedAsync() =>
+        NotifyDisplayTopologyChangedAsync();
 
     FolderContextMenuService IConsoleHost.FolderContextMenu => FolderContextMenu;
     FolderContextMenuService IConsoleHost.DesktopContextMenu => DesktopContextMenu;
+    LayoutSnapshotService IConsoleHost.LayoutSnapshots => LayoutSnapshots;
+    AutoOrganizeService IConsoleHost.AutoOrganize => AutoOrganize;
+    Task<LayoutSnapshot> IConsoleHost.SaveNamedLayoutSnapshotAsync(string name) => SaveNamedLayoutSnapshotAsync(name);
+    Task<int> IConsoleHost.RestoreLayoutSnapshotAsync(Guid snapshotId) => RestoreLayoutSnapshotAsync(snapshotId);
+    Task<bool> IConsoleHost.DeleteLayoutSnapshotAsync(Guid snapshotId) => DeleteLayoutSnapshotAsync(snapshotId);
+    Task IConsoleHost.ExportLayoutSnapshotsAsync(string path) => ExportLayoutSnapshotsAsync(path);
+    Task<int> IConsoleHost.ImportLayoutSnapshotsAsync(string path) => ImportLayoutSnapshotsAsync(path);
+    IReadOnlyList<AutoOrganizePlannedMove> IConsoleHost.PreviewAutoOrganize() => PreviewAutoOrganize();
+    Task<AutoOrganizeRunSummary> IConsoleHost.RunAutoOrganizeAsync() => RunAutoOrganizeAsync();
+    Task<AutoOrganizeUndoSummary> IConsoleHost.UndoAutoOrganizeAsync() => UndoAutoOrganizeAsync();
+    Task IConsoleHost.SaveOrganizerAutoOrganizeRulesAsync(Guid organizerId, IReadOnlyList<AutoOrganizeRule> rules) =>
+        SaveOrganizerAutoOrganizeRulesAsync(organizerId, rules);
     DockSettingsChanges IConsoleHost.DockSettings => DockSettings;
     AppUpdateService IConsoleHost.Updates => Updates;
     event EventHandler? IConsoleHost.ThemeChanged

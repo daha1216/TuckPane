@@ -774,12 +774,8 @@ public sealed partial class MainWindow : Window
 
     internal Task StartCatalogRefreshIfReady() => _catalogController.StartCatalogRefreshIfReady();
 
-    internal void ApplyCatalogItemsAndRender(IReadOnlyList<WidgetItem> ordered, bool refreshIcons)
-    {
-        ReconcileCatalogItems(ordered);
-        RenderAll();
-        if (refreshIcons) RefreshRealizedIcons();
-    }
+    internal void ApplyCatalogItemsAndRender(IReadOnlyList<WidgetItem> ordered, bool refreshIcons) =>
+        ApplyFilteredCatalogItems(ordered, refreshIcons);
 
     private void ReconcileCatalogItems(IReadOnlyList<WidgetItem> desired)
     {
@@ -1632,6 +1628,8 @@ public sealed partial class MainWindow : Window
                     CommitCompactHandoff(compactTarget);
                 }
                 _collapseTransitionGeometry = null;
+                ClearExpandedFilter(releaseInputActivation: true);
+                _keyboardFocusedIndex = -1;
                 if (_definition.PlacementMode == OrganizerPlacementMode.Station || contained) _appWindow?.Hide();
                 _desktopLayer?.SetExpanded(false, showWindow: false);
                 RefreshPerformanceSettings();
@@ -3460,6 +3458,7 @@ public sealed partial class MainWindow : Window
         if (item is { Kind: WidgetItemKind.Note, NoteId: Guid noteId })
         {
             StartItemBounce(item);
+            if (_host.IsPeekActive) _host.ExitPeekMode();
             _host.OpenNote(_definition.Id, noteId);
             return;
         }
@@ -3468,6 +3467,7 @@ public sealed partial class MainWindow : Window
         {
             if (doubleTap && !IsCompactList) return;
             StartItemBounce(item);
+            if (_host.IsPeekActive) _host.ExitPeekMode();
             await _host.OpenExternalNoteAsync(item.FullPath);
             return;
         }
@@ -3476,6 +3476,7 @@ public sealed partial class MainWindow : Window
         {
             if (doubleTap && !IsCompactList) return;
             StartItemBounce(item);
+            if (_host.IsPeekActive) _host.ExitPeekMode();
             await _host.OpenExternalTodoAsync(item.FullPath);
             return;
         }
@@ -3502,6 +3503,7 @@ public sealed partial class MainWindow : Window
         try
         {
             StartItemBounce(item);
+            if (_host.IsPeekActive) _host.ExitPeekMode();
             Task launch = _host.ShellLauncher.OpenAsync(item.FullPath);
             if (await Task.WhenAny(launch, Task.Delay(TimeSpan.FromSeconds(5), _windowLifetime.Token)) != launch && !_closing)
                 ShowMessage(AppStrings.Get("LaunchPending"), InfoBarSeverity.Informational);
@@ -3565,42 +3567,8 @@ public sealed partial class MainWindow : Window
         return bounds.Width > 0 && bounds.Height > 0;
     }
 
-    private void ShowFileContextMenu(FrameworkElement host, WidgetItem item)
-    {
-        var rename = new MenuFlyoutItem { Text = AppStrings.Get("ContextRenameFile") };
-        var copy = new MenuFlyoutItem { Text = AppStrings.Get("ContextCopyFile") };
-        var cut = new MenuFlyoutItem { Text = AppStrings.Get("Cut") };
-        var delete = new MenuFlyoutItem { Text = AppStrings.Get("Delete") };
-        Microsoft.UI.Xaml.Automation.AutomationProperties.SetAutomationId(rename, "RenameFileMenuItem");
-        Microsoft.UI.Xaml.Automation.AutomationProperties.SetAutomationId(copy, "CopyFileMenuItem");
-        Microsoft.UI.Xaml.Automation.AutomationProperties.SetAutomationId(cut, "CutFileMenuItem");
-        Microsoft.UI.Xaml.Automation.AutomationProperties.SetAutomationId(delete, "DeleteFileMenuItem");
-        rename.Click += async (_, _) => await _catalogController.ShowRenameFileDialogAsync(item);
-        copy.Click += async (_, _) => await _catalogController.CopyFileItemAsync(item);
-        cut.Click += async (_, _) => await _catalogController.CutFileItemAsync(item);
-        delete.Click += async (_, _) => await _catalogController.DeleteFileItemAsync(item);
-        MenuFlyout flyout = CreateOrganizerContextMenu();
-        flyout.Items.Add(rename);
-        flyout.Items.Add(copy);
-        flyout.Items.Add(cut);
-        flyout.Items.Add(delete);
-        _shellContextMenuOpen = true;
-        flyout.Closed += (_, _) =>
-        {
-            _shellContextMenuOpen = false;
-        };
-        try
-        {
-            flyout.ShowAt(host);
-        }
-        catch (Exception ex)
-        {
-            _shellContextMenuOpen = false;
-            RestoreContextMenuHost();
-            AppLogger.Error($"无法打开文件项目菜单：{item.FullPath}", ex);
-            ShowMessage(AppStrings.Format("FileMenuErrorFormat", item.Name, ex.Message), InfoBarSeverity.Error);
-        }
-    }
+    private void ShowFileContextMenu(FrameworkElement host, WidgetItem item) =>
+        ShowEnhancedFileContextMenu(host, item);
 
     private MenuFlyout CreateOrganizerContextMenu()
     {
@@ -5212,20 +5180,8 @@ public sealed partial class MainWindow : Window
     private static bool HasLocalFileDrop(DataPackageView dataView) =>
         dataView.Contains(StandardDataFormats.StorageItems) || ShellDragService.HasFileDrop(dataView);
 
-    private async void WindowRoot_KeyDown(object sender, KeyRoutedEventArgs e)
-    {
-        if (_organizerTitleEdit.IsBusy) return;
-        if (e.Key == VirtualKey.Escape && _itemReorderSession is not null)
-        {
-            e.Handled = true;
-            CancelItemReorder();
-        }
-        else if (e.Key == VirtualKey.Escape && _expanded)
-        {
-            e.Handled = true;
-            await RunSafelyAsync(CollapseAsync, "Escape 收起窗口失败");
-        }
-    }
+    private async void WindowRoot_KeyDown(object sender, KeyRoutedEventArgs e) =>
+        await HandleOrganizerKeyDownAsync(e);
 
     private void ItemsScrollView_SizeChanged(object sender, SizeChangedEventArgs e)
     {

@@ -442,4 +442,67 @@ Storage path: {2}</value></data>
   <data name="NoteCopyImage" xml:space="preserve"><value>Copy image</value></data>
   <data name="NoteDeleteImage" xml:space="preserve"><value>Delete image</value></data>
   <data name="NoteImagePasteError" xml:space="preserve"><value>Unable to read the clipboard image or text. Copy it again and retry.</value></data>
+  <data name="TraySearchOrganizers" xml:space="preserve"><value>Search all organizers…</value></data>
+  <data name="TrayTogglePeek" xml:space="preserve"><value>Peek organizers (on top)</value></data>
+  <data name="TrayTidyEdgeStack" xml:space="preserve"><value>Tidy edge-snapped floating windows</value></data>
+  <data name="ContextItemOpen" xml:space="preserve"><value>Open</value></data>
+  <data name="ContextItemReveal" xml:space="preserve"><value>Show in Explorer</value></data>
+  <data name="ContextItemCopyPath" xml:space="preserve"><value>Copy full path</value></data>
+  <data name="ContextItemProperties" xml:space="preserve"><value>Properties</value></data>
+  <data name="ContextSort" xml:space="preserve"><value>Sort by</value></data>
+  <data name="ContextSortNameAsc" xml:space="preserve"><value>Name (A→Z)</value></data>
+  <data name="ContextSortNameDesc" xml:space="preserve"><value>Name (Z→A)</value></data>
+  <data name="ContextSortType" xml:space="preserve"><value>Type</value></data>
+  <data name="ContextSortDateModified" xml:space="preserve"><value>Date modified</value></data>
+  <data name="ContextSortSize" xml:space="preserve"><value>Size</value></data>
+  <data name="ContextTidyEdgeStack" xml:space="preserve"><value>Tidy edge stack</value></data>
+  <data name="OrganizerFilterPlaceholder" xml:space="preserve"><value>Filter this organizer… (Esc to clear)</value></data>
+  <data name="SearchWindowTitle" xml:space="preserve"><value>TuckPane Quick Search</value></data>
+  <data name="SearchPlaceholder" xml:space="preserve"><value>Search files, shortcuts, and folders across all organizers…</value></data>
+  <data name="SearchIndexing" xml:space="preserve"><value>Indexing organizers…</value></data>
+  <data name="SearchFooterHint" xml:space="preserve"><value>Enter Open · Ctrl+Enter Reveal in Explorer · Shift+Enter Open organizer · Ctrl+Shift+C Copy path · Esc Close</value></data>
+  <data name="SearchNoResults" xml:space="preserve"><value>No matching items</value></data>
+  <data name="SearchResultCountFormat" xml:space="preserve"><value>{0} matches ({1} indexed)</value></data>
+  <data name="QuickHideHotkeyTitle" xml:space="preserve"><value>Quick hide / restore shortcut</value></data>
+  <data name="SearchHotkeyTitle" xml:space="preserve"><value>Global quick search shortcut</value></data>
+  <data name="PeekHotkeyTitle" xml:space="preserve"><value>Peek organizers on top shortcut</value></data>
+  <data name="HotkeyOff" xml:space="preserve"><value>Off</value></data>
+  <data name="HotkeyErrorTitle" xml:space="preserve"><value>Global shortcut failed</value></data>
+  <data name="HotkeyDuplicateError" xml:space="preserve"><value>This shortcut is already assigned to another TuckPane action. Choose a different key combination.</value></data>
+  <data name="HotkeyConflictError" xml:space="preserve"><value>This shortcut is already in use by Windows or another app. Choose a different key combination.</value></data>
+  <data name="LayoutSnapshotsAutoTitle" xml:space="preserve"><value>Auto-restore layout snapshots on display change</value></data>
+  <data name="LayoutSnapshotRestore" xml:space="preserve"><value>Restore</value></data>
+  <data name="LayoutSnapshotSave" xml:space="preserve"><value>Save snapshot</value></data>
+  <data name="LayoutSnapshotExport" xml:space="preserve"><value>Export</value></data>
+  <data name="LayoutSnapshotImport" xml:space="preserve"><value>Import</value></data>
+  <data name="LayoutSnapshotAutoTag" xml:space="preserve"><value>Auto</value></data>
+  <data name="LayoutSnapshotManualTag" xml:space="preserve"><value>Manual</value></data>
+  <data name="LayoutSnapshotDefaultPrefix" xml:space="preserve"><value>Layout snapshot</value></data>
+  <data name="LayoutSnapshotSavedFormat" xml:space="preserve"><value>Saved snapshot "{0}" ({1} organizers).</value></data>
+  <data name="LayoutSnapshotRestoredFormat" xml:space="preserve"><value>Restored positions for {0} organizers.</value></data>
+  <data name="LayoutSnapshotDeleted" xml:space="preserve"><value>Layout snapshot deleted.</value></data>
+  <data name="LayoutSnapshotExportedFormat" xml:space="preserve"><value>Exported layout snapshots to {0}.</value></data>
+  <data name="LayoutSnapshotImportedFormat" xml:space="preserve"><value>Imported {0} layout snapshots.</value></data>
+  <data name="LayoutSnapshotsErrorTitle" xml:space="preserve"><value>Layout snapshot operation failed</value></data>
+  <data name="TidyEdgeStackDoneFormat" xml:space="preserve"><value>Tidied {0} floating organizers along the screen edge.</value></data>
+  <data name="AutoOrganizeTitle" xml:space="preserve"><value>Desktop / Downloads auto-organize rules</value></data>
+  <data name="AutoOrganizeSourceDesktop" xml:space="preserve"><value>Scan Desktop</value></data>
+  <data name="AutoOrganizeSourceDownloads" xml:space="preserve"><value>Scan Downloads</value></data>
+  <data name="AutoOrganizeExtensionsPlaceholder" xml:space="preserve"><value>Extensions, comma-separated (e.g. .pdf, .docx, .xlsx)</value></data>
+  <data name="AutoOrganizePatternsPlaceholder" xml:space="preserve"><value>Filename wildcards (e.g. Invoice*, Screenshot*)</value></data>
+  <data name="AutoOrganizePresetDocs" xml:space="preserve"><value>Documents preset</value></data>
+  <data name="AutoOrganizePresetImages" xml:space="preserve"><value>Images preset</value></data>
+  <data name="AutoOrganizePresetArchives" xml:space="preserve"><value>Archives preset</value></data>
+  <data name="AutoOrganizePresetShortcuts" xml:space="preserve"><value>Shortcuts preset</value></data>
+  <data name="AutoOrganizeSaveRule" xml:space="preserve"><value>Save rule</value></data>
+  <data name="AutoOrganizePreview" xml:space="preserve"><value>Preview</value></data>
+  <data name="AutoOrganizeRun" xml:space="preserve"><value>Organize now</value></data>
+  <data name="AutoOrganizeUndo" xml:space="preserve"><value>Undo last run</value></data>
+  <data name="AutoOrganizeRuleSaved" xml:space="preserve"><value>Saved auto-organize rule for this organizer.</value></data>
+  <data name="AutoOrganizeRuleCleared" xml:space="preserve"><value>Cleared auto-organize rule for this organizer.</value></data>
+  <data name="AutoOrganizePreviewEmpty" xml:space="preserve"><value>No new files match the configured auto-organize rules.</value></data>
+  <data name="AutoOrganizePreviewFormat" xml:space="preserve"><value>Matched {0} items: {1}</value></data>
+  <data name="AutoOrganizeRunResultFormat" xml:space="preserve"><value>Done: moved {0}, created {1} shortcuts, failed {2}.</value></data>
+  <data name="AutoOrganizeUndoResultFormat" xml:space="preserve"><value>Undo done: restored {0}, skipped {1}, failed {2}.</value></data>
+  <data name="DiagnosticsInternalErrorNoticeFormat" xml:space="preserve"><value>Captured {0} recovered UI exceptions in this session. Export a diagnostics bundle for details.</value></data>
 </root>

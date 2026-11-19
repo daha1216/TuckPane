@@ -80,6 +80,7 @@ internal static partial class NativeMethods
     internal const int HTBOTTOMRIGHT = 17;
     internal const int WM_KEYDOWN = 0x0100;
     internal const int WM_SYSKEYDOWN = 0x0104;
+    internal const uint WM_HOTKEY = 0x0312;
     internal const int VK_ESCAPE = 0x1B;
     internal const int VK_CONTROL = 0x11;
     internal const uint IDC_ARROW = 32512;
@@ -628,6 +629,14 @@ internal static partial class NativeMethods
 
     [DllImport("user32.dll", CharSet = CharSet.Unicode, EntryPoint = "MessageBoxW")]
     internal static extern int MessageBox(IntPtr window, string text, string caption, uint type);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool RegisterHotKey(IntPtr hWnd, int id, uint fsModifiers, uint vk);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool UnregisterHotKey(IntPtr hWnd, int id);
 
     [DllImport("comctl32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]

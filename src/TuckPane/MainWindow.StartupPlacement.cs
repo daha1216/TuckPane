@@ -160,6 +160,7 @@ public sealed partial class MainWindow
         }
         _displayReconcileTimer.Stop();
         _displayReconcileTimer.Start();
+        _ = _host.NotifyDisplayTopologyChangedAsync();
     }
 
     internal void ReconcileDisplayChange()

@@ -92,6 +92,9 @@ public static class Program
 
 public partial class App : Application
 {
+    private static int _recoverableUiErrorCount;
+    internal static int RecoverableUiErrorCount => Volatile.Read(ref _recoverableUiErrorCount);
+
     private readonly SingleInstanceGuard _singleInstance = CreateSingleInstanceGuard();
     private readonly Microsoft.UI.Dispatching.DispatcherQueue _dispatcher =
         Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread();
@@ -107,7 +110,11 @@ public partial class App : Application
             AppLogger.Lifecycle("ui-exception", $"type={args.Exception.GetType().FullName} hresult=0x{args.Exception.HResult:X8} handled={handled.ToString().ToLowerInvariant()}");
             // Keep recoverable async-void/UI callback failures from terminating
             // the process, while letting fatal CLR exceptions fail fast.
-            if (handled) args.Handled = true;
+            if (handled)
+            {
+                Interlocked.Increment(ref _recoverableUiErrorCount);
+                args.Handled = true;
+            }
         };
     }
 
@@ -241,6 +248,16 @@ public partial class App : Application
         if (values.Contains("--create-organizer", StringComparer.OrdinalIgnoreCase))
         {
             await _host!.CreateDesktopOrganizerAsync();
+            return;
+        }
+        if (values.Contains("--search", StringComparer.OrdinalIgnoreCase))
+        {
+            _host!.OpenSearchWindow();
+            return;
+        }
+        if (values.Contains("--peek", StringComparer.OrdinalIgnoreCase))
+        {
+            _host!.TogglePeekMode();
             return;
         }
         if (redirected && !values.Contains("--startup", StringComparer.OrdinalIgnoreCase)) _host!.OpenConsole();

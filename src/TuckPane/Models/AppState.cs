@@ -3,6 +3,7 @@ namespace TuckPane.Models;
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
 using System.Text.Json.Serialization;
+using TuckPane.Core;
 
 public enum OrganizerTextColor
 {
@@ -204,6 +205,10 @@ public sealed class GlobalSettings
     public int StationPointerLeaveCollapseDelayMs { get; set; } = 400;
     public int StationActivationDistanceDip { get; set; } = DefaultStationActivationDistanceDip;
     public int StationHoverExpandDelayMs { get; set; } = DefaultStationHoverExpandDelayMs;
+    public QuickHideHotkeyPreset QuickHideHotkey { get; set; } = QuickHideHotkeyPreset.Off;
+    public SearchHotkeyPreset SearchHotkey { get; set; } = SearchHotkeyPreset.Off;
+    public PeekHotkeyPreset PeekHotkey { get; set; } = PeekHotkeyPreset.Off;
+    public bool AutoApplyTopologySnapshots { get; set; } = true;
 
     // The desktop visibility check is the cheapest way to notice a window the shell buried, but it
     // is also a periodic z-order probe, so it follows the performance profile like the other two
@@ -412,6 +417,7 @@ public sealed class OrganizerDefinition
     public bool StorageOwnedByApp { get; set; }
     public List<string> ItemOrder { get; set; } = [];
     public List<NoteDefinition> Notes { get; set; } = [];
+    public List<AutoOrganizeRule> AutoOrganizeRules { get; set; } = [];
 
     public OrganizerDefinition Clone()
     {
@@ -428,7 +434,8 @@ public sealed class OrganizerDefinition
             StorageAbsolutePath = StorageAbsolutePath,
             StorageOwnedByApp = StorageOwnedByApp,
             ItemOrder = [.. ItemOrder],
-            Notes = Notes.Select(note => note.Clone()).ToList()
+            Notes = Notes.Select(note => note.Clone()).ToList(),
+            AutoOrganizeRules = AutoOrganizeRules.Select(rule => rule.Clone()).ToList()
         };
         clone.CopyEditableSettingsFrom(this);
         return clone;

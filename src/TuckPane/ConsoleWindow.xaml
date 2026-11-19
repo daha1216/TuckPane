@@ -336,6 +336,7 @@
                                     <StackPanel Spacing="4">
                                         <TextBlock Tag="loc:DiagnosticsTitle" Text="本地诊断" FontSize="14" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
                                         <TextBlock Tag="loc:DiagnosticsDescription" Text="仅记录带 UTC 时间的失败、超时和意外中断。诊断包最多 5 MiB，本地日志最多 20 MiB。不含文件正文；由你主动分享，不会自动上传。" FontSize="12" TextWrapping="Wrap" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
+                                        <TextBlock x:Name="InternalErrorNoticeText" FontSize="12" TextWrapping="Wrap" Visibility="Collapsed" Foreground="#FFB45309"/>
                                     </StackPanel>
                                     <Button x:Name="ExportDiagnosticsButton" Grid.Column="1" VerticalAlignment="Center" Tag="loc:DiagnosticsExport" Content="导出诊断包" Click="ExportDiagnostics_Click" AutomationProperties.AutomationId="ExportDiagnosticsButton"/>
                                 </Grid>
@@ -439,6 +440,41 @@
                                                 <Button Height="30" Click="ResetDefaultStorageDirectoryButton_Click" Content="恢复默认" Tag="loc:UseDefaultLocation"/>
                                             </StackPanel>
                                         </Grid>
+                                    </Border>
+                                </StackPanel>
+                            </Border>
+                            <Border Style="{StaticResource SettingsGroup}" Loaded="SettingsGroup_Loaded">
+                                <StackPanel Spacing="0">
+                                    <Border Style="{StaticResource GeneralRow}" BorderThickness="0">
+                                        <StackPanel Spacing="10">
+                                            <TextBlock FontSize="14" FontWeight="SemiBold" Tag="loc:AutoOrganizeTitle" Text="智能自动归类规则" TextWrapping="Wrap" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
+                                            <Grid ColumnSpacing="8">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*"/>
+                                                    <ColumnDefinition Width="130"/>
+                                                </Grid.ColumnDefinitions>
+                                                <ComboBox x:Name="AutoOrganizeTargetCombo" HorizontalAlignment="Stretch" Height="32" SelectionChanged="AutoOrganizeTargetCombo_SelectionChanged"/>
+                                                <ComboBox x:Name="AutoOrganizeSourceCombo" Grid.Column="1" HorizontalAlignment="Stretch" Height="32">
+                                                    <ComboBoxItem Tag="loc:AutoOrganizeSourceDesktop" Content="桌面"/>
+                                                    <ComboBoxItem Tag="loc:AutoOrganizeSourceDownloads" Content="下载"/>
+                                                </ComboBox>
+                                            </Grid>
+                                            <TextBox x:Name="AutoOrganizeExtensionsBox" Height="32" Style="{StaticResource FlatTextBoxStyle}" PlaceholderText=".pdf, .docx, .png"/>
+                                            <TextBox x:Name="AutoOrganizePatternsBox" Height="32" Style="{StaticResource FlatTextBoxStyle}" PlaceholderText="Screenshot*, *.zip"/>
+                                            <StackPanel Orientation="Horizontal" Spacing="6">
+                                                <Button Height="28" Tag="loc:AutoOrganizePresetDocs" Content="文档" Click="AutoOrganizePreset_Click" DataContext="documents"/>
+                                                <Button Height="28" Tag="loc:AutoOrganizePresetImages" Content="图片" Click="AutoOrganizePreset_Click" DataContext="images"/>
+                                                <Button Height="28" Tag="loc:AutoOrganizePresetArchives" Content="压缩包" Click="AutoOrganizePreset_Click" DataContext="archives"/>
+                                                <Button Height="28" Tag="loc:AutoOrganizePresetShortcuts" Content="快捷方式" Click="AutoOrganizePreset_Click" DataContext="shortcuts"/>
+                                                <Button Height="28" Tag="loc:AutoOrganizeSaveRule" Content="保存规则" Click="AutoOrganizeSaveRuleButton_Click"/>
+                                            </StackPanel>
+                                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                                <Button x:Name="PreviewAutoOrganizeButton" Height="30" Tag="loc:AutoOrganizePreview" Content="试运行预览" Click="PreviewAutoOrganizeButton_Click"/>
+                                                <Button x:Name="RunAutoOrganizeButton" Height="30" Tag="loc:AutoOrganizeRun" Content="立即归类" Click="RunAutoOrganizeButton_Click"/>
+                                                <Button x:Name="UndoAutoOrganizeButton" Height="30" Tag="loc:AutoOrganizeUndo" Content="撤销上次" Click="UndoAutoOrganizeButton_Click" IsEnabled="False"/>
+                                            </StackPanel>
+                                            <TextBlock x:Name="AutoOrganizeStatusText" FontSize="12" TextWrapping="Wrap" Visibility="Collapsed" Foreground="{StaticResource ConsoleSecondaryTextBrush}"/>
+                                        </StackPanel>
                                     </Border>
                                 </StackPanel>
                             </Border>
@@ -564,6 +600,41 @@
                                     </StackPanel>
                                 </Border>
                             </StackPanel>
+                            <Border Style="{StaticResource SettingsGroup}" Loaded="SettingsGroup_Loaded">
+                                <StackPanel Spacing="0">
+                                    <Border Style="{StaticResource GeneralRow}">
+                                        <Grid ColumnSpacing="12">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="Auto"/>
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock VerticalAlignment="Center" FontSize="14" Tag="loc:LayoutSnapshotsAutoTitle" Text="显示器变化时自动恢复布局快照" TextWrapping="Wrap" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
+                                            <ToggleSwitch x:Name="AutoApplyTopologySnapshotsToggle" Grid.Column="1" VerticalAlignment="Center" Toggled="AutoApplyTopologySnapshotsToggle_Toggled"/>
+                                        </Grid>
+                                    </Border>
+                                    <Border Style="{StaticResource GeneralRow}" BorderThickness="0">
+                                        <StackPanel Spacing="10">
+                                            <Grid ColumnSpacing="8">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*"/>
+                                                    <ColumnDefinition Width="Auto"/>
+                                                    <ColumnDefinition Width="Auto"/>
+                                                </Grid.ColumnDefinitions>
+                                                <ComboBox x:Name="LayoutSnapshotCombo" HorizontalAlignment="Stretch" Height="32"/>
+                                                <Button x:Name="RestoreLayoutSnapshotButton" Grid.Column="1" Height="32" Tag="loc:LayoutSnapshotRestore" Content="恢复" Click="RestoreLayoutSnapshotButton_Click"/>
+                                                <Button x:Name="DeleteLayoutSnapshotButton" Grid.Column="2" Height="32" Tag="loc:Delete" Content="删除" Click="DeleteLayoutSnapshotButton_Click"/>
+                                            </Grid>
+                                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                                <Button x:Name="SaveLayoutSnapshotButton" Height="30" Tag="loc:LayoutSnapshotSave" Content="保存当前快照" Click="SaveLayoutSnapshotButton_Click"/>
+                                                <Button x:Name="TidyEdgeStackButton" Height="30" Tag="loc:ContextTidyEdgeStack" Content="整齐贴边排列" Click="TidyEdgeStackButton_Click"/>
+                                                <Button x:Name="ExportLayoutSnapshotsButton" Height="30" Tag="loc:LayoutSnapshotExport" Content="导出" Click="ExportLayoutSnapshotsButton_Click"/>
+                                                <Button x:Name="ImportLayoutSnapshotsButton" Height="30" Tag="loc:LayoutSnapshotImport" Content="导入" Click="ImportLayoutSnapshotsButton_Click"/>
+                                            </StackPanel>
+                                            <TextBlock x:Name="LayoutSnapshotStatusText" FontSize="12" TextWrapping="Wrap" Visibility="Collapsed" Foreground="{StaticResource ConsoleSecondaryTextBrush}"/>
+                                        </StackPanel>
+                                    </Border>
+                                </StackPanel>
+                            </Border>
                         </StackPanel>
                     </ScrollViewer>
                     <ScrollViewer x:Name="MenuPage" Margin="0,22,0,0" Background="Transparent" VerticalScrollBarVisibility="Auto" Visibility="Collapsed" HorizontalScrollBarVisibility="Disabled">
@@ -761,6 +832,56 @@
                                             </Grid.ColumnDefinitions>
                                             <TextBlock FontSize="14" Tag="loc:ExclusiveExpansionTitle" Text="只允许展开一个收纳窗" TextWrapping="Wrap" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
                                             <ToggleSwitch x:Name="ExclusiveExpansionToggle" Grid.Column="1" VerticalAlignment="Center" AutomationProperties.AutomationId="ExclusiveExpansionToggle" Toggled="ExclusiveExpansionToggle_Toggled"/>
+                                        </Grid>
+                                    </Border>
+                                </StackPanel>
+                            </Border>
+                            <Border Style="{StaticResource SettingsGroup}" Loaded="SettingsGroup_Loaded">
+                                <StackPanel Spacing="0">
+                                    <Border Style="{StaticResource GeneralRow}">
+                                        <Grid ColumnSpacing="12">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="Auto"/>
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock VerticalAlignment="Center" FontSize="14" Tag="loc:QuickHideHotkeyTitle" Text="快速隐藏全部快捷键" TextWrapping="Wrap" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
+                                            <ComboBox x:Name="QuickHideHotkeyCombo" Grid.Column="1" Width="170" Height="32" SelectionChanged="QuickHideHotkeyCombo_SelectionChanged">
+                                                <ComboBoxItem Tag="loc:HotkeyOff" Content="关闭"/>
+                                                <ComboBoxItem Content="Ctrl+Alt+H"/>
+                                                <ComboBoxItem Content="Ctrl+Alt+Space"/>
+                                                <ComboBoxItem Content="Ctrl+Shift+Space"/>
+                                                <ComboBoxItem Content="Ctrl+Alt+`"/>
+                                            </ComboBox>
+                                        </Grid>
+                                    </Border>
+                                    <Border Style="{StaticResource GeneralRow}">
+                                        <Grid ColumnSpacing="12">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="Auto"/>
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock VerticalAlignment="Center" FontSize="14" Tag="loc:SearchHotkeyTitle" Text="全局查找收纳窗快捷键" TextWrapping="Wrap" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
+                                            <ComboBox x:Name="SearchHotkeyCombo" Grid.Column="1" Width="170" Height="32" SelectionChanged="SearchHotkeyCombo_SelectionChanged">
+                                                <ComboBoxItem Tag="loc:HotkeyOff" Content="关闭"/>
+                                                <ComboBoxItem Content="Ctrl+Alt+F"/>
+                                                <ComboBoxItem Content="Ctrl+Alt+K"/>
+                                                <ComboBoxItem Content="Ctrl+Alt+Space"/>
+                                            </ComboBox>
+                                        </Grid>
+                                    </Border>
+                                    <Border Style="{StaticResource GeneralRow}" BorderThickness="0">
+                                        <Grid ColumnSpacing="12">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="Auto"/>
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock VerticalAlignment="Center" FontSize="14" Tag="loc:PeekHotkeyTitle" Text="临时置顶透视（Peek）快捷键" TextWrapping="Wrap" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
+                                            <ComboBox x:Name="PeekHotkeyCombo" Grid.Column="1" Width="170" Height="32" SelectionChanged="PeekHotkeyCombo_SelectionChanged">
+                                                <ComboBoxItem Tag="loc:HotkeyOff" Content="关闭"/>
+                                                <ComboBoxItem Content="Ctrl+Alt+P"/>
+                                                <ComboBoxItem Content="Ctrl+Alt+G"/>
+                                                <ComboBoxItem Content="Ctrl+Alt+Shift+P"/>
+                                            </ComboBox>
                                         </Grid>
                                     </Border>
                                 </StackPanel>

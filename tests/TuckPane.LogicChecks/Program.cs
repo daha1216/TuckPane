@@ -25,6 +25,12 @@ if (args is ["--startup-placement"])
     return;
 }
 
+if (args is ["--endgame-productivity"])
+{
+    await EndgameProductivityChecks.RunAsync();
+    return;
+}
+
 if (args.Length > 0 && args[0] == "--sep13-interactions")
 {
     if (args is not [_, string area]) throw new ArgumentException("Expected --sep13-interactions <resize|menu|shortcut>.");
