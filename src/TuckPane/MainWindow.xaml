@@ -500,6 +500,25 @@
                         Background="#26FFFFFF"
                         BorderBrush="#90FFFFFF"
                         Visibility="Collapsed" />
+                    <Border
+                        x:Name="FreeGridDragStackBadge"
+                        Canvas.ZIndex="20"
+                        MinWidth="24"
+                        Height="24"
+                        Padding="7,0"
+                        CornerRadius="12"
+                        Background="#E60078D4"
+                        BorderThickness="1.5"
+                        BorderBrush="#CCFFFFFF"
+                        Visibility="Collapsed">
+                        <TextBlock
+                            x:Name="FreeGridDragStackBadgeText"
+                            HorizontalAlignment="Center"
+                            VerticalAlignment="Center"
+                            FontSize="12"
+                            FontWeight="Bold"
+                            Foreground="White" />
+                    </Border>
                 </Canvas>
                 <ItemsRepeater
                     x:Name="ItemsRepeater"

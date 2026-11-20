@@ -19,12 +19,11 @@ internal readonly record struct ReorderPreviewSnapshot(
 /// <summary>
 /// Pure iOS 18 / iOS 26 SpringBoard-inspired reorder engine supporting:
 /// 1. Empty-slot direct placement with ZERO disturbance to other icons;
-/// 2. Local contiguous ripple push-aside bounded by the nearest empty gap
-///    (and deterministic reading-order insertion inside dense clusters — never
-///    a confusing 15-puzzle snake trail);
-/// 3. Direct 1-to-1 swap (A <-> B) via setting or holding Shift during drag;
-/// 4. Spatial hysteresis + brief dwell threshold over occupied slots so fast
-///    cursor sweeps across icons toward an empty area never scatter your layout.
+/// 2. Bidirectional nearest-gap ripple push-aside with pointer approach-vector tie-breaking
+///    (always chooses the shortest contiguous shift to either side — never a 15-puzzle snake);
+/// 3. Direct 1-to-1 swap (A &lt;-&gt; B) via setting or holding Shift during drag;
+/// 4. Spatial hysteresis + brief dwell threshold over occupied slots;
+/// 5. iOS 18 multi-icon stack drop (ComputeStackLayout) placing a fanned selection deck cleanly.
 /// </summary>
 internal sealed class FreeGridReorderEngine
 {
@@ -36,6 +35,7 @@ internal sealed class FreeGridReorderEngine
     private readonly int _sourceSlot;
     private readonly bool _freeGridEnabled;
     private readonly int _maxSlotCount;
+    private readonly int[] _draggedStackIndices;
 
     private int _committedTargetSlot;
     private ReorderTargetKind _committedKind = ReorderTargetKind.Original;
@@ -44,12 +44,15 @@ internal sealed class FreeGridReorderEngine
     private int? _pendingOccupiedSlot;
     private double _pendingOccupiedElapsedMs;
     private bool _lastDirectSwap;
+    private Point? _lastPointerCenter;
+    private double _approachDeltaX;
 
     internal FreeGridReorderEngine(
         IReadOnlyList<int> initialSlots,
         int sourceItemIndex,
         bool freeGridEnabled,
-        int maxSlotCount)
+        int maxSlotCount,
+        IReadOnlyList<int>? draggedStackIndices = null)
     {
         ArgumentNullException.ThrowIfNull(initialSlots);
         ArgumentOutOfRangeException.ThrowIfNegative(sourceItemIndex);
@@ -62,6 +65,21 @@ internal sealed class FreeGridReorderEngine
         _maxSlotCount = Math.Max(initialSlots.Count, maxSlotCount);
         _committedTargetSlot = _sourceSlot;
         _visualSlots = (int[])_initialSlots.Clone();
+
+        if (draggedStackIndices is { Count: > 1 })
+        {
+            var stack = new List<int>(draggedStackIndices.Count) { sourceItemIndex };
+            foreach (int idx in draggedStackIndices)
+            {
+                if (idx >= 0 && idx < _initialSlots.Length && idx != sourceItemIndex && !stack.Contains(idx))
+                    stack.Add(idx);
+            }
+            _draggedStackIndices = stack.ToArray();
+        }
+        else
+        {
+            _draggedStackIndices = [sourceItemIndex];
+        }
     }
 
     internal int SourceItemIndex => _sourceItemIndex;
@@ -69,6 +87,8 @@ internal sealed class FreeGridReorderEngine
     internal int TargetSlot => _committedTargetSlot;
     internal ReorderTargetKind CurrentKind => _committedKind;
     internal int Revision { get; private set; }
+    internal bool IsMultiStackDrag => _draggedStackIndices.Length > 1;
+    internal IReadOnlyList<int> DraggedStackIndices => _draggedStackIndices;
 
     internal int GetVisualSlot(int itemIndex) =>
         itemIndex >= 0 && itemIndex < _visualSlots.Length ? _visualSlots[itemIndex] : itemIndex;
@@ -85,6 +105,15 @@ internal sealed class FreeGridReorderEngine
         return new Vector2((float)(to.X - from.X), (float)(to.Y - from.Y));
     }
 
+    internal int GetSlotHopDistanceFromTarget(int itemIndex, int columns)
+    {
+        int cols = Math.Max(1, columns);
+        int vis = GetVisualSlot(itemIndex);
+        int dr = Math.Abs(vis / cols - _committedTargetSlot / cols);
+        int dc = Math.Abs(vis % cols - _committedTargetSlot % cols);
+        return dr + dc;
+    }
+
     internal bool UpdateFromPointer(
         Point draggedCenter,
         double cellWidth,
@@ -95,6 +124,14 @@ internal sealed class FreeGridReorderEngine
         double deltaMs,
         bool preferDirectSwap)
     {
+        if (_lastPointerCenter is Point prev)
+        {
+            double dx = draggedCenter.X - prev.X;
+            if (Math.Abs(dx) > 0.5)
+                _approachDeltaX = _approachDeltaX * 0.65 + dx * 0.35;
+        }
+        _lastPointerCenter = draggedCenter;
+
         int cols = Math.Max(1, columns);
         int rows = Math.Max(1, totalRows);
         int slotLimit = _freeGridEnabled
@@ -107,8 +144,6 @@ internal sealed class FreeGridReorderEngine
         else
             rawSlot = Math.Clamp(rawSlot, 0, Math.Max(0, slotLimit - 1));
 
-        // Spatial hysteresis: require meaningful penetration into a different slot
-        // before shifting targets to prevent boundary jitter.
         if (rawSlot != _committedTargetSlot)
         {
             Point currentCenter = FreeGridSlotMap.SlotCenter(_committedTargetSlot, cols, cellWidth, cellHeight, gap);
@@ -124,7 +159,6 @@ internal sealed class FreeGridReorderEngine
             }
         }
 
-        // If swap preference flipped (e.g. user pressed/released Shift while hovering same slot), recompute immediately.
         if (rawSlot == _committedTargetSlot && preferDirectSwap == _lastDirectSwap)
         {
             _pendingOccupiedSlot = null;
@@ -134,10 +168,6 @@ internal sealed class FreeGridReorderEngine
 
         bool isTargetOccupiedByOther = FindOriginalOccupant(rawSlot) >= 0;
 
-        // iOS 18+ transit protection in Free-Grid mode: moving into an EMPTY slot or returning
-        // to the original slot commits immediately with zero lag; hovering over an OCCUPIED slot
-        // requires a brief dwell (~80ms) so dragging across icons to reach an empty cell doesn't
-        // accidentally scatter intermediate rows.
         if (_freeGridEnabled &&
             isTargetOccupiedByOther &&
             rawSlot != _committedTargetSlot &&
@@ -156,23 +186,23 @@ internal sealed class FreeGridReorderEngine
 
         _pendingOccupiedSlot = null;
         _pendingOccupiedElapsedMs = 0;
-        return CommitTargetSlot(rawSlot, preferDirectSwap, slotLimit);
+        return CommitTargetSlot(rawSlot, preferDirectSwap, slotLimit, _approachDeltaX);
     }
 
-    internal bool CommitTargetSlot(int targetSlot, bool preferDirectSwap, int? slotLimitOverride = null)
+    internal bool CommitTargetSlot(
+        int targetSlot,
+        bool preferDirectSwap,
+        int? slotLimitOverride = null,
+        double approachDeltaX = 0)
     {
         int slotLimit = slotLimitOverride ?? _maxSlotCount;
         int clamped = _freeGridEnabled
             ? Math.Clamp(targetSlot, 0, Math.Max(0, slotLimit - 1))
             : Math.Clamp(targetSlot, 0, Math.Max(0, _initialSlots.Length - 1));
 
-        ReorderPreviewSnapshot next = ComputeLayout(
-            _initialSlots,
-            _sourceItemIndex,
-            clamped,
-            _freeGridEnabled,
-            preferDirectSwap,
-            slotLimit);
+        ReorderPreviewSnapshot next = IsMultiStackDrag
+            ? ComputeStackLayout(_initialSlots, _draggedStackIndices, clamped, _freeGridEnabled, slotLimit)
+            : ComputeLayout(_initialSlots, _sourceItemIndex, clamped, _freeGridEnabled, preferDirectSwap, slotLimit, approachDeltaX);
 
         _lastDirectSwap = preferDirectSwap;
         if (next.TargetSlot == _committedTargetSlot &&
@@ -206,7 +236,8 @@ internal sealed class FreeGridReorderEngine
         int targetSlot,
         bool freeGridEnabled,
         bool preferDirectSwap,
-        int slotLimit)
+        int slotLimit,
+        double approachDeltaX = 0)
     {
         int count = initialSlots.Count;
         int[] result = initialSlots.ToArray();
@@ -215,7 +246,6 @@ internal sealed class FreeGridReorderEngine
         if (targetSlot == sourceSlot)
             return new(sourceSlot, ReorderTargetKind.Original, result);
 
-        // Build occupancy map of all non-dragged items.
         var occupantBySlot = new Dictionary<int, int>(count);
         for (int i = 0; i < count; i++)
         {
@@ -263,10 +293,7 @@ internal sealed class FreeGridReorderEngine
             return new(targetSlot, ReorderTargetKind.PushAside, result);
         }
 
-        // Case 4: iOS 18+ Free-Grid local contiguous ripple push-aside.
-        // Step 4a: If sourceSlot and targetSlot are connected by a contiguous occupied chain
-        // (no blank gap separating them), slide ONLY the icons between targetSlot and sourceSlot
-        // cleanly into sourceSlot (exact iOS flow inside a group without disturbing distant groups!).
+        // Case 4a: Contiguous chain between targetSlot and sourceSlot -> slide directly into sourceSlot.
         if (IsContiguousChainBetween(targetSlot, sourceSlot, occupantBySlot))
         {
             int step = targetSlot < sourceSlot ? 1 : -1;
@@ -281,34 +308,45 @@ internal sealed class FreeGridReorderEngine
             return new(targetSlot, ReorderTargetKind.PushAside, result);
         }
 
-        // Step 4b: Otherwise, ripple forward ONLY up to the very first empty slot at/after targetSlot
-        // (or backward if forward hits the hard limit). Icons beyond the first empty gap NEVER move!
+        // Case 4b: Bidirectional nearest-gap ripple (true iOS 18/26 minimal-churn wave).
+        // Compare distance to the nearest empty gap forward vs backward and pick the shorter chain,
+        // using pointer approach vector as the tie-breaker so icons part naturally away from approach.
         int forwardGap = targetSlot + 1;
         while (forwardGap < slotLimit && occupantBySlot.ContainsKey(forwardGap))
             forwardGap++;
-
-        if (forwardGap < slotLimit)
-        {
-            for (int slot = forwardGap - 1; slot >= targetSlot; slot--)
-            {
-                if (occupantBySlot.TryGetValue(slot, out int itemIdx))
-                    result[itemIdx] = slot + 1;
-            }
-            result[sourceItemIndex] = targetSlot;
-            return new(targetSlot, ReorderTargetKind.PushAside, result);
-        }
+        bool forwardValid = forwardGap < slotLimit;
+        int forwardDist = forwardValid ? forwardGap - targetSlot : int.MaxValue;
 
         int backwardGap = targetSlot - 1;
         while (backwardGap >= 0 && occupantBySlot.ContainsKey(backwardGap))
             backwardGap--;
+        bool backwardValid = backwardGap >= 0;
+        int backwardDist = backwardValid ? targetSlot - backwardGap : int.MaxValue;
 
-        if (backwardGap >= 0)
+        if (forwardValid || backwardValid)
         {
-            for (int slot = backwardGap + 1; slot <= targetSlot; slot++)
+            bool chooseBackward = backwardValid && (
+                !forwardValid ||
+                backwardDist < forwardDist ||
+                (backwardDist == forwardDist && approachDeltaX < 0));
+
+            if (chooseBackward)
             {
-                if (occupantBySlot.TryGetValue(slot, out int itemIdx))
-                    result[itemIdx] = slot - 1;
+                for (int slot = backwardGap + 1; slot <= targetSlot; slot++)
+                {
+                    if (occupantBySlot.TryGetValue(slot, out int itemIdx))
+                        result[itemIdx] = slot - 1;
+                }
             }
+            else
+            {
+                for (int slot = forwardGap - 1; slot >= targetSlot; slot--)
+                {
+                    if (occupantBySlot.TryGetValue(slot, out int itemIdx))
+                        result[itemIdx] = slot + 1;
+                }
+            }
+
             result[sourceItemIndex] = targetSlot;
             return new(targetSlot, ReorderTargetKind.PushAside, result);
         }
@@ -325,11 +363,90 @@ internal sealed class FreeGridReorderEngine
         return new(targetSlot, ReorderTargetKind.EmptySlot, result);
     }
 
+    /// <summary>
+    /// Computes an iOS 18 multi-icon stack drop layout: keeps all non-selected items stable
+    /// whenever the target run is free, and smoothly pushes only colliding items to the nearest
+    /// open slots when dropping a stack onto occupied cells.
+    /// </summary>
+    internal static ReorderPreviewSnapshot ComputeStackLayout(
+        IReadOnlyList<int> initialSlots,
+        IReadOnlyList<int> draggedIndices,
+        int anchorTargetSlot,
+        bool freeGridEnabled,
+        int slotLimit)
+    {
+        int count = initialSlots.Count;
+        int[] result = initialSlots.ToArray();
+        if (draggedIndices.Count == 0)
+            return new(anchorTargetSlot, ReorderTargetKind.Original, result);
+
+        int primaryIndex = draggedIndices[0];
+        if (anchorTargetSlot == initialSlots[primaryIndex])
+            return new(anchorTargetSlot, ReorderTargetKind.Original, result);
+
+        var draggedSet = new HashSet<int>(draggedIndices);
+        int effectiveLimit = Math.Max(slotLimit, count + draggedIndices.Count);
+
+        if (!freeGridEnabled)
+        {
+            // Dense mode: extract remaining items in reading order and splice the dragged deck at anchorTargetSlot.
+            var remaining = Enumerable.Range(0, count)
+                .Where(i => !draggedSet.Contains(i))
+                .OrderBy(i => initialSlots[i])
+                .ToList();
+            int insertAt = Math.Clamp(anchorTargetSlot, 0, remaining.Count);
+            remaining.InsertRange(insertAt, draggedIndices);
+            for (int slot = 0; slot < remaining.Count; slot++)
+                result[remaining[slot]] = slot;
+            return new(insertAt, ReorderTargetKind.PushAside, result);
+        }
+
+        // Free-Grid mode: reserve consecutive slots starting at anchorTargetSlot for the stack,
+        // then relocate only directly displaced non-selected items to the nearest open slots.
+        int maxStart = Math.Max(0, effectiveLimit - draggedIndices.Count);
+        int clampedStart = Math.Clamp(anchorTargetSlot, 0, maxStart);
+
+        var occupied = new HashSet<int>();
+        var reservedByStack = new HashSet<int>();
+        for (int k = 0; k < draggedIndices.Count; k++)
+        {
+            int target = clampedStart + k;
+            result[draggedIndices[k]] = target;
+            reservedByStack.Add(target);
+            occupied.Add(target);
+        }
+
+        var displaced = new List<int>();
+        for (int i = 0; i < count; i++)
+        {
+            if (draggedSet.Contains(i)) continue;
+            int slot = initialSlots[i];
+            if (reservedByStack.Contains(slot))
+                displaced.Add(i);
+            else
+                occupied.Add(slot);
+        }
+
+        bool anyDisplaced = displaced.Count > 0;
+        // Relocate displaced items in reading order to nearest free cells without disturbing unrelated clusters.
+        displaced.Sort((a, b) => initialSlots[a].CompareTo(initialSlots[b]));
+        int expandedBound = Math.Max(effectiveLimit, (occupied.Count > 0 ? occupied.Max() : 0) + displaced.Count + 8);
+        foreach (int itemIdx in displaced)
+        {
+            int nextSlot = FreeGridSlotMap.FindNearestFreeSlot(clampedStart + draggedIndices.Count, occupied, expandedBound);
+            result[itemIdx] = nextSlot;
+            occupied.Add(nextSlot);
+        }
+
+        return new(clampedStart, anyDisplaced ? ReorderTargetKind.PushAside : ReorderTargetKind.EmptySlot, result);
+    }
+
     private int FindOriginalOccupant(int slot)
     {
+        var dragged = new HashSet<int>(_draggedStackIndices);
         for (int i = 0; i < _initialSlots.Length; i++)
         {
-            if (i != _sourceItemIndex && _initialSlots[i] == slot)
+            if (!dragged.Contains(i) && _initialSlots[i] == slot)
                 return i;
         }
         return -1;

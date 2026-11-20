@@ -52,6 +52,13 @@ public sealed class StorageService
             TransferOutcome outcome = DropValidator.IsExecutable(sourcePath)
                 ? CreateExecutableShortcut(sourcePath)
                 : await Task.Run(() => MoveOneAsync(sourcePath, progress, cancellationToken), cancellationToken);
+            if (outcome.DestinationPath is { } destPath)
+            {
+                if (outcome.Status is TransferStatus.Moved or TransferStatus.CopiedSourceRetained or TransferStatus.Copied)
+                    _ = ShortcutIntegrityService.RepairMovedShortcutIfNeeded(sourcePath, destPath);
+                if (outcome.Status == TransferStatus.Moved)
+                    ShellChangeNotificationService.NotifyMoved(sourcePath, destPath);
+            }
             outcomes.Add(outcome);
             if (outcome.Status is TransferStatus.Failed or TransferStatus.Cancelled) break;
         }
@@ -78,6 +85,8 @@ public sealed class StorageService
             TransferOutcome outcome = DropValidator.IsExecutable(sourcePath)
                 ? CreateExecutableShortcut(sourcePath)
                 : await Task.Run(() => CopyOneAsync(sourcePath, progress, cancellationToken), cancellationToken);
+            if (outcome.Status == TransferStatus.Copied && outcome.DestinationPath is { } destPath)
+                _ = ShortcutIntegrityService.RepairMovedShortcutIfNeeded(sourcePath, destPath);
             outcomes.Add(outcome);
             if (outcome.Status is TransferStatus.Failed or TransferStatus.Cancelled) break;
         }
@@ -397,10 +406,22 @@ public sealed class StorageService
                 try
                 {
                     cancellationToken.ThrowIfCancellationRequested();
+                    if (!isDirectory) _ = ShellFileOperationService.TryClearReadOnlyAttribute(source);
                     if (isDirectory) Directory.Move(source, destination);
                     else File.Move(source, destination);
                     progress?.Report(new TransferProgress(itemName, 1, 1));
                     return new(source, destination, TransferStatus.Moved, AppStrings.Get("Moved"));
+                }
+                catch (UnauthorizedAccessException) when (ShellFileOperationService.IsPublicDesktopPath(source))
+                {
+                    if (ShellFileOperationService.TryShellMove(source, destination, out bool shellCancelled))
+                    {
+                        progress?.Report(new TransferProgress(itemName, 1, 1));
+                        return new(source, destination, TransferStatus.Moved, AppStrings.Get("Moved"));
+                    }
+                    if (shellCancelled)
+                        return new(source, null, TransferStatus.Cancelled, AppStrings.Get("MoveSourceRetained"));
+                    throw;
                 }
                 catch (IOException ex) when (IsSharingViolation(ex) &&
                                              (File.Exists(source) || Directory.Exists(source)) &&
@@ -453,8 +474,20 @@ public sealed class StorageService
             return PublishedMoveCompletion.Complete(source, destination, () =>
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                if (isDirectory) Directory.Delete(source, recursive: true);
-                else File.Delete(source);
+                try
+                {
+                    if (isDirectory) Directory.Delete(source, recursive: true);
+                    else
+                    {
+                        _ = ShellFileOperationService.TryClearReadOnlyAttribute(source);
+                        File.Delete(source);
+                    }
+                }
+                catch (UnauthorizedAccessException) when (ShellFileOperationService.IsPublicDesktopPath(source))
+                {
+                    if (!ShellFileOperationService.TryShellDelete(source, out _))
+                        throw;
+                }
             });
         }
         catch (Exception ex)

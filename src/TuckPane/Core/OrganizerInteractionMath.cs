@@ -89,6 +89,23 @@ internal static class OrganizerInteractionMath
         allowed.HasFlag(DataPackageOperation.Copy) ? DataPackageOperation.Copy :
         DataPackageOperation.None;
 
+    /// <summary>
+    /// Resolves drop intent for external files dropped onto an organizer.
+    /// Desktop items (User Desktop or Public Desktop) default to Move so organizing
+    /// feels like relocating icons on the desktop, unless the user explicitly holds Ctrl to Copy.
+    /// </summary>
+    internal static DataPackageOperation SelectIncomingDropOperation(
+        DataPackageOperation allowed,
+        bool fromDesktop,
+        bool controlPressed)
+    {
+        if (controlPressed && allowed.HasFlag(DataPackageOperation.Copy))
+            return DataPackageOperation.Copy;
+        if (fromDesktop && !controlPressed && allowed != DataPackageOperation.None)
+            return DataPackageOperation.Move;
+        return SelectDropOperation(allowed);
+    }
+
     internal static DataPackageOperation ExternalDragAllowedOperations(WidgetItemKind kind) =>
         kind == WidgetItemKind.Note
             ? DataPackageOperation.Copy | DataPackageOperation.Move

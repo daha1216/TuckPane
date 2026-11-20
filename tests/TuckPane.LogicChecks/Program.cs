@@ -43,6 +43,12 @@ if (args is ["--ios-free-grid"])
     return;
 }
 
+if (args is ["--desktop-move-8x8"])
+{
+    await DesktopMoveAnd8x8Checks.RunAsync();
+    return;
+}
+
 if (args.Length > 0 && args[0] == "--sep13-interactions")
 {
     if (args is not [_, string area]) throw new ArgumentException("Expected --sep13-interactions <resize|menu|shortcut>.");
@@ -4573,8 +4579,8 @@ var layoutLimits = new AppStateV2
     ]
 };
 StateStore.Normalize(layoutLimits);
-Check(layoutLimits.Organizers[0].Layout.Rows == 6 && layoutLimits.Organizers[0].Layout.Columns == 2,
-    "普通窗口没有保持 2–6 行列限制。");
+Check(layoutLimits.Organizers[0].Layout.Rows == 8 && layoutLimits.Organizers[0].Layout.Columns == 2,
+    "普通窗口没有保持 2–8 行列限制。");
 Check(layoutLimits.Organizers[1].Layout.Rows == 9 && layoutLimits.Organizers[1].Layout.Columns == 1 &&
       layoutLimits.Organizers[2].Layout.Rows == 1 && layoutLimits.Organizers[2].Layout.Columns == 9,
     "中转站没有使用 1–9 行列限制。");

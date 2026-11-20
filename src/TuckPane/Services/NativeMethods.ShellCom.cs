@@ -349,4 +349,94 @@ internal static partial class NativeMethods
 
     [DllImport("kernel32.dll")]
     internal static extern IntPtr GlobalFree(IntPtr memory);
+
+    internal const uint SLGP_RAWPATH = 0x0004;
+    internal const uint SLDF_HAS_RELPATH = 0x00000008;
+    internal const uint SLDF_HAS_WORKINGDIR = 0x00000010;
+    internal const uint SLDF_HAS_ARGS = 0x00000020;
+    internal const uint SLDF_HAS_DARWINID = 0x00001000;
+    internal const uint SLDF_RUNAS_USER = 0x00002000;
+    internal const uint SLDF_HAS_EXP_ICON_SZ = 0x00004000;
+
+    internal const uint SEE_MASK_NOASYNC = 0x00000100;
+    internal const uint SEE_MASK_FLAG_NO_UI = 0x00000400;
+    internal const uint SEE_MASK_FLAG_LOG_USAGE = 0x04000000;
+    internal const int ERROR_CANCELLED = 1223;
+
+    internal const uint FOF_NOCONFIRMATION = 0x0010;
+    internal const uint FOF_ALLOWUNDO = 0x0040;
+    internal const uint FOF_NOERRORUI = 0x0400;
+    internal const uint FOFX_NOCOPYHOOKS = 0x00000800;
+    internal const uint FOFX_ADDUNDORECORD = 0x20000000;
+
+    internal const uint IO_REPARSE_TAG_MOUNT_POINT = 0xA0000003;
+    internal const uint IO_REPARSE_TAG_SYMLINK = 0xA000000C;
+    internal const uint IO_REPARSE_TAG_APPEXECLINK = 0x8000001B;
+
+    [ComImport]
+    [Guid("45E2B4AE-B1C3-11D0-B92F-00A0C90312E1")]
+    [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    internal interface IShellLinkDataList
+    {
+        [PreserveSig] int AddDataBlock(IntPtr dataBlock);
+        [PreserveSig] int CopyDataBlock(uint signature, out IntPtr dataBlock);
+        [PreserveSig] int RemoveDataBlock(uint signature);
+        [PreserveSig] int GetFlags(out uint flags);
+        [PreserveSig] int SetFlags(uint flags);
+    }
+
+    [ComImport]
+    [Guid("3AD05575-8857-4850-9277-11B85BDB8E09")]
+    internal class FileOperation
+    {
+    }
+
+    [ComImport]
+    [Guid("947AAB5F-0A5C-4C13-B4D6-4BF7836FC9F6")]
+    [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    internal interface IFileOperation
+    {
+        [PreserveSig] int Advise(IntPtr progressSink, out uint cookie);
+        [PreserveSig] int Unadvise(uint cookie);
+        [PreserveSig] int SetOperationFlags(uint flags);
+        [PreserveSig] int SetProgressMessage([MarshalAs(UnmanagedType.LPWStr)] string message);
+        [PreserveSig] int SetProgressDialog(IntPtr progressDialog);
+        [PreserveSig] int SetProperties(IntPtr properties);
+        [PreserveSig] int SetOwnerWindow(IntPtr ownerHwnd);
+        [PreserveSig] int ApplyPropertiesToItem(IShellItem item);
+        [PreserveSig] int ApplyPropertiesToItems(IntPtr items);
+        [PreserveSig] int RenameItem(IShellItem item, [MarshalAs(UnmanagedType.LPWStr)] string newName, IntPtr itemSink);
+        [PreserveSig] int RenameItems(IntPtr items, [MarshalAs(UnmanagedType.LPWStr)] string newName);
+        [PreserveSig] int MoveItem(IShellItem item, IShellItem destinationFolder, [MarshalAs(UnmanagedType.LPWStr)] string? newName, IntPtr itemSink);
+        [PreserveSig] int MoveItems(IntPtr items, IShellItem destinationFolder);
+        [PreserveSig] int CopyItem(IShellItem item, IShellItem destinationFolder, [MarshalAs(UnmanagedType.LPWStr)] string? copyName, IntPtr itemSink);
+        [PreserveSig] int CopyItems(IntPtr items, IShellItem destinationFolder);
+        [PreserveSig] int DeleteItem(IShellItem item, IntPtr itemSink);
+        [PreserveSig] int DeleteItems(IntPtr items);
+        [PreserveSig] int NewItem(IShellItem destinationFolder, uint fileAttributes, [MarshalAs(UnmanagedType.LPWStr)] string name, [MarshalAs(UnmanagedType.LPWStr)] string? templateName, IntPtr itemSink);
+        [PreserveSig] int PerformOperations();
+        [PreserveSig] int GetAnyOperationsAborted([MarshalAs(UnmanagedType.Bool)] out bool anyAborted);
+    }
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    internal struct WIN32_FIND_DATAW
+    {
+        public uint dwFileAttributes;
+        public System.Runtime.InteropServices.ComTypes.FILETIME ftCreationTime;
+        public System.Runtime.InteropServices.ComTypes.FILETIME ftLastAccessTime;
+        public System.Runtime.InteropServices.ComTypes.FILETIME ftLastWriteTime;
+        public uint nFileSizeHigh;
+        public uint nFileSizeLow;
+        public uint dwReserved0;
+        public uint dwReserved1;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 260)] public string cFileName;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 14)] public string cAlternateFileName;
+    }
+
+    [DllImport("kernel32.dll", EntryPoint = "FindFirstFileW", CharSet = CharSet.Unicode, SetLastError = true)]
+    internal static extern IntPtr FindFirstFile(string fileName, out WIN32_FIND_DATAW findData);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool FindClose(IntPtr findFileHandle);
 }
