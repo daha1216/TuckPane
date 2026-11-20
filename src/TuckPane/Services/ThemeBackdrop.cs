@@ -16,8 +16,9 @@ namespace TuckPane.Services;
 
 /// <summary>
 /// Owns the complete background pipeline for a window (or a local
-/// SystemBackdropElement): fixed background balancing, a single colour
-/// opacity contribution, and final blur. Window/target ownership stays local.
+/// SystemBackdropElement): live host-backdrop blur, vibrancy saturation,
+/// subtle luminosity balance, and a single colour opacity contribution.
+/// Window/target ownership stays local.
 /// </summary>
 internal sealed class ThemeBackdrop : CompositionBrushBackdrop
 {
@@ -33,6 +34,7 @@ internal sealed class ThemeBackdrop : CompositionBrushBackdrop
     private static readonly string[] GlassAnimatableProperties =
     [
         "Blur.BlurAmount",
+        "Saturation.Saturation",
         "TintOpacity.Opacity",
         "TintColor.Color",
         "NeutralOpacity.Opacity",
@@ -583,7 +585,7 @@ internal sealed class ThemeBackdrop : CompositionBrushBackdrop
     {
         // This identifies the selected target and actual path without logging
         // pointer events, file names or every duplicate ThemeChanged broadcast.
-        string diagnostic = FormattableString.Invariant($"theme-backdrop target={_themeTarget} surface={_surfaceName} hwnd=0x{_hwnd.ToInt64():X} color=#{_theme.ColorArgb:X8} opacity={_plan.TintOpacity:0.####} blurStrength={GlobalSettings.NormalizeThemeBlurStrength(_theme.BlurStrength):0.##} sigma={(branch == ThemeBackdropBranch.Glass ? _plan.BlurAmount : 0):0.##} solid={_theme.SolidColorMode} effects={_plan.UseEffects} branch={branch}");
+        string diagnostic = FormattableString.Invariant($"theme-backdrop target={_themeTarget} surface={_surfaceName} hwnd=0x{_hwnd.ToInt64():X} color=#{_theme.ColorArgb:X8} opacity={_plan.TintOpacity:0.####} blurStrength={GlobalSettings.NormalizeThemeBlurStrength(_theme.BlurStrength):0.##} sigma={(branch == ThemeBackdropBranch.Glass ? _plan.BlurAmount : 0):0.##} saturation={(branch == ThemeBackdropBranch.Glass ? _plan.Saturation : 1):0.##} luminosity={(branch == ThemeBackdropBranch.Glass ? _plan.LuminosityOpacity : 0):0.##} solid={_theme.SolidColorMode} effects={_plan.UseEffects} branch={branch}");
         if (diagnostic == _lastDiagnostic) return;
         _lastDiagnostic = diagnostic;
         AppLogger.Info(diagnostic);
@@ -626,7 +628,20 @@ internal sealed class ThemeBackdrop : CompositionBrushBackdrop
         lock (GlassFactoryGate)
         {
             if (GlassEffectFactories.TryGetValue(compositor, out Wuc.CompositionEffectFactory? cached))
-                return cached;
+            {
+                try
+                {
+                    if (cached.LoadStatus is Wuc.CompositionEffectFactoryLoadStatus.Success or Wuc.CompositionEffectFactoryLoadStatus.Pending)
+                        return cached;
+                }
+                catch
+                {
+                    // Stale or disposed factory; evict and recreate below.
+                }
+                GlassEffectFactories.Remove(compositor);
+                try { cached.Dispose(); }
+                catch { /* Best-effort cleanup of failed factory before retry. */ }
+            }
 
             IGraphicsEffect effect = ThemeEffectGraph.Create(
                 plan, new Wuc.CompositionEffectSourceParameter("Backdrop"));
@@ -661,6 +676,7 @@ internal sealed class ThemeBackdrop : CompositionBrushBackdrop
     {
         Wuc.CompositionPropertySet properties = brush.Properties;
         properties.InsertScalar("Blur.BlurAmount", plan.BlurAmount);
+        properties.InsertScalar("Saturation.Saturation", Math.Clamp(plan.Saturation, 0f, 2f));
         properties.InsertScalar("TintOpacity.Opacity", plan.TintOpacity);
         properties.InsertColor("TintColor.Color", plan.TintColor);
         properties.InsertScalar("NeutralOpacity.Opacity", plan.LuminosityOpacity);
@@ -675,6 +691,10 @@ internal sealed class ThemeBackdrop : CompositionBrushBackdrop
             case GaussianBlurEffect blur:
                 DisposeEffectGraph(blur.Source);
                 blur.Dispose();
+                break;
+            case SaturationEffect saturation:
+                DisposeEffectGraph(saturation.Source);
+                saturation.Dispose();
                 break;
             case CompositeEffect composite:
                 foreach (IGraphicsEffectSource source in composite.Sources)

@@ -11,7 +11,9 @@ internal readonly record struct SmoothScrollState(
 
 internal static class OrganizerScrollMath
 {
-    internal const double ResponseSeconds = .16;
+    // Crisp 120-240Hz critically damped response (omega = 2 / ResponseSeconds = 20 rad/s):
+    // instantaneous initial wheel response with silky deceleration and clean idle settle.
+    internal const double ResponseSeconds = .10;
     internal const int WheelDeltaPerLine = 120;
 
     internal static SmoothScrollState ConsumeWheelDelta(
@@ -44,6 +46,9 @@ internal static class OrganizerScrollMath
         double target = double.IsFinite(state.TargetOffset) ? Math.Clamp(state.TargetOffset, 0, max) : current;
         double velocity = double.IsFinite(state.Velocity) ? state.Velocity : 0;
         if (max <= 0) return new(0, 0, 0, state.Remainder);
+        if ((current <= 0 && target <= 0 && velocity < 0) ||
+            (current >= max && target >= max && velocity > 0))
+            velocity = 0;
         return new(current, target, velocity, Math.Clamp(state.Remainder, -119, 119));
     }
 
@@ -57,15 +62,31 @@ internal static class OrganizerScrollMath
         if (reduceMotion || !double.IsFinite(deltaSeconds) || deltaSeconds <= 0)
             return state with { CurrentOffset = state.TargetOffset, Velocity = 0 };
 
+        double max = double.IsFinite(scrollableHeight) ? Math.Max(0, scrollableHeight) : 0;
+        if (max <= 0)
+            return state with { CurrentOffset = 0, TargetOffset = 0, Velocity = 0 };
+
         double dt = Math.Clamp(deltaSeconds, 0, 0.1);
-        double omega = 2 / ResponseSeconds;
+        double omega = 2.0 / ResponseSeconds;
+        double omegaDt = omega * dt;
+        if (omegaDt >= 50.0)
+            return state with { CurrentOffset = state.TargetOffset, Velocity = 0 };
+
         double displacement = state.CurrentOffset - state.TargetOffset;
         double helper = state.Velocity + omega * displacement;
-        double decay = Math.Exp(-omega * dt);
+        double decay = Math.Exp(-omegaDt);
         double current = state.TargetOffset + (displacement + helper * dt) * decay;
         double velocity = (state.Velocity - omega * helper * dt) * decay;
-        if (Math.Abs(current - state.TargetOffset) < .01 && Math.Abs(velocity) < .01)
+
+        // Absorb outward momentum immediately at hard boundaries so high-refresh boost drops to idle.
+        if ((current <= 0 && state.TargetOffset <= 0 && velocity <= 0) ||
+            (current >= max && state.TargetOffset >= max && velocity >= 0))
             return state with { CurrentOffset = state.TargetOffset, Velocity = 0 };
+
+        // Snap within 0.05 DIP & 0.5 DIP/s (~0.002 DIP/frame at 240Hz) so idle rendering stops promptly.
+        if (Math.Abs(current - state.TargetOffset) < .05 && Math.Abs(velocity) < .5)
+            return state with { CurrentOffset = state.TargetOffset, Velocity = 0 };
+
         return ClampState(state with { CurrentOffset = current, Velocity = velocity }, scrollableHeight);
     }
 

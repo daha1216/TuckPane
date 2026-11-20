@@ -16,10 +16,8 @@ public sealed partial class OrganizerSettingsForm : UserControl
     public OrganizerSettingsForm()
     {
         InitializeComponent();
-        RowsSlider.Width = 170;
-        RowsSlider.HorizontalAlignment = HorizontalAlignment.Right;
-        ColumnsSlider.Width = 170;
-        ColumnsSlider.HorizontalAlignment = HorizontalAlignment.Right;
+        RowsSlider.HorizontalAlignment = HorizontalAlignment.Stretch;
+        ColumnsSlider.HorizontalAlignment = HorizontalAlignment.Stretch;
     }
 
     public bool IsCreationMode
@@ -31,10 +29,10 @@ public sealed partial class OrganizerSettingsForm : UserControl
             CreationStorageCard.Visibility = value ? Visibility.Visible : Visibility.Collapsed;
             ManageStorageGroup.Visibility = value ? Visibility.Collapsed : Visibility.Visible;
             DockSizeLabelText.Tag = value ? "loc:DockIconSizeLabel" : "loc:DockSizeLabel";
-            RowsSlider.Width = value ? double.NaN : 170;
-            RowsSlider.HorizontalAlignment = value ? HorizontalAlignment.Stretch : HorizontalAlignment.Right;
-            ColumnsSlider.Width = value ? double.NaN : 170;
-            ColumnsSlider.HorizontalAlignment = value ? HorizontalAlignment.Stretch : HorizontalAlignment.Right;
+            RowsSlider.Width = double.NaN;
+            RowsSlider.HorizontalAlignment = HorizontalAlignment.Stretch;
+            ColumnsSlider.Width = double.NaN;
+            ColumnsSlider.HorizontalAlignment = HorizontalAlignment.Stretch;
         }
     }
     private bool _isCreationMode;
@@ -179,6 +177,7 @@ public sealed partial class OrganizerSettingsForm : UserControl
         ConfigureGridSliders(isStationCategory);
         RowsSlider.SetModelValue(value.Layout.Rows);
         ColumnsSlider.SetModelValue(value.Layout.Columns);
+        UpdateGridDimensionLabels();
         if (_isCreationMode)
         {
             CompactScaleSlider.Maximum = value.PlacementMode == OrganizerPlacementMode.Positioned
@@ -337,6 +336,7 @@ public sealed partial class OrganizerSettingsForm : UserControl
         if (ItemScaleSlider.Value > ItemScaleSlider.Maximum)
             ItemScaleSlider.SetModelValue(ItemScaleSlider.Maximum);
 
+        UpdateGridDimensionLabels();
         SetPercent(CompactPercent, CompactScaleSlider.Value);
         SetPercent(CanvasPercent, CanvasScaleSlider.Value);
         SetPercent(ItemPercent, ItemScaleSlider.Value);
@@ -412,8 +412,20 @@ public sealed partial class OrganizerSettingsForm : UserControl
                 : new Thickness(0, 0, 0, 1);
     }
 
-    private void FormControl_Changed(object sender, object e) =>
+    private void FormControl_Changed(object sender, object e)
+    {
+        if (ReferenceEquals(sender, RowsSlider) || ReferenceEquals(sender, ColumnsSlider))
+            UpdateGridDimensionLabels();
         ControlValueChanged?.Invoke(sender, e);
+    }
+
+    private void UpdateGridDimensionLabels()
+    {
+        if (RowsValueText is not null && RowsSlider is not null)
+            RowsValueText.Text = $"{Math.Round(RowsSlider.Value):0}";
+        if (ColumnsValueText is not null && ColumnsSlider is not null)
+            ColumnsValueText.Text = $"{Math.Round(ColumnsSlider.Value):0}";
+    }
 
     private void ExpansionModeCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {

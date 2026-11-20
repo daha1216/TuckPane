@@ -1385,6 +1385,7 @@ public sealed partial class MainWindow : Window
         if (_closing || !WindowRoot.IsLoaded) return;
         bool visible = !IsDock &&
                        !highContrast &&
+                       ExpandedView.Visibility == Visibility.Visible &&
                        parts.NameText.Visibility == Visibility.Visible &&
                        !string.IsNullOrEmpty(parts.NameText.Text);
         if (!visible)
@@ -1394,8 +1395,8 @@ public sealed partial class MainWindow : Window
             return;
         }
 
-        double width = parts.NameText.ActualWidth > 0 ? parts.NameText.ActualWidth : parts.NameText.DesiredSize.Width;
-        double height = parts.NameText.ActualHeight > 0 ? parts.NameText.ActualHeight : parts.NameText.DesiredSize.Height;
+        double width = parts.NameText.ActualWidth;
+        double height = parts.NameText.ActualHeight;
         if (width <= 1 || height <= 1)
         {
             if (parts.NameShadowVisual is not null)
@@ -1409,9 +1410,9 @@ public sealed partial class MainWindow : Window
             Compositor compositor = hostVisual.Compositor;
             parts.NameAlphaMask = parts.NameText.GetAlphaMask();
             parts.NameDropShadow = compositor.CreateDropShadow();
-            parts.NameDropShadow.Color = ColorHelper.FromArgb(230, 0, 0, 0);
-            parts.NameDropShadow.BlurRadius = 2.2f;
-            parts.NameDropShadow.Offset = new Vector3(0f, 0.9f, 0f);
+            parts.NameDropShadow.Color = ColorHelper.FromArgb(255, 0, 0, 0);
+            parts.NameDropShadow.BlurRadius = 1.6f;
+            parts.NameDropShadow.Offset = new Vector3(0f, 1.0f, 0f);
             parts.NameDropShadow.Mask = parts.NameAlphaMask;
             parts.NameShadowVisual = compositor.CreateSpriteVisual();
             parts.NameShadowVisual.Shadow = parts.NameDropShadow;
@@ -2376,6 +2377,7 @@ public sealed partial class MainWindow : Window
         _compactEdgeSurface.Dispose();
         _expandedEdgeSurface.Dispose();
         DisposeCompactVisualResources();
+        DisposeTransitionCompositionResources();
         DisposeAllItemNameShadows();
         _iconLoadGate.Dispose();
         _itemDragBoundaryHookReady.Dispose();
@@ -3210,7 +3212,9 @@ public sealed partial class MainWindow : Window
         }
         else
         {
-            ExpandedSurfaceHost.CornerRadius = new CornerRadius(expandedRadius);
+            var expandedCorner = new CornerRadius(expandedRadius);
+            if (ExpandedSurfaceHost.CornerRadius != expandedCorner)
+                ExpandedSurfaceHost.CornerRadius = expandedCorner;
             _expandedSurface.SetCornerRadius(expandedRadius);
             _expandedEdgeSurface.SetCornerRadius(expandedRadius);
         }
@@ -3251,7 +3255,9 @@ public sealed partial class MainWindow : Window
         _lastExpandedClipRadius = snappedRadius;
         _animationTrace?.Metrics.RecordWork(AnimationTraceWork.AnimatedCorner);
         SetClipRadius(_expandedClip, snappedRadius);
-        ExpandedSurfaceHost.CornerRadius = new CornerRadius(snappedRadius);
+        var expandedCorner = new CornerRadius(snappedRadius);
+        if (ExpandedSurfaceHost.CornerRadius != expandedCorner)
+            ExpandedSurfaceHost.CornerRadius = expandedCorner;
         _expandedSurface.SetCornerRadius(snappedRadius);
         _expandedEdgeSurface.SetCornerRadius(snappedRadius);
         if (!_animating)

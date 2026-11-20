@@ -18,11 +18,27 @@ namespace TuckPane;
 public sealed partial class MainWindow
 {
     // Pre-allocated static brushes eliminate all per-hover/per-selection GC & COM overhead.
-    private static readonly SolidColorBrush CompactMultiSelectBgBrush = new(Color.FromArgb(62, 0, 120, 212));
-    private static readonly SolidColorBrush CompactMultiSelectBorderBrush = new(Color.FromArgb(220, 0, 120, 212));
-    private static readonly SolidColorBrush CompactNativeHoverBgBrush = new(Color.FromArgb(30, 0, 120, 212));
-    private static readonly SolidColorBrush CompactNativeHoverBorderBrush = new(Color.FromArgb(98, 0, 120, 212));
+    private static readonly LinearGradientBrush CompactMultiSelectBgBrush = CreateVerticalGradientBrush(
+        Color.FromArgb(0x24, 0x1C, 0x8A, 0xFF),
+        Color.FromArgb(0x14, 0x00, 0x66, 0xCC));
+    private static readonly LinearGradientBrush CompactMultiSelectBorderBrush = CreateVerticalGradientBrush(
+        Color.FromArgb(0xCC, 0x3B, 0x9E, 0xFF),
+        Color.FromArgb(0xAA, 0x00, 0x78, 0xD4));
+    private static readonly SolidColorBrush CompactNativeHoverBgBrush = new(Color.FromArgb(0x18, 0x00, 0x78, 0xD4));
+    private static readonly SolidColorBrush CompactNativeHoverBorderBrush = new(Color.FromArgb(0x66, 0x3B, 0x9E, 0xFF));
     private static readonly SolidColorBrush CompactTransparentPlateBrush = new(Colors.Transparent);
+
+    private static LinearGradientBrush CreateVerticalGradientBrush(Color top, Color bottom)
+    {
+        var brush = new LinearGradientBrush
+        {
+            StartPoint = new Point(0, 0),
+            EndPoint = new Point(0, 1)
+        };
+        brush.GradientStops.Add(new GradientStop { Color = top, Offset = 0 });
+        brush.GradientStops.Add(new GradientStop { Color = bottom, Offset = 1 });
+        return brush;
+    }
 
     private bool _compactPointerHovered;
     private bool _compactPointerPressed;
@@ -45,6 +61,16 @@ public sealed partial class MainWindow
     private CompositionBrush? _expandedNameAlphaMask;
     private bool _expandedNameShadowHooked;
     private long _expandedNameVisibilityCallbackToken;
+    private long _expandedEditorVisibilityCallbackToken;
+    private long _expandedViewVisibilityCallbackToken;
+
+    // Pure GPU Liquid Glass diagonal specular refraction sweep driven by DWM ExpressionAnimations.
+    private SpriteVisual? _expandedSweepVisual;
+    private CompositionLinearGradientBrush? _expandedSweepBrush;
+    private CompositionRoundedRectangleGeometry? _expandedSweepClipGeom;
+    private CompositionGeometricClip? _expandedSweepClip;
+    private ExpressionAnimation? _expandedSweepOpacityExpr;
+    private ExpressionAnimation? _expandedSweepOffsetExpr;
 
     private SpriteVisual? _compactTileShadowVisual;
     private DropShadow? _compactTileDropShadow;
@@ -69,6 +95,7 @@ public sealed partial class MainWindow
     // Reusable DWM Composition spring animations (zero per-hover/per-press WinRT allocations).
     private SpringVector3NaturalMotionAnimation? _tileScaleSpring;
     private SpringVector3NaturalMotionAnimation? _iconScaleSpring;
+    private SpringVector3NaturalMotionAnimation? _multiSelectBadgeSpring;
 
     // Reusable GPU implicit show/hide animations for ExpandedFilterBar & SelectionCountBadge.
     private CompositionAnimationGroup? _overlayShowAnimGroup;
@@ -116,6 +143,9 @@ public sealed partial class MainWindow
         if (_organizerMultiSelected == selected) return;
         _organizerMultiSelected = selected;
         UpdateCompactSelectionPlateVisual();
+        AnimateCompactMultiSelectBadge(selected);
+        if (selected)
+            PulseCompactTileSelectionSpring();
     }
 
     internal void ApplyCompactVisualStyle()
@@ -214,8 +244,8 @@ public sealed partial class MainWindow
             double scale = Math.Max(1.0, display.Scale);
             double leftOverhangDip = Math.Max(0, (display.Work.Left - _compactBounds.Left) / scale);
             double rightOverhangDip = Math.Max(0, (_compactBounds.Right - display.Work.Right) / scale);
-            double visibleLeft = leftOverhangDip + 2.0;
-            double visibleRight = viewWidth - rightOverhangDip - 2.0;
+            double visibleLeft = leftOverhangDip + 1.0;
+            double visibleRight = viewWidth - rightOverhangDip - 1.0;
             double visibleSpan = visibleRight - visibleLeft;
             if (visibleSpan > 1.0 && (leftOverhangDip > 0.5 || rightOverhangDip > 0.5))
             {
@@ -243,6 +273,8 @@ public sealed partial class MainWindow
         float targetShiftX = (float)Math.Round(shiftX, 1);
         if (Math.Abs(CompactNameContainer.Translation.X - targetShiftX) > 0.25f)
             CompactNameContainer.Translation = new Vector3(targetShiftX, 0f, 0f);
+
+        UpdateCompactSelectionPlateGeometry();
     }
 
     internal void SyncCompactNameShadow()
@@ -263,7 +295,18 @@ public sealed partial class MainWindow
 
     private void ExpandedNameText_SizeChanged(object sender, SizeChangedEventArgs e) => SyncExpandedNameShadow();
 
-    private void ExpandedNameText_VisibilityChanged(DependencyObject sender, DependencyProperty dp) => SyncExpandedNameShadow();
+    private void ExpandedNameText_VisibilityChanged(DependencyObject sender, DependencyProperty dp)
+    {
+        SyncExpandedNameShadow();
+        if (!_closing && ExpandedView.Visibility == Visibility.Visible)
+        {
+            UpdateAllRealizedItemNameShadows(DesktopTypographyService.IsHighContrast());
+            if (ExpandedNameText.ActualWidth <= 1 || ExpandedNameText.ActualHeight <= 1)
+            {
+                DispatcherQueue.TryEnqueue(SyncExpandedNameShadow);
+            }
+        }
+    }
 
     internal void UpdateCompactShadowGeometry(double compactRadius)
     {
@@ -308,13 +351,127 @@ public sealed partial class MainWindow
                 }
             }
         }
+
+        UpdateCompactSelectionPlateGeometry(compactRadius);
     }
 
     internal void UpdateExpandedLiquidSheenGeometry(double expandedRadius)
     {
         double clamped = Math.Max(0, expandedRadius);
-        ExpandedLiquidSheen.CornerRadius = new CornerRadius(clamped);
-        ExpandedLiquidInnerRim.CornerRadius = new CornerRadius(Math.Max(0, clamped - 1));
+        var outerRadius = new CornerRadius(clamped);
+        var innerRadius = new CornerRadius(Math.Max(0, clamped - 1));
+        if (ExpandedLiquidSheen.CornerRadius != outerRadius)
+            ExpandedLiquidSheen.CornerRadius = outerRadius;
+        if (ExpandedLiquidInnerRim.CornerRadius != innerRadius)
+            ExpandedLiquidInnerRim.CornerRadius = innerRadius;
+
+        if (_expandedSweepVisual is not null)
+        {
+            double w = ExpandedPanel.ActualWidth > 1 ? ExpandedPanel.ActualWidth : ExpandedView.ActualWidth;
+            double h = ExpandedPanel.ActualHeight > 1 ? ExpandedPanel.ActualHeight : ExpandedView.ActualHeight;
+            SyncExpandedSweepGeometry(w, h, clamped);
+        }
+        if (ExpandedView.Visibility == Visibility.Visible)
+            SyncExpandedNameShadow();
+    }
+
+    private void EnsureExpandedSpecularSweepVisual()
+    {
+        if (_expandedSweepVisual is not null || !WindowRoot.IsLoaded || _closing) return;
+
+        Visual sweepHostVisual = ElementCompositionPreview.GetElementVisual(ExpandedSpecularSweep);
+        Compositor compositor = sweepHostVisual.Compositor;
+
+        _expandedSweepBrush = compositor.CreateLinearGradientBrush();
+        _expandedSweepBrush.MappingMode = CompositionMappingMode.Relative;
+        _expandedSweepBrush.ExtendMode = CompositionGradientExtendMode.Clamp;
+        _expandedSweepBrush.StartPoint = new Vector2(0f, 0f);
+        _expandedSweepBrush.EndPoint = new Vector2(1f, 0.35f);
+        _expandedSweepBrush.ColorStops.Add(compositor.CreateColorGradientStop(0.00f, Color.FromArgb(0, 255, 255, 255)));
+        _expandedSweepBrush.ColorStops.Add(compositor.CreateColorGradientStop(0.28f, Color.FromArgb(0x48, 255, 255, 255)));
+        _expandedSweepBrush.ColorStops.Add(compositor.CreateColorGradientStop(0.50f, Color.FromArgb(0x72, 255, 255, 255)));
+        _expandedSweepBrush.ColorStops.Add(compositor.CreateColorGradientStop(0.72f, Color.FromArgb(0x32, 255, 255, 255)));
+        _expandedSweepBrush.ColorStops.Add(compositor.CreateColorGradientStop(1.00f, Color.FromArgb(0, 255, 255, 255)));
+
+        _expandedSweepClipGeom = compositor.CreateRoundedRectangleGeometry();
+        _expandedSweepClip = compositor.CreateGeometricClip(_expandedSweepClipGeom);
+
+        _expandedSweepVisual = compositor.CreateSpriteVisual();
+        _expandedSweepVisual.BorderMode = CompositionBorderMode.Soft;
+        _expandedSweepVisual.Brush = _expandedSweepBrush;
+        _expandedSweepVisual.Clip = _expandedSweepClip;
+        _expandedSweepVisual.Opacity = 0f;
+        _expandedSweepVisual.IsVisible = false;
+        ElementCompositionPreview.SetElementChildVisual(ExpandedSpecularSweep, _expandedSweepVisual);
+    }
+
+    private void SyncExpandedSweepGeometry(double width, double height, double radius)
+    {
+        if (_expandedSweepVisual is null || width <= 1 || height <= 1) return;
+
+        RoundedSurfaceGeometry surface = RoundedSurfaceGeometry.Create(
+            width,
+            height,
+            radius,
+            WindowRoot.XamlRoot?.RasterizationScale ?? 1);
+        Vector2 panelSize = new(surface.Width, surface.Height);
+        Vector2 cornerVec = new(surface.Radius, surface.Radius);
+        _expandedSweepVisual.Size = panelSize;
+        if (_expandedSweepClipGeom is not null)
+        {
+            _expandedSweepClipGeom.Size = panelSize;
+            _expandedSweepClipGeom.CornerRadius = cornerVec;
+        }
+    }
+
+    internal void BindExpandedTransitionSweep(CompositionPropertySet transitionProps)
+    {
+        if (_closing || !WindowRoot.IsLoaded) return;
+        SyncExpandedNameShadow();
+        if (DesktopTypographyService.IsHighContrast() || !UseCustomAnimations)
+        {
+            ClearExpandedTransitionSweep();
+            return;
+        }
+
+        EnsureExpandedSpecularSweepVisual();
+        if (_expandedSweepVisual is null || _expandedSweepBrush is null) return;
+
+        double w = ExpandedPanel.ActualWidth > 1 ? ExpandedPanel.ActualWidth : Math.Max(1, ExpandedView.ActualWidth);
+        double h = ExpandedPanel.ActualHeight > 1 ? ExpandedPanel.ActualHeight : Math.Max(1, ExpandedView.ActualHeight);
+        double radius = _lastExpandedClipRadius > 0
+            ? _lastExpandedClipRadius
+            : (IsDock ? CurrentDockCornerRadius : SnapDip(ExpandedCornerRadiusDip));
+        SyncExpandedSweepGeometry(w, h, radius);
+
+        Compositor compositor = _expandedSweepVisual.Compositor;
+        _expandedSweepOpacityExpr ??= compositor.CreateExpressionAnimation(
+            "Sin(Clamp((props.Progress - 0.08) / 0.84, 0.0, 1.0) * 3.14159) * 0.72");
+        _expandedSweepOpacityExpr.SetReferenceParameter("props", transitionProps);
+
+        _expandedSweepOffsetExpr ??= compositor.CreateExpressionAnimation(
+            "Vector2((-0.85 * visual.Size.X) + (1.90 * visual.Size.X) * Clamp(props.Progress, 0.0, 1.0), 0.0)");
+        _expandedSweepOffsetExpr.SetReferenceParameter("props", transitionProps);
+        _expandedSweepOffsetExpr.SetReferenceParameter("visual", _expandedSweepVisual);
+
+        _expandedSweepVisual.IsVisible = true;
+        _expandedSweepVisual.StartAnimation("Opacity", _expandedSweepOpacityExpr);
+        _expandedSweepBrush.StartAnimation("Offset", _expandedSweepOffsetExpr);
+    }
+
+    internal void ClearExpandedTransitionSweep()
+    {
+        if (_expandedSweepVisual is not null)
+        {
+            _expandedSweepVisual.StopAnimation("Opacity");
+            _expandedSweepVisual.Opacity = 0f;
+            _expandedSweepVisual.IsVisible = false;
+        }
+        if (_expandedSweepBrush is not null)
+        {
+            _expandedSweepBrush.StopAnimation("Offset");
+            _expandedSweepBrush.Offset = Vector2.Zero;
+        }
     }
 
     private void EnsureCompactGpuShadowVisuals()
@@ -322,33 +479,40 @@ public sealed partial class MainWindow
         if (!WindowRoot.IsLoaded || _closing) return;
 
         // 1. Dual-Layer Hardware Gaussian DropShadow on CompactNameText using GetAlphaMask():
-        //    - Tight Windows Explorer DrawShadowText core (BlurRadius 1.6, Offset +0.9, full black)
-        //      + crisp contact halo (BlurRadius 3.0) for sharp legibility on pure white wallpaper without gray fog!
+        //    - Tight Windows 11 DrawShadowText core (BlurRadius 1.15, Offset +1.0, full black)
+        //      + crisp contact halo (BlurRadius 2.25) for sharp native contrast on pure white wallpaper without gray fog!
         if (_compactNameShadowRoot is null)
         {
             Visual hostVisual = ElementCompositionPreview.GetElementVisual(CompactNameShadowHost);
             Compositor compositor = hostVisual.Compositor;
-            _compactNameAlphaMask = CompactNameText.GetAlphaMask();
 
             _compactNameDropShadowAura = compositor.CreateDropShadow();
-            _compactNameDropShadowAura.Color = Color.FromArgb(220, 0, 0, 0);
-            _compactNameDropShadowAura.BlurRadius = 2.8f;
-            _compactNameDropShadowAura.Offset = new Vector3(0f, 0.8f, 0f);
-            _compactNameDropShadowAura.Mask = _compactNameAlphaMask;
+            _compactNameDropShadowAura.Color = Color.FromArgb(245, 0, 0, 0);
+            _compactNameDropShadowAura.BlurRadius = 2.25f;
+            _compactNameDropShadowAura.Offset = new Vector3(0f, 0.9f, 0f);
 
             _compactNameShadowAuraVisual = compositor.CreateSpriteVisual();
             _compactNameShadowAuraVisual.Shadow = _compactNameDropShadowAura;
 
             _compactNameDropShadow = compositor.CreateDropShadow();
             _compactNameDropShadow.Color = Color.FromArgb(255, 0, 0, 0);
-            _compactNameDropShadow.BlurRadius = 1.5f;
+            _compactNameDropShadow.BlurRadius = 1.15f;
             _compactNameDropShadow.Offset = new Vector3(0f, 1.0f, 0f);
-            _compactNameDropShadow.Mask = _compactNameAlphaMask;
 
             _compactNameShadowVisual = compositor.CreateSpriteVisual();
             _compactNameShadowVisual.Shadow = _compactNameDropShadow;
 
+            if (CompactView.Visibility == Visibility.Visible &&
+                CompactNameText.ActualWidth > 1 &&
+                CompactNameText.ActualHeight > 1)
+            {
+                _compactNameAlphaMask = CompactNameText.GetAlphaMask();
+                _compactNameDropShadowAura.Mask = _compactNameAlphaMask;
+                _compactNameDropShadow.Mask = _compactNameAlphaMask;
+            }
+
             _compactNameShadowRoot = compositor.CreateContainerVisual();
+            _compactNameShadowRoot.IsVisible = false;
             _compactNameShadowRoot.Children.InsertAtBottom(_compactNameShadowAuraVisual);
             _compactNameShadowRoot.Children.InsertAtTop(_compactNameShadowVisual);
             ElementCompositionPreview.SetElementChildVisual(CompactNameShadowHost, _compactNameShadowRoot);
@@ -360,32 +524,34 @@ public sealed partial class MainWindow
         }
 
         // 1b. Dual-Layer Hardware Gaussian DropShadow on ExpandedNameText using GetAlphaMask():
-        //     Ensures crisp legibility of white expanded organizer titles on pure white wallpaper!
+        //     Ensures razor-sharp legibility of 42px white expanded titles over pure #FFFFFF white wallpaper.
+        //     CRITICAL: Never call ExpandedNameText.GetAlphaMask() while ExpandedView is Collapsed (0x0 unmeasured);
+        //     bind it lazily inside UpdateExpandedNameShadowVisual once ActualWidth > 1 && ActualHeight > 1.
         if (_expandedNameShadowRoot is null)
         {
             Visual expandedHostVisual = ElementCompositionPreview.GetElementVisual(ExpandedNameShadowHost);
             Compositor compositor = expandedHostVisual.Compositor;
-            _expandedNameAlphaMask = ExpandedNameText.GetAlphaMask();
 
             _expandedNameDropShadowAura = compositor.CreateDropShadow();
-            _expandedNameDropShadowAura.Color = Color.FromArgb(184, 0, 0, 0);
-            _expandedNameDropShadowAura.BlurRadius = 6.0f;
-            _expandedNameDropShadowAura.Offset = new Vector3(0f, 1.8f, 0f);
-            _expandedNameDropShadowAura.Mask = _expandedNameAlphaMask;
+            _expandedNameDropShadowAura.Color = Color.FromArgb(224, 0, 0, 0);
+            _expandedNameDropShadowAura.BlurRadius = 6.5f;
+            _expandedNameDropShadowAura.Offset = new Vector3(0f, 2.2f, 0f);
+            _expandedNameDropShadowAura.Opacity = 0.92f;
 
             _expandedNameShadowAuraVisual = compositor.CreateSpriteVisual();
             _expandedNameShadowAuraVisual.Shadow = _expandedNameDropShadowAura;
 
             _expandedNameDropShadow = compositor.CreateDropShadow();
-            _expandedNameDropShadow.Color = Color.FromArgb(242, 0, 0, 0);
-            _expandedNameDropShadow.BlurRadius = 2.4f;
-            _expandedNameDropShadow.Offset = new Vector3(0f, 1.0f, 0f);
-            _expandedNameDropShadow.Mask = _expandedNameAlphaMask;
+            _expandedNameDropShadow.Color = Color.FromArgb(255, 0, 0, 0);
+            _expandedNameDropShadow.BlurRadius = 2.0f;
+            _expandedNameDropShadow.Offset = new Vector3(0f, 1.4f, 0f);
+            _expandedNameDropShadow.Opacity = 1.0f;
 
             _expandedNameShadowVisual = compositor.CreateSpriteVisual();
             _expandedNameShadowVisual.Shadow = _expandedNameDropShadow;
 
             _expandedNameShadowRoot = compositor.CreateContainerVisual();
+            _expandedNameShadowRoot.IsVisible = false;
             _expandedNameShadowRoot.Children.InsertAtBottom(_expandedNameShadowAuraVisual);
             _expandedNameShadowRoot.Children.InsertAtTop(_expandedNameShadowVisual);
             ElementCompositionPreview.SetElementChildVisual(ExpandedNameShadowHost, _expandedNameShadowRoot);
@@ -395,6 +561,10 @@ public sealed partial class MainWindow
             _expandedNameShadowHooked = true;
             ExpandedNameText.SizeChanged += ExpandedNameText_SizeChanged;
             _expandedNameVisibilityCallbackToken = ExpandedNameText.RegisterPropertyChangedCallback(
+                UIElement.VisibilityProperty, ExpandedNameText_VisibilityChanged);
+            _expandedEditorVisibilityCallbackToken = ExpandedNameEditor.RegisterPropertyChangedCallback(
+                UIElement.VisibilityProperty, ExpandedNameText_VisibilityChanged);
+            _expandedViewVisibilityCallbackToken = ExpandedView.RegisterPropertyChangedCallback(
                 UIElement.VisibilityProperty, ExpandedNameText_VisibilityChanged);
         }
 
@@ -545,7 +715,8 @@ public sealed partial class MainWindow
             return;
         }
 
-        bool visible = CompactNameText.Visibility == Visibility.Visible &&
+        bool visible = CompactView.Visibility == Visibility.Visible &&
+                       CompactNameText.Visibility == Visibility.Visible &&
                        !string.IsNullOrEmpty(CompactNameText.Text) &&
                        !highContrast;
         if (!visible)
@@ -556,7 +727,13 @@ public sealed partial class MainWindow
 
         double width = CompactNameText.ActualWidth > 0 ? CompactNameText.ActualWidth : CompactNameText.DesiredSize.Width;
         double height = CompactNameText.ActualHeight > 0 ? CompactNameText.ActualHeight : CompactNameText.DesiredSize.Height;
-        Vector2 size = new((float)Math.Max(1, width), (float)Math.Max(1, height));
+        if (width <= 1 || height <= 1)
+        {
+            _compactNameShadowRoot.IsVisible = false;
+            return;
+        }
+
+        Vector2 size = new((float)width, (float)height);
         CompactNameShadowHost.Width = size.X;
         CompactNameShadowHost.Height = size.Y;
         _compactNameShadowRoot.Size = size;
@@ -571,19 +748,23 @@ public sealed partial class MainWindow
             _compactNameDropShadowAura.Mask = _compactNameAlphaMask;
         }
         _compactNameDropShadow.Opacity = opacity;
-        _compactNameDropShadowAura.Opacity = opacity * 0.85f;
+        _compactNameDropShadowAura.Opacity = opacity * 0.95f;
         _compactNameShadowRoot.IsVisible = true;
     }
 
     private void UpdateExpandedNameShadowVisual(bool highContrast)
     {
+        if (_expandedNameShadowRoot is null && WindowRoot.IsLoaded && !_closing)
+            EnsureCompactGpuShadowVisuals();
+
         if (_expandedNameShadowRoot is null || _expandedNameShadowVisual is null || _expandedNameDropShadow is null ||
             _expandedNameShadowAuraVisual is null || _expandedNameDropShadowAura is null)
         {
             return;
         }
 
-        bool visible = ExpandedNameText.Visibility == Visibility.Visible &&
+        bool visible = ExpandedView.Visibility == Visibility.Visible &&
+                       ExpandedNameText.Visibility == Visibility.Visible &&
                        ExpandedNameEditor.Visibility != Visibility.Visible &&
                        !string.IsNullOrEmpty(ExpandedNameText.Text) &&
                        !highContrast;
@@ -593,8 +774,8 @@ public sealed partial class MainWindow
             return;
         }
 
-        double width = ExpandedNameText.ActualWidth > 0 ? ExpandedNameText.ActualWidth : ExpandedNameText.DesiredSize.Width;
-        double height = ExpandedNameText.ActualHeight > 0 ? ExpandedNameText.ActualHeight : ExpandedNameText.DesiredSize.Height;
+        double width = ExpandedNameText.ActualWidth;
+        double height = ExpandedNameText.ActualHeight;
         if (width <= 1 || height <= 1)
         {
             _expandedNameShadowRoot.IsVisible = false;
@@ -602,6 +783,7 @@ public sealed partial class MainWindow
         }
 
         Vector2 size = new((float)width, (float)height);
+        ExpandedNameShadowHost.Width = size.X;
         ExpandedNameShadowHost.Height = size.Y;
         _expandedNameShadowRoot.Size = size;
         _expandedNameShadowVisual.Size = size;
@@ -613,6 +795,8 @@ public sealed partial class MainWindow
             _expandedNameDropShadow.Mask = _expandedNameAlphaMask;
             _expandedNameDropShadowAura.Mask = _expandedNameAlphaMask;
         }
+        _expandedNameDropShadow.Opacity = 1.0f;
+        _expandedNameDropShadowAura.Opacity = 0.92f;
         _expandedNameShadowRoot.IsVisible = true;
     }
 
@@ -636,8 +820,91 @@ public sealed partial class MainWindow
         _compactTileDropShadow.Offset = new Vector3(0f, _compactPointerHovered ? 3.0f : 2.0f, 0f);
     }
 
+    internal void UpdateCompactSelectionPlateGeometry(double? compactRadiusOverride = null)
+    {
+        double viewWidth = Math.Max(48, CompactView.Width);
+        double viewHeight = Math.Max(48, CompactView.Height);
+        double tileW = Math.Max(24, CompactTile.Width);
+        double tileH = Math.Max(24, CompactTile.Height);
+
+        double desiredWidth = Math.Min(viewWidth - 2.0, tileW + 8.0);
+        double plateWidth = desiredWidth;
+        double shiftX = 0.0;
+
+        if (_hwnd != IntPtr.Zero &&
+            _definition.PlacementMode == OrganizerPlacementMode.Floating &&
+            _compactBounds.Width > 0)
+        {
+            DisplayInfo display = DisplayPlacementService.ForBounds(_compactBounds);
+            double scale = Math.Max(1.0, display.Scale);
+            double leftOverhangDip = Math.Max(0, (display.Work.Left - _compactBounds.Left) / scale);
+            double rightOverhangDip = Math.Max(0, (_compactBounds.Right - display.Work.Right) / scale);
+            if (leftOverhangDip > 0.5 || rightOverhangDip > 0.5)
+            {
+                double visibleLeft = leftOverhangDip + 1.0;
+                double visibleRight = viewWidth - rightOverhangDip - 1.0;
+                double visibleSpan = visibleRight - visibleLeft;
+                if (visibleSpan > tileW + 1.0)
+                {
+                    double centerX = viewWidth / 2.0;
+                    double maxLeftHalo = Math.Max(0.0, (centerX - tileW / 2.0) - visibleLeft);
+                    double maxRightHalo = Math.Max(0.0, visibleRight - (centerX + tileW / 2.0));
+                    double symmetricHalo = Math.Min(4.0, Math.Min(maxLeftHalo, maxRightHalo));
+                    if (symmetricHalo >= 2.0)
+                    {
+                        plateWidth = Math.Min(desiredWidth, tileW + symmetricHalo * 2.0);
+                    }
+                    else
+                    {
+                        plateWidth = Math.Clamp(tileW + 4.0, tileW + 2.0, Math.Min(desiredWidth, visibleSpan));
+                        double naturalLeft = centerX - plateWidth / 2.0;
+                        double naturalRight = centerX + plateWidth / 2.0;
+                        if (naturalRight > visibleRight)
+                            shiftX = visibleRight - naturalRight;
+                        else if (naturalLeft < visibleLeft)
+                            shiftX = visibleLeft - naturalLeft;
+                    }
+                }
+            }
+        }
+
+        bool labelVisible = CompactNameText.Visibility == Visibility.Visible &&
+                            !string.IsNullOrEmpty(CompactNameText.Text);
+        double rowGap = CompactView.RowDefinitions.Count > 1 && CompactView.RowDefinitions[1].Height.IsAbsolute
+            ? CompactView.RowDefinitions[1].Height.Value
+            : 4.0;
+        double labelHeight = 0.0;
+        if (labelVisible)
+        {
+            double measuredHeight = CompactNameText.ActualHeight > 1
+                ? CompactNameText.ActualHeight
+                : CompactNameText.DesiredSize.Height;
+            labelHeight = measuredHeight > 1 ? measuredHeight : Math.Max(15.0, CompactNameText.LineHeight);
+        }
+
+        double targetHeight = labelVisible
+            ? tileH + rowGap + labelHeight + 3.0
+            : tileH + 4.0;
+        double plateHeight = Math.Clamp(targetHeight, tileH + 2.0, Math.Max(tileH + 2.0, viewHeight - 4.0));
+
+        double compactRadius = compactRadiusOverride ?? (CompactCornerRadiusDip * _appliedCompactScale);
+        var concentricRadius = new CornerRadius(Math.Max(10.0, compactRadius + 3.5));
+
+        if (Math.Abs(CompactNativeSelectionPlate.Width - plateWidth) > 0.25)
+            CompactNativeSelectionPlate.Width = plateWidth;
+        if (Math.Abs(CompactNativeSelectionPlate.Height - plateHeight) > 0.25)
+            CompactNativeSelectionPlate.Height = plateHeight;
+        if (CompactNativeSelectionPlate.CornerRadius != concentricRadius)
+            CompactNativeSelectionPlate.CornerRadius = concentricRadius;
+
+        float targetShiftX = (float)Math.Round(shiftX, 1);
+        if (Math.Abs(CompactNativeSelectionPlate.Translation.X - targetShiftX) > 0.25f)
+            CompactNativeSelectionPlate.Translation = new Vector3(targetShiftX, 0f, 0f);
+    }
+
     private void UpdateCompactSelectionPlateVisual()
     {
+        UpdateCompactSelectionPlateGeometry();
         CompactVisualStyle style = CompactVisualStyles.Normalize(_host.State.GlobalSettings.CompactVisualStyle);
         bool nativeBlend = CompactVisualStyles.UsesNativeBlendSurface(style);
 
@@ -645,7 +912,7 @@ public sealed partial class MainWindow
         {
             CompactNativeSelectionPlate.Background = CompactMultiSelectBgBrush;
             CompactNativeSelectionPlate.BorderBrush = CompactMultiSelectBorderBrush;
-            CompactNativeSelectionPlate.BorderThickness = new Thickness(1.5);
+            CompactNativeSelectionPlate.BorderThickness = new Thickness(1.25);
             return;
         }
 
@@ -660,6 +927,52 @@ public sealed partial class MainWindow
         CompactNativeSelectionPlate.Background = CompactTransparentPlateBrush;
         CompactNativeSelectionPlate.BorderBrush = CompactTransparentPlateBrush;
         CompactNativeSelectionPlate.BorderThickness = new Thickness(1);
+    }
+
+    private void AnimateCompactMultiSelectBadge(bool selected)
+    {
+        if (_closing || !WindowRoot.IsLoaded) return;
+        Visual badgeVisual = ElementCompositionPreview.GetElementVisual(CompactMultiSelectBadge);
+        badgeVisual.CenterPoint = new Vector3(8f, 8f, 0f);
+        if (!selected)
+        {
+            badgeVisual.StopAnimation("Scale");
+            badgeVisual.Scale = Vector3.One;
+            CompactMultiSelectBadge.Visibility = Visibility.Collapsed;
+            return;
+        }
+
+        CompactMultiSelectBadge.Visibility = Visibility.Visible;
+        if (UseCustomAnimations)
+        {
+            Compositor compositor = badgeVisual.Compositor;
+            badgeVisual.StopAnimation("Scale");
+            badgeVisual.Scale = new Vector3(0.45f, 0.45f, 1f);
+            _multiSelectBadgeSpring ??= compositor.CreateSpringVector3Animation();
+            _multiSelectBadgeSpring.InitialValue = new Vector3(0.45f, 0.45f, 1f);
+            _multiSelectBadgeSpring.FinalValue = Vector3.One;
+            _multiSelectBadgeSpring.DampingRatio = 0.62f;
+            _multiSelectBadgeSpring.Period = TimeSpan.FromMilliseconds(38);
+            badgeVisual.StartAnimation("Scale", _multiSelectBadgeSpring);
+        }
+        else
+        {
+            badgeVisual.StopAnimation("Scale");
+            badgeVisual.Scale = Vector3.One;
+        }
+    }
+
+    private void PulseCompactTileSelectionSpring()
+    {
+        if (_closing || !WindowRoot.IsLoaded || !UseCustomAnimations) return;
+        CompactVisualStyle style = CompactVisualStyles.Normalize(_host.State.GlobalSettings.CompactVisualStyle);
+        FrameworkElement springHost = CompactVisualStyles.ShowsFolderSilhouette(style) ? CompactTile : CompactThumbnailHost;
+        Visual tileVisual = ElementCompositionPreview.GetElementVisual(springHost);
+        double w = springHost.ActualWidth > 1 ? springHost.ActualWidth : springHost.Width;
+        double h = springHost.ActualHeight > 1 ? springHost.ActualHeight : springHost.Height;
+        tileVisual.CenterPoint = new Vector3((float)(w / 2.0), (float)(h * 0.14f), 0f);
+        tileVisual.Scale = new Vector3(0.96f, 0.96f, 1f);
+        AnimateCompactTileHoverSpring();
     }
 
     /// <summary>
@@ -776,6 +1089,16 @@ public sealed partial class MainWindow
                 ExpandedNameText.UnregisterPropertyChangedCallback(UIElement.VisibilityProperty, _expandedNameVisibilityCallbackToken);
                 _expandedNameVisibilityCallbackToken = 0;
             }
+            if (_expandedEditorVisibilityCallbackToken != 0)
+            {
+                ExpandedNameEditor.UnregisterPropertyChangedCallback(UIElement.VisibilityProperty, _expandedEditorVisibilityCallbackToken);
+                _expandedEditorVisibilityCallbackToken = 0;
+            }
+            if (_expandedViewVisibilityCallbackToken != 0)
+            {
+                ExpandedView.UnregisterPropertyChangedCallback(UIElement.VisibilityProperty, _expandedViewVisibilityCallbackToken);
+                _expandedViewVisibilityCallbackToken = 0;
+            }
             _expandedNameShadowHooked = false;
         }
 
@@ -876,10 +1199,36 @@ public sealed partial class MainWindow
         _compactTileShadowGeom?.Dispose();
         _compactTileShadowGeom = null;
 
+        if (_expandedSweepVisual is not null)
+        {
+            _expandedSweepVisual.StopAnimation("Opacity");
+            _expandedSweepVisual.Clip = null;
+            _expandedSweepVisual.Brush = null;
+            ElementCompositionPreview.SetElementChildVisual(ExpandedSpecularSweep, null);
+            _expandedSweepVisual.Dispose();
+            _expandedSweepVisual = null;
+        }
+        if (_expandedSweepBrush is not null)
+        {
+            _expandedSweepBrush.StopAnimation("Offset");
+            _expandedSweepBrush.Dispose();
+            _expandedSweepBrush = null;
+        }
+        _expandedSweepOpacityExpr?.Dispose();
+        _expandedSweepOpacityExpr = null;
+        _expandedSweepOffsetExpr?.Dispose();
+        _expandedSweepOffsetExpr = null;
+        _expandedSweepClip?.Dispose();
+        _expandedSweepClip = null;
+        _expandedSweepClipGeom?.Dispose();
+        _expandedSweepClipGeom = null;
+
         _tileScaleSpring?.Dispose();
         _tileScaleSpring = null;
         _iconScaleSpring?.Dispose();
         _iconScaleSpring = null;
+        _multiSelectBadgeSpring?.Dispose();
+        _multiSelectBadgeSpring = null;
 
         if (_overlayImplicitAnimsAttached)
         {
@@ -911,6 +1260,7 @@ public sealed partial class MainWindow
         UpdateCompactSelectionPlateVisual();
         AnimateCompactTileHoverSpring();
         UpdateCompactSpecularPointer(e);
+        PreWarmCompactHoverIcons();
     }
 
     private void CompactTile_PointerExited(object sender, PointerRoutedEventArgs e)

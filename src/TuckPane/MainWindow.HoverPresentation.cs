@@ -1,4 +1,5 @@
 using System.Numerics;
+using System.Text;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Data;
@@ -24,6 +25,8 @@ public sealed partial class MainWindow
     private UIElement? _itemPointerCaptureOwner;
     private Microsoft.UI.Xaml.Input.Pointer? _itemCapturedPointer;
     private readonly DockLayoutCommit _dockLayoutCommit = new();
+    private readonly List<NativeMethods.RECT> _dockBounceRegionRects = new();
+    private readonly StringBuilder _dockRegionKeyBuilder = new(64);
     private long _hoverGeometryVersion;
     private int _presentedHoverProxyCount;
     private bool UseHoverPresentation => IsDock || IsCompactList;
@@ -83,15 +86,18 @@ public sealed partial class MainWindow
                 var stackCopy = new StackPanel { Orientation = stack.Orientation, Spacing = stack.Spacing };
                 Mirror(stackCopy, StackPanel.OrientationProperty, stack, nameof(StackPanel.Orientation));
                 Mirror(stackCopy, StackPanel.SpacingProperty, stack, nameof(StackPanel.Spacing));
-                foreach (FrameworkElement child in stack.Children.OfType<FrameworkElement>())
-                    stackCopy.Children.Add(CloneHoverContent(child, item));
+                for (int i = 0; i < stack.Children.Count; i++)
+                {
+                    if (stack.Children[i] is FrameworkElement child)
+                        stackCopy.Children.Add(CloneHoverContent(child, item));
+                }
                 copy = stackCopy;
                 break;
             case Grid grid:
                 var gridCopy = new Grid();
-                foreach (FrameworkElement child in grid.Children.OfType<FrameworkElement>())
+                for (int i = 0; i < grid.Children.Count; i++)
                 {
-                    if (child.Name == "ItemNameShadowHost") continue;
+                    if (grid.Children[i] is not FrameworkElement child || child.Name == "ItemNameShadowHost") continue;
                     gridCopy.Children.Add(CloneHoverContent(child, item));
                 }
                 copy = gridCopy;
@@ -168,7 +174,12 @@ public sealed partial class MainWindow
             if (_hoverItems.TryGetValue(host, out var current) && ReferenceEquals(current, item))
                 InvalidateHoverGeometry();
         };
-        if (!IsDock) ToolTipService.SetToolTip(proxy, ToolTipService.GetToolTip(host));
+        if (!IsDock)
+        {
+            object? tip = ToolTipService.GetToolTip(host);
+            ToolTipService.SetToolTip(proxy, tip);
+            item.AppliedToolTip = tip;
+        }
         PointerEventHandler onPointerPressed = (_, e) => ForwardHoverPress(host, item, e);
         PointerEventHandler onPointerMoved = (_, e) => Item_PointerMoved(host, e);
         PointerEventHandler onPointerReleased = (_, e) => Item_PointerReleased(host, e);
@@ -207,6 +218,15 @@ public sealed partial class MainWindow
             proxy.ContextRequested -= onContextRequested;
         };
         item.Proxy = proxy;
+        item.AppliedProxyScale = float.NaN;
+        item.AppliedProxyTranslation = new(float.NaN, float.NaN);
+        item.HasAppliedProxyClip = false;
+        item.AppliedProxyZIndex = int.MinValue;
+        item.AppliedBounceY = float.NaN;
+        item.ProxyClipClearedForBounce = false;
+        item.AppliedProxyLeft = double.NaN;
+        item.AppliedProxyTop = double.NaN;
+        item.AppliedProxyCenter = new(float.NaN, float.NaN, float.NaN);
         ApplyItemBounce(item);
         _hoverPresentationLayer.Children.Add(proxy);
     }
@@ -244,6 +264,15 @@ public sealed partial class MainWindow
         }
         item.Proxy = null;
         item.ProxyIcon = null;
+        item.AppliedProxyScale = float.NaN;
+        item.AppliedProxyTranslation = new(float.NaN, float.NaN);
+        item.HasAppliedProxyClip = false;
+        item.AppliedProxyZIndex = int.MinValue;
+        item.ProxyClipClearedForBounce = false;
+        item.AppliedProxyLeft = double.NaN;
+        item.AppliedProxyTop = double.NaN;
+        item.AppliedProxyCenter = new(float.NaN, float.NaN, float.NaN);
+        item.AppliedToolTip = null;
     }
 
     private static void ClearHoverContentBindings(FrameworkElement element)
@@ -265,12 +294,18 @@ public sealed partial class MainWindow
             case StackPanel stack:
                 stack.ClearValue(StackPanel.OrientationProperty);
                 stack.ClearValue(StackPanel.SpacingProperty);
-                foreach (FrameworkElement child in stack.Children.OfType<FrameworkElement>())
-                    ClearHoverContentBindings(child);
+                for (int i = 0; i < stack.Children.Count; i++)
+                {
+                    if (stack.Children[i] is FrameworkElement child)
+                        ClearHoverContentBindings(child);
+                }
                 break;
             case Grid grid:
-                foreach (FrameworkElement child in grid.Children.OfType<FrameworkElement>())
-                    ClearHoverContentBindings(child);
+                for (int i = 0; i < grid.Children.Count; i++)
+                {
+                    if (grid.Children[i] is FrameworkElement child)
+                        ClearHoverContentBindings(child);
+                }
                 break;
             case Image image:
                 image.ClearValue(Image.SourceProperty);
@@ -302,6 +337,10 @@ public sealed partial class MainWindow
         item.VisibleBounds = default;
         item.Translation = Vector2.Zero;
         item.RenderScale = 1;
+        item.AppliedProxyScale = float.NaN;
+        item.AppliedProxyTranslation = new(float.NaN, float.NaN);
+        item.HasAppliedProxyClip = false;
+        item.AppliedProxyZIndex = int.MinValue;
     }
 
     // Exclude the fixed bounce gutter from persisted position and drag geometry.
@@ -317,7 +356,8 @@ public sealed partial class MainWindow
         if (_hoverGeometryDirty) UpdateHoverGeometry();
         Vector2 local = new((float)point.X, (float)point.Y);
         if (!InsideHoverRegion(point)) return null;
-        for (int i = 0; i < _hoverLayout.Length; i++)
+        int count = _hoverLayoutCount;
+        for (int i = 0; i < count; i++)
         {
             // A sibling's ready proxy must not make an original item unclickable.
             // Hit testing follows the representation that is actually visible.
@@ -325,7 +365,7 @@ public sealed partial class MainWindow
             _hoverHitRegions[i] = new(item.RowBounds, item.BaseBounds, item.VisibleBounds,
                 item.Translation, item.RenderScale, item.Presented);
         }
-        int index = HoverLayoutMath.HitTestItems(_hoverHitRegions, IsCompactList,
+        int index = HoverLayoutMath.HitTestItems(_hoverHitRegions.AsSpan(0, count), IsCompactList,
             _hoverViewportBounds, _hoverButtonBounds, local);
         return index < 0 ? null : _hoverLayout[index].Key;
     }
@@ -356,7 +396,9 @@ public sealed partial class MainWindow
         point = default;
         if (!NativeMethods.ScreenToClient(_hwnd, ref screen)) return false;
         double scale = WindowRoot.XamlRoot?.RasterizationScale ?? 1;
-        Point origin = ItemsScrollView.TransformToVisual(WindowRoot).TransformPoint(new Point());
+        Point origin = !_hoverGeometryDirty && _hoverViewportWindowOriginValid
+            ? _hoverViewportWindowOrigin
+            : ItemsScrollView.TransformToVisual(WindowRoot).TransformPoint(new Point());
         point = new Point(screen.X / scale - origin.X, screen.Y / scale - origin.Y);
         return true;
     }
@@ -404,11 +446,16 @@ public sealed partial class MainWindow
             body.Width, body.Height);
         var frame = WindowRegionPixels(surface, Vector2.Zero);
         int diameter = (int)Math.Round(2 * body.Radius * scale) + 2;
-        string key = $"{frame.Left},{frame.Top},{frame.Right},{frame.Bottom},{diameter}";
-        var bounceRects = new List<NativeMethods.RECT>();
+        _dockRegionKeyBuilder.Clear();
+        _dockRegionKeyBuilder.Append(frame.Left).Append(',').Append(frame.Top).Append(',')
+            .Append(frame.Right).Append(',').Append(frame.Bottom).Append(',').Append(diameter);
+        _dockBounceRegionRects.Clear();
         if (HorizontalHover)
         {
-            Point origin = ItemsScrollView.TransformToVisual(WindowRoot).TransformPoint(new Point());
+            Point origin = !_hoverGeometryDirty && _hoverViewportWindowOriginValid
+                ? _hoverViewportWindowOrigin
+                : ItemsScrollView.TransformToVisual(WindowRoot).TransformPoint(new Point());
+            Vector2 originVec = new((float)origin.X, (float)origin.Y);
             float overflowTopDip = -(float)(_dockOverflowPixels / scale);
             foreach (HoverItemVisual item in _hoverItems.Values)
             {
@@ -417,16 +464,18 @@ public sealed partial class MainWindow
                 HoverRect baseIcon = GetRenderedDockIcon(item, includeBounce: false);
                 float envelopeTop = Math.Min(baseIcon.Y, overflowTopDip);
                 HoverRect envelope = new(baseIcon.X, envelopeTop, baseIcon.Width, Math.Max(baseIcon.Height, baseIcon.Bottom - envelopeTop));
-                var pixels = WindowRegionPixels(envelope, new Vector2((float)origin.X, (float)origin.Y));
-                bounceRects.Add(pixels);
-                key += $"/{pixels.Left},{pixels.Top},{pixels.Right},{pixels.Bottom}";
+                var pixels = WindowRegionPixels(envelope, originVec);
+                _dockBounceRegionRects.Add(pixels);
+                _dockRegionKeyBuilder.Append('/').Append(pixels.Left).Append(',').Append(pixels.Top)
+                    .Append(',').Append(pixels.Right).Append(',').Append(pixels.Bottom);
             }
         }
-        if (key == _dockRegionKey) return;
+        if (_dockRegionKey is not null && _dockRegionKeyBuilder.Equals(_dockRegionKey.AsSpan())) return;
         IntPtr region = DockNative.CreateRoundRectRgn(frame.Left, frame.Top, frame.Right, frame.Bottom, diameter, diameter);
         if (region == IntPtr.Zero) return;
-        foreach (var icon in bounceRects)
+        for (int i = 0; i < _dockBounceRegionRects.Count; i++)
         {
+            NativeMethods.RECT icon = _dockBounceRegionRects[i];
             IntPtr iconRegion = DockNative.CreateRectRgn(icon.Left, icon.Top, icon.Right, icon.Bottom);
             if (iconRegion == IntPtr.Zero) continue;
             DockNative.CombineRgn(region, region, iconRegion, 2);
@@ -438,7 +487,7 @@ public sealed partial class MainWindow
         if (DockNative.SetWindowRgn(_hwnd, region, true) == 0) DockNative.DeleteObject(region);
         else
         {
-            _dockRegionKey = key;
+            _dockRegionKey = _dockRegionKeyBuilder.ToString();
             // Region changes send native window-position notifications. Apply the
             // border suppression last, without another frame/size change.
             _desktopLayer?.ApplyTransparentChrome();

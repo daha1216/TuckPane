@@ -66,7 +66,10 @@
             <Setter Property="VerticalAlignment" Value="Center" />
         </Style>
         <Style TargetType="ToggleSwitch">
-            <Setter Property="MinWidth" Value="40" />
+            <Setter Property="MinWidth" Value="44" />
+            <Setter Property="MaxWidth" Value="46" />
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="Margin" Value="0" />
             <Setter Property="OnContent" Value="" />
             <Setter Property="OffContent" Value="" />
             <Setter Property="HorizontalAlignment" Value="Right" />
@@ -213,27 +216,31 @@
                 <Border x:Name="RowsCard" Style="{StaticResource Row}">
                     <Grid ColumnSpacing="12">
                         <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="148" />
+                            <ColumnDefinition Width="120" />
                             <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="56" />
                         </Grid.ColumnDefinitions>
                         <TextBlock VerticalAlignment="Center" Tag="loc:RowsLabel" Text="行数" TextWrapping="Wrap" Foreground="{StaticResource FormPrimaryTextBrush}" />
                         <controls:ConsoleSlider x:Name="RowsSlider" Grid.Column="1" Minimum="2" Maximum="8" StepFrequency="1" Value="3" ValueChanged="FormControl_Changed" />
+                        <TextBlock x:Name="RowsValueText" Grid.Column="2" VerticalAlignment="Center" TextAlignment="Right" Text="3" Foreground="{StaticResource FormPrimaryTextBrush}" />
                     </Grid>
                 </Border>
                 <Border x:Name="ColumnsCard" Style="{StaticResource Row}">
                     <Grid ColumnSpacing="12">
                         <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="148" />
+                            <ColumnDefinition Width="120" />
                             <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="56" />
                         </Grid.ColumnDefinitions>
                         <TextBlock VerticalAlignment="Center" Tag="loc:ColumnsLabel" Text="列数" TextWrapping="Wrap" Foreground="{StaticResource FormPrimaryTextBrush}" />
                         <controls:ConsoleSlider x:Name="ColumnsSlider" Grid.Column="1" Minimum="2" Maximum="8" StepFrequency="1" Value="3" ValueChanged="FormControl_Changed" />
+                        <TextBlock x:Name="ColumnsValueText" Grid.Column="2" VerticalAlignment="Center" TextAlignment="Right" Text="3" Foreground="{StaticResource FormPrimaryTextBrush}" />
                     </Grid>
                 </Border>
                 <Border x:Name="CompactScaleCard" Style="{StaticResource Row}">
                     <Grid ColumnSpacing="12">
                         <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="148" />
+                            <ColumnDefinition Width="120" />
                             <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="56" />
                         </Grid.ColumnDefinitions>
@@ -245,7 +252,7 @@
                 <Border x:Name="CanvasScaleCard" Style="{StaticResource Row}" Visibility="Collapsed">
                     <Grid ColumnSpacing="12">
                         <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="148" />
+                            <ColumnDefinition Width="120" />
                             <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="56" />
                         </Grid.ColumnDefinitions>
@@ -257,7 +264,7 @@
                 <Border x:Name="ItemScaleCard" Style="{StaticResource Row}" Visibility="Collapsed" BorderThickness="0">
                     <Grid ColumnSpacing="12">
                         <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="148" />
+                            <ColumnDefinition Width="120" />
                             <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="56" />
                         </Grid.ColumnDefinitions>
@@ -272,16 +279,15 @@
         <Border x:Name="ManageStorageGroup" Style="{StaticResource SettingsGroup}" Loaded="SettingsGroup_Loaded">
             <StackPanel Spacing="0">
                 <Border Style="{StaticResource Row}" BorderThickness="0">
-                    <Grid ColumnSpacing="12">
+                    <Grid ColumnSpacing="10">
                         <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
                             <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
-                        <TextBlock VerticalAlignment="Center" Tag="loc:ActualLocation" Text="实际位置" TextWrapping="Wrap" Foreground="{StaticResource FormPrimaryTextBrush}" />
-                        <StackPanel Grid.Column="1" HorizontalAlignment="Right" Orientation="Horizontal" Spacing="6">
-                            <TextBox x:Name="ManagePathBox" Width="210" Height="32" IsReadOnly="True" Style="{StaticResource FlatTextBoxStyle}" />
-                            <Button x:Name="OpenManagedFolderButton" Height="32" Content="打开" Tag="loc:Open" />
-                        </StackPanel>
+                        <TextBlock MinWidth="72" VerticalAlignment="Center" Tag="loc:ActualLocation" Text="实际位置" TextWrapping="Wrap" Foreground="{StaticResource FormPrimaryTextBrush}" />
+                        <TextBox x:Name="ManagePathBox" Grid.Column="1" Height="32" HorizontalAlignment="Stretch" IsReadOnly="True" Style="{StaticResource FlatTextBoxStyle}" />
+                        <Button x:Name="OpenManagedFolderButton" Grid.Column="2" Height="32" Content="打开" Tag="loc:Open" />
                     </Grid>
                 </Border>
             </StackPanel>

@@ -209,7 +209,10 @@
                 <Setter Property="VerticalAlignment" Value="Center"/>
             </Style>
             <Style TargetType="ToggleSwitch">
-                <Setter Property="MinWidth" Value="40"/>
+                <Setter Property="MinWidth" Value="44"/>
+                <Setter Property="MaxWidth" Value="46"/>
+                <Setter Property="Padding" Value="0"/>
+                <Setter Property="Margin" Value="0"/>
                 <Setter Property="OnContent" Value=""/>
                 <Setter Property="OffContent" Value=""/>
                 <Setter Property="HorizontalAlignment" Value="Right"/>
@@ -322,8 +325,9 @@
                 </NavigationView.MenuItems>
                 <Grid x:Name="SettingsContentRoot" Padding="18,6,18,18" Background="{StaticResource ConsolePageSurfaceBrush}">
                     <InfoBar x:Name="ConsoleInfoBar" Canvas.ZIndex="5" VerticalAlignment="Top" IsClosable="True" IsOpen="False"/>
-                    <ScrollViewer x:Name="UpdatePage" Margin="0,22,0,0" Visibility="Collapsed" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
-                        <StackPanel Spacing="20" MaxWidth="620" HorizontalAlignment="Stretch">
+                    <ScrollViewer x:Name="UpdatePage" Margin="0,22,0,0" Padding="0,0,12,20" Visibility="Collapsed" VerticalScrollBarVisibility="Auto" HorizontalScrollMode="Disabled" HorizontalScrollBarVisibility="Disabled" HorizontalContentAlignment="Stretch">
+                        <Grid HorizontalAlignment="Stretch">
+                        <StackPanel Spacing="20" HorizontalAlignment="Stretch">
                             <TextBlock Tag="loc:NavUpdate" Text="更新" FontSize="28" FontWeight="SemiBold" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
                             <Border Style="{StaticResource SettingsGroup}" Loaded="SettingsGroup_Loaded" Padding="18">
                                 <StackPanel Spacing="12">
@@ -346,9 +350,11 @@
                                 <TextBlock x:Name="UpdateRecoveryText" FontSize="12" TextWrapping="Wrap" IsTextSelectionEnabled="True" Foreground="{StaticResource ConsoleSecondaryTextBrush}"/>
                             </StackPanel>
                         </StackPanel>
+                        </Grid>
                     </ScrollViewer>
-                    <ScrollViewer x:Name="SystemPage" Margin="0,22,0,0" Background="Transparent" VerticalScrollBarVisibility="Auto" Visibility="Collapsed" HorizontalScrollBarVisibility="Disabled">
-                        <StackPanel HorizontalAlignment="Stretch" Spacing="20" MaxWidth="620">
+                    <ScrollViewer x:Name="SystemPage" Margin="0,22,0,0" Padding="0,0,12,20" Background="Transparent" VerticalScrollBarVisibility="Auto" Visibility="Collapsed" HorizontalScrollMode="Disabled" HorizontalScrollBarVisibility="Disabled" HorizontalContentAlignment="Stretch">
+                        <Grid HorizontalAlignment="Stretch">
+                        <StackPanel HorizontalAlignment="Stretch" Spacing="20">
                             <TextBlock FontSize="28" FontWeight="SemiBold" Tag="loc:SystemTitle" Text="系统" TextWrapping="Wrap" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
                             <Border Style="{StaticResource SettingsGroup}" Loaded="SettingsGroup_Loaded">
                                 <Border Style="{StaticResource GeneralRow}" BorderThickness="0">
@@ -503,9 +509,11 @@
                                 </StackPanel>
                             </Border>
                         </StackPanel>
+                        </Grid>
                     </ScrollViewer>
-                    <ScrollViewer x:Name="DisplayPage" Margin="0,22,0,0" Background="Transparent" VerticalScrollBarVisibility="Auto" Visibility="Collapsed" HorizontalScrollBarVisibility="Disabled">
-                        <StackPanel HorizontalAlignment="Stretch" Spacing="20" MaxWidth="620">
+                    <ScrollViewer x:Name="DisplayPage" Margin="0,22,0,0" Padding="0,0,12,20" Background="Transparent" VerticalScrollBarVisibility="Auto" Visibility="Collapsed" HorizontalScrollMode="Disabled" HorizontalScrollBarVisibility="Disabled" HorizontalContentAlignment="Stretch">
+                        <Grid HorizontalAlignment="Stretch">
+                        <StackPanel HorizontalAlignment="Stretch" Spacing="20">
                             <TextBlock FontSize="28" FontWeight="SemiBold" Tag="loc:DisplaySettingsTitle" Text="显示" TextWrapping="Wrap" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
                             <Border Style="{StaticResource SettingsGroup}" Loaded="SettingsGroup_Loaded">
                                 <StackPanel Spacing="0">
@@ -700,17 +708,21 @@
                                 </StackPanel>
                             </Border>
                         </StackPanel>
+                        </Grid>
                     </ScrollViewer>
-                    <ScrollViewer x:Name="MenuPage" Margin="0,22,0,0" Background="Transparent" VerticalScrollBarVisibility="Auto" Visibility="Collapsed" HorizontalScrollBarVisibility="Disabled">
-                        <StackPanel HorizontalAlignment="Stretch" Spacing="20" MaxWidth="620">
+                    <ScrollViewer x:Name="MenuPage" Margin="0,22,0,0" Padding="0,0,12,20" Background="Transparent" VerticalScrollBarVisibility="Auto" Visibility="Collapsed" HorizontalScrollMode="Disabled" HorizontalScrollBarVisibility="Disabled" HorizontalContentAlignment="Stretch">
+                        <Grid HorizontalAlignment="Stretch">
+                        <StackPanel HorizontalAlignment="Stretch" Spacing="20">
                             <TextBlock FontSize="28" FontWeight="SemiBold" Tag="loc:OrganizerMenuSettingsTitle" Text="右键菜单" TextWrapping="Wrap" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
                             <Border Style="{StaticResource SettingsGroup}" x:Name="OrganizerMenuGroup" Loaded="SettingsGroup_Loaded">
                                 <StackPanel x:Name="OrganizerMenuOptions" Spacing="0"/>
                             </Border>
                         </StackPanel>
+                        </Grid>
                     </ScrollViewer>
-                    <ScrollViewer x:Name="InteractionPage" Margin="0,22,0,0" Background="Transparent" VerticalScrollBarVisibility="Auto" Visibility="Collapsed" HorizontalScrollBarVisibility="Disabled">
-                        <StackPanel HorizontalAlignment="Stretch" Spacing="20" MaxWidth="620">
+                    <ScrollViewer x:Name="InteractionPage" Margin="0,22,0,0" Padding="0,0,12,20" Background="Transparent" VerticalScrollBarVisibility="Auto" Visibility="Collapsed" HorizontalScrollMode="Disabled" HorizontalScrollBarVisibility="Disabled" HorizontalContentAlignment="Stretch">
+                        <Grid HorizontalAlignment="Stretch">
+                        <StackPanel HorizontalAlignment="Stretch" Spacing="20">
                             <TextBlock FontSize="28" FontWeight="SemiBold" Tag="loc:InteractionTitle" Text="交互" TextWrapping="Wrap" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
                             <Border Style="{StaticResource SettingsGroup}" Loaded="SettingsGroup_Loaded">
                                 <StackPanel Spacing="0">
@@ -971,9 +983,11 @@
                                 </StackPanel>
                             </Border>
                         </StackPanel>
+                        </Grid>
                     </ScrollViewer>
-                    <ScrollViewer x:Name="ThemePage" Margin="0,22,0,0" Background="Transparent" VerticalScrollBarVisibility="Auto" Visibility="Collapsed" HorizontalScrollBarVisibility="Disabled">
-                        <StackPanel MaxWidth="620" HorizontalAlignment="Stretch" Spacing="20">
+                    <ScrollViewer x:Name="ThemePage" Margin="0,22,0,0" Padding="0,0,12,20" Background="Transparent" VerticalScrollBarVisibility="Auto" Visibility="Collapsed" HorizontalScrollMode="Disabled" HorizontalScrollBarVisibility="Disabled" HorizontalContentAlignment="Stretch">
+                        <Grid HorizontalAlignment="Stretch">
+                        <StackPanel HorizontalAlignment="Stretch" Spacing="20">
                             <TextBlock FontSize="28" FontWeight="SemiBold" Tag="loc:ThemeTitle" Text="主题" TextWrapping="Wrap" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
                             <Border Style="{StaticResource SettingsGroup}" Padding="16" Loaded="SettingsGroup_Loaded">
                                 <StackPanel Spacing="12">
@@ -1070,6 +1084,7 @@
                                 </StackPanel>
                             </Border>
                         </StackPanel>
+                        </Grid>
                     </ScrollViewer>
                     <Grid x:Name="ManagePage" Margin="0,22,0,0" Background="Transparent">
                         <Grid.RowDefinitions>
@@ -1081,7 +1096,7 @@
                         </StackPanel>
                         <Grid Grid.Row="1" Margin="0,12,0,0" ColumnSpacing="12">
                             <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="190"/>
+                                <ColumnDefinition Width="208"/>
                                 <ColumnDefinition Width="*"/>
                             </Grid.ColumnDefinitions>
                             <Border Background="{StaticResource ConsoleCardSurfaceBrush}" BorderBrush="#12000000" BorderThickness="1" CornerRadius="12">
@@ -1112,8 +1127,9 @@
                             </Border>
                             <Border x:Name="ManageDetailCard" Grid.Column="1" Padding="0" Background="Transparent" CornerRadius="12">
                                 <Grid x:Name="ManageEditor">
-                                    <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
-                                        <StackPanel Spacing="20">
+                                    <ScrollViewer Padding="0,0,12,16" VerticalScrollBarVisibility="Auto" HorizontalScrollMode="Disabled" HorizontalScrollBarVisibility="Disabled" HorizontalContentAlignment="Stretch">
+                                        <Grid HorizontalAlignment="Stretch">
+                                        <StackPanel Spacing="16" HorizontalAlignment="Stretch">
                                             <InfoBar x:Name="MissingStorageInfo" IsOpen="False" IsClosable="False" Severity="Warning" Title="实际目录不存在"/>
                                             <local:OrganizerSettingsForm x:Name="ManageForm" IsCreationMode="False"/>
                                             <StackPanel Margin="0,6" Orientation="Horizontal" Spacing="8">
@@ -1133,12 +1149,14 @@
                                                 </Button>
                                             </StackPanel>
                                         </StackPanel>
+                                        </Grid>
                                     </ScrollViewer>
                                 </Grid>
                             </Border>
                             <Border x:Name="AddEditor" Grid.Column="1" Background="Transparent" Visibility="Collapsed">
-                                <ScrollViewer x:Name="CreationScrollViewer" HorizontalAlignment="Stretch" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
-                                    <StackPanel x:Name="AddSettingsColumn" HorizontalAlignment="Stretch" Spacing="20">
+                                <ScrollViewer x:Name="CreationScrollViewer" Padding="0,0,12,16" HorizontalAlignment="Stretch" VerticalScrollBarVisibility="Auto" HorizontalScrollMode="Disabled" HorizontalScrollBarVisibility="Disabled" HorizontalContentAlignment="Stretch">
+                                    <Grid HorizontalAlignment="Stretch">
+                                    <StackPanel x:Name="AddSettingsColumn" HorizontalAlignment="Stretch" Spacing="16">
                                         <local:OrganizerSettingsForm x:Name="AddForm" IsCreationMode="True"/>
                                         <StackPanel Margin="0,6" Spacing="6">
                                             <Button x:Name="CreateOrganizerButton" HorizontalAlignment="Left" MinWidth="100" Click="CreateOrganizerButton_Click" Content="创建" Tag="loc:Create" Background="{StaticResource ConsoleSelectionAccentBrush}" Foreground="#FFFFFF" BorderThickness="0">
@@ -1159,6 +1177,7 @@
                                             <TextBlock x:Name="CreateLimitText" TextWrapping="Wrap" Visibility="Collapsed" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
                                         </StackPanel>
                                     </StackPanel>
+                                    </Grid>
                                 </ScrollViewer>
                             </Border>
                         </Grid>

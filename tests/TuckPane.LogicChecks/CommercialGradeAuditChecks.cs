@@ -46,6 +46,28 @@ internal static class CommercialGradeAuditChecks
             // Nested leases must not throw and must release cleanly in LIFO order.
         }
         CompositorClockBoost.Release(); // Extra defensive release must be a safe no-op.
+
+        // 4. TransitionCanvasMath pure geometry: displaced remembered position produces union canvas with exact zero-shift handoff!
+        var compactRight = new NativeMethods.RECT { Left = 2426, Top = 474, Right = 2604, Bottom = 628 };
+        var expandedCenter = new NativeMethods.RECT { Left = 1000, Top = 300, Right = 1900, Bottom = 1100 };
+        TransitionCanvasPlan unionPlan = TransitionCanvasMath.Create(
+            expandedCenter, compactRight, displayScale: 1.5, compactTileSizeDip: 60.84, compactViewWidthDip: 118.56, compactViewHeightDip: 102.96);
+        require(unionPlan.IsUnionNeeded &&
+                unionPlan.CanvasBounds.Left == 1000 && unionPlan.CanvasBounds.Top == 300 &&
+                unionPlan.CanvasBounds.Right == 2604 && unionPlan.CanvasBounds.Bottom == 1100,
+            "TransitionCanvasMath 未正确计算记忆展开位置的合并画布边界。");
+        require(Math.Abs(unionPlan.ExpandedOffsetDip.X) < 0.01f && Math.Abs(unionPlan.ExpandedOffsetDip.Y) < 0.01f &&
+                Math.Abs(unionPlan.CompactOffsetDip.X - (2426 - 1000) / 1.5) < 0.1f &&
+                Math.Abs(unionPlan.CompactOffsetDip.Y - (474 - 300) / 1.5) < 0.1f,
+            "TransitionCanvasMath 合并画布内的收起/展开偏移量计算失准。");
+        require(unionPlan.StartScale.X is >= 0.04f and <= 1.0f && unionPlan.StartScale.Y is >= 0.04f and <= 1.0f,
+            "TransitionCanvasMath 初始缩放比例越界。");
+        var containedCompact = new NativeMethods.RECT { Left = 1200, Top = 500, Right = 1378, Bottom = 654 };
+        TransitionCanvasPlan stationaryPlan = TransitionCanvasMath.Create(
+            expandedCenter, containedCompact, displayScale: 1.5, compactTileSizeDip: 60.84, compactViewWidthDip: 118.56, compactViewHeightDip: 102.96);
+        require(!stationaryPlan.IsUnionNeeded &&
+                stationaryPlan.CanvasBounds.Left == expandedCenter.Left && stationaryPlan.CanvasBounds.Right == expandedCenter.Right,
+            "当展开区域已包含收起卡片时不应扩大画布边界。");
     }
 
     private static void CheckTrackAReliabilityAndAsyncIo(Action<bool, string> require)
@@ -128,8 +150,10 @@ internal static class CommercialGradeAuditChecks
                 showPageWindow.Contains("CompositorClockBoost", StringComparison.Ordinal),
             "ConsoleWindow.ShowPageAsync 仍残留 Task.Delay(16) 循环或未接入 GPU 弹簧与高刷提频。");
 
-        require(!consoleXaml.Contains("Binding ViewportWidth", StringComparison.Ordinal),
-            "ConsoleWindow.xaml 仍残留导致滚动重排的 {Binding ViewportWidth}。");
+        require(!consoleXaml.Contains("Binding ViewportWidth", StringComparison.Ordinal) &&
+                consoleXaml.Contains("HorizontalScrollMode=\"Disabled\"", StringComparison.Ordinal) &&
+                consoleXaml.Contains("HorizontalContentAlignment=\"Stretch\"", StringComparison.Ordinal),
+            "ConsoleWindow.xaml 仍残留 {Binding ViewportWidth} 或缺少禁用横向滚动与拉伸内容对齐（会导致开关右侧裁切）。");
 
         require(appHostCs.Contains("LastChangedThemeTarget", StringComparison.Ordinal) &&
                 consoleCs.Contains("LastChangedThemeTarget", StringComparison.Ordinal),
@@ -216,5 +240,24 @@ internal static class CommercialGradeAuditChecks
                 !styleCs.Contains("AlphaMask?.Dispose()", StringComparison.Ordinal) &&
                 !styleCs.Contains("AlphaMask.Dispose()", StringComparison.Ordinal),
             "禁止对 TextBlock.GetAlphaMask() 返回的画刷调用 Dispose()（会导致 ItemsRepeater 回收后抛出 RO_E_CLOSED 闪退）。");
+        // 4. DWM GPU-offloaded expand/collapse: single-canvas union HWND (no per-frame ApplyCollapseWindowPosition/SetWindowPos),
+        //    GPU SpringScalarNaturalMotionAnimation + ExpressionAnimation + CompositionScopedBatch + specular sweep + multi-select badge!
+        string effectGraphCs = File.ReadAllText(Path.Combine(srcRoot, "Services", "ThemeEffectGraph.cs"));
+        string backdropCs = File.ReadAllText(Path.Combine(srcRoot, "Services", "ThemeBackdrop.cs"));
+        require(!transCs.Contains("ApplyCollapseWindowPosition(", StringComparison.Ordinal) &&
+                transCs.Contains("CreateSpringScalarAnimation()", StringComparison.Ordinal) &&
+                transCs.Contains("CreateExpressionAnimation(", StringComparison.Ordinal) &&
+                transCs.Contains("CreateScopedBatch(", StringComparison.Ordinal) &&
+                transCs.Contains("TransitionCanvasMath.Create(", StringComparison.Ordinal) &&
+                transCs.Contains("BindExpandedTransitionSweep(", StringComparison.Ordinal),
+            "MainWindow.TransitionsAndResize.cs 未完整接入单画布合并窗口 + DWM GPU 离线弹簧/表达式动画或仍残留逐帧 SetWindowPos。");
+        require(mainXaml.Contains("x:Name=\"ExpandedSpecularSweep\"", StringComparison.Ordinal) &&
+                mainXaml.Contains("x:Name=\"CompactMultiSelectBadge\"", StringComparison.Ordinal) &&
+                styleCs.Contains("UpdateCompactSelectionPlateGeometry(", StringComparison.Ordinal) &&
+                styleCs.Contains("BindExpandedTransitionSweep(", StringComparison.Ordinal),
+            "MainWindow.xaml / NativeDesktopStyle 缺少液态玻璃展开扫光层或无叠压同心圆角桌面多选角标。");
+        require(effectGraphCs.Contains("SaturationEffect", StringComparison.Ordinal) &&
+                backdropCs.Contains("\"Saturation.Saturation\"", StringComparison.Ordinal),
+            "ThemeEffectGraph / ThemeBackdrop 缺少 Apple iOS 26/27 同源高通透鲜艳度着色器管线。");
     }
 }
