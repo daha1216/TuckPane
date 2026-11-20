@@ -73,6 +73,24 @@ public sealed partial class AppHost
         SyncDesktopMarqueeHookState();
     }
 
+    internal async Task SetFreeGridPlacementEnabledAsync(bool enabled)
+    {
+        await MutateGlobalSettingAsync(
+            s => s.FreeGridPlacementEnabled,
+            (s, v) => s.FreeGridPlacementEnabled = v,
+            enabled);
+        foreach (MainWindow window in _windows.Values)
+            window.RefreshFreeGridLayoutMode();
+    }
+
+    internal async Task SetFreeGridPreferDirectSwapAsync(bool enabled)
+    {
+        await MutateGlobalSettingAsync(
+            s => s.FreeGridPreferDirectSwap,
+            (s, v) => s.FreeGridPreferDirectSwap = v,
+            enabled);
+    }
+
     internal void ToggleOrganizerMultiSelection(Guid id)
     {
         if (!_windows.TryGetValue(id, out MainWindow? window) || !window.IsEligibleForDesktopMultiSelect)

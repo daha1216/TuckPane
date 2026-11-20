@@ -64,7 +64,8 @@ internal static class CiHeadlessRunner
         ["--release-safety"],
         ["--startup-placement"],
         ["--endgame-productivity"],
-        ["--native-desktop-fusion"]
+        ["--native-desktop-fusion"],
+        ["--ios-free-grid"]
     ];
 
     internal static async Task RunAsync()

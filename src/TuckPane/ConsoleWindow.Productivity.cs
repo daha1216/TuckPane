@@ -26,6 +26,8 @@ public sealed partial class ConsoleWindow
             CompactVisualStyleCombo.SelectedIndex = Math.Clamp((int)settings.CompactVisualStyle, 0, CompactVisualStyleCombo.Items.Count - 1);
             SnapFloatingToDesktopGridToggle.IsOn = settings.SnapFloatingToDesktopGrid;
             DesktopMarqueeSelectionToggle.IsOn = settings.DesktopMarqueeSelectionEnabled;
+            FreeGridPlacementToggle.IsOn = settings.FreeGridPlacementEnabled;
+            FreeGridPreferDirectSwapToggle.IsOn = settings.FreeGridPreferDirectSwap;
             UndoAutoOrganizeButton.IsEnabled = _host.AutoOrganize.CanUndo;
 
             int uiErrors = App.RecoverableUiErrorCount;
@@ -59,6 +61,36 @@ public sealed partial class ConsoleWindow
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(CompactVisualStyleCombo, AppStrings.Get("CompactVisualStyleTitle"));
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(SnapFloatingToDesktopGridToggle, AppStrings.Get("SnapFloatingToDesktopGridTitle"));
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(DesktopMarqueeSelectionToggle, AppStrings.Get("DesktopMarqueeSelectionTitle"));
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(FreeGridPlacementToggle, AppStrings.Get("FreeGridPlacementTitle"));
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(FreeGridPreferDirectSwapToggle, AppStrings.Get("FreeGridPreferDirectSwapTitle"));
+    }
+
+    private async void FreeGridPlacementToggle_Toggled(object sender, RoutedEventArgs e)
+    {
+        if (_syncingProductivityControls) return;
+        try
+        {
+            await _host.SetFreeGridPlacementEnabledAsync(FreeGridPlacementToggle.IsOn);
+        }
+        catch (Exception ex)
+        {
+            ShowError(AppStrings.Get("SaveConfigurationError"), ex.Message);
+            RefreshProductivityControls();
+        }
+    }
+
+    private async void FreeGridPreferDirectSwapToggle_Toggled(object sender, RoutedEventArgs e)
+    {
+        if (_syncingProductivityControls) return;
+        try
+        {
+            await _host.SetFreeGridPreferDirectSwapAsync(FreeGridPreferDirectSwapToggle.IsOn);
+        }
+        catch (Exception ex)
+        {
+            ShowError(AppStrings.Get("SaveConfigurationError"), ex.Message);
+            RefreshProductivityControls();
+        }
     }
 
     private async void CompactVisualStyleCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)

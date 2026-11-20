@@ -11,7 +11,7 @@ internal static class OrganizerMenuVisibility
         "ContextPaste", "ContextDeleteWindow", "ContextOpenStorage", "ContextRename",
         "ContextManage", "ContextDuplicate", "ContextSwitchPlacement", "ContextSwitchContent",
         "ContextSwitchExpansion", "ContextHideName", "ContextSort", "ContextTidyEdgeStack",
-        "ContextAlignToDesktopGrid", "ContextImportDesktopSelection"
+        "ContextAlignToDesktopGrid", "ContextImportDesktopSelection", "ContextCompactGridGaps"
     ];
 
     internal static bool IsEnabled(GlobalSettings settings, string key) =>
@@ -23,7 +23,7 @@ internal static class OrganizerMenuVisibility
         return key switch
         {
             "ContextDuplicate" or "ContextRename" => mode != OrganizerPlacementMode.Station,
-            "ContextSwitchPlacement" or "ContextSwitchContent" or "ContextSwitchExpansion" or "ContextHideName"
+            "ContextSwitchPlacement" or "ContextSwitchContent" or "ContextSwitchExpansion" or "ContextHideName" or "ContextCompactGridGaps"
                 => OrganizerKinds.IsRegular(mode),
             "ContextTidyEdgeStack" or "ContextAlignToDesktopGrid" => mode == OrganizerPlacementMode.Floating,
             _ => true
