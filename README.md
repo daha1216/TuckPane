@@ -137,6 +137,12 @@ dotnet run --project .\tests\TuckPane.UpdateChecks -c Release -- --updates
 
 These checks cover update decisions, downloads, configuration backups, and portable replacement in isolation. They do not run the GUI or an installer. Actual installation and upgrade behavior remains unconfirmed by user testing; see [PLAN.md](PLAN.md) for verification and release status.
 
+## Maintainers & Contributors
+
+- **Original Upstream Author**: [ch998244353](https://github.com/ch998244353) ([ch998244353/TuckPane](https://github.com/ch998244353/TuckPane))
+- **Fork Maintainer**: [daha1216](https://github.com/daha1216)
+- **Co-Maintainer & Core Contributor**: [qiao-obs](https://github.com/qiao-obs) (桥obs)
+
 ## License
 
 TuckPane is licensed under the [MIT License](LICENSE). Third-party runtime notices are listed in [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).

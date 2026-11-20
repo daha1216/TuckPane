@@ -137,6 +137,12 @@ dotnet run --project .\tests\TuckPane.UpdateChecks -c Release -- --updates
 
 检查隔离验证更新判断、下载、配置备份及便携文件替换，不启动 GUI 或真实安装器。实际安装与升级行为尚未经用户手测确认；验证与发布状态见 [PLAN.md](PLAN.md)。
 
+## 维护者与贡献者
+
+- **上游原作者**：[ch998244353](https://github.com/ch998244353)（[ch998244353/TuckPane](https://github.com/ch998244353/TuckPane)）
+- **本 Fork 维护者**：[daha1216](https://github.com/daha1216)
+- **共同维护者与核心贡献者**：[qiao-obs](https://github.com/qiao-obs)（桥obs）
+
 ## 许可
 
 TuckPane 使用 [MIT](LICENSE) 许可证。第三方运行库条款见 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)。
