@@ -521,4 +521,7 @@
   <data name="CompactVisualStyleFluentFolder" xml:space="preserve"><value>Fluent フォルダーシルエット</value></data>
   <data name="SnapFloatingToDesktopGridTitle" xml:space="preserve"><value>ドラッグ時にデスクトップアイコンのグリッドへ吸着</value></data>
   <data name="DesktopMarqueeSelectionTitle" xml:space="preserve"><value>デスクトップの範囲選択とフローティングボックスを連動</value></data>
+  <data name="ContextCompactGridGaps" xml:space="preserve"><value>空きマスを詰めて整列</value></data>
+  <data name="FreeGridPlacementTitle" xml:space="preserve"><value>展開時の自由グリッド配置（iOS 風の空白配置）</value></data>
+  <data name="FreeGridPreferDirectSwapTitle" xml:space="preserve"><value>既存アイコン上へのドロップ時は直接入れ替え（Shift で一時切替）</value></data>
 </root>

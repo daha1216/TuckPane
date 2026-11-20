@@ -164,6 +164,7 @@ public sealed partial class MainWindow
 
         IReadOnlyList<string> sortedOrder = OrganizerSortOrder.Sort(metadata, criterion);
         _definition.ItemOrder = sortedOrder.ToList();
+        _definition.ItemSlots = FreeGridSlotMap.CompactToDense(sortedOrder);
         var lookup = source.ToDictionary(item => item.RelativeName, StringComparer.OrdinalIgnoreCase);
         WidgetItem[] reordered = sortedOrder
             .Where(lookup.ContainsKey)

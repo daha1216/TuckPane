@@ -128,6 +128,7 @@
                 <MenuFlyoutItem x:Name="TidyEdgeStackMenuItem" Tag="ContextTidyEdgeStack" Click="TidyEdgeStackMenuItem_Click" Text="整齐贴边排列" />
                 <MenuFlyoutItem x:Name="AlignToDesktopGridMenuItem" Tag="ContextAlignToDesktopGrid" Click="AlignToDesktopGridMenuItem_Click" Text="对齐桌面图标网格" />
                 <MenuFlyoutItem x:Name="ImportDesktopSelectionMenuItem" Tag="ContextImportDesktopSelection" Click="ImportDesktopSelectionMenuItem_Click" Text="收入桌面已选项目" />
+                <MenuFlyoutItem x:Name="CompactGridGapsMenuItem" Tag="ContextCompactGridGaps" Click="CompactGridGapsMenuItem_Click" Text="紧凑排布空位" />
             </MenuFlyout>
         </Grid.Resources>
 
@@ -485,8 +486,25 @@
                 SizeChanged="ItemsScrollView_SizeChanged"
                 VerticalScrollBarVisibility="Hidden"
                 VerticalScrollMode="Enabled">
+                <Grid x:Name="ItemsScrollHost" Background="Transparent">
+                <Canvas
+                    x:Name="FreeGridOverlayCanvas"
+                    HorizontalAlignment="Left"
+                    VerticalAlignment="Top"
+                    IsHitTestVisible="False">
+                    <Border
+                        x:Name="FreeGridDropSlotGhost"
+                        Canvas.ZIndex="10"
+                        CornerRadius="16"
+                        BorderThickness="1.5"
+                        Background="#26FFFFFF"
+                        BorderBrush="#90FFFFFF"
+                        Visibility="Collapsed" />
+                </Canvas>
                 <ItemsRepeater
                     x:Name="ItemsRepeater"
+                    HorizontalAlignment="Left"
+                    VerticalAlignment="Top"
                     AllowDrop="True"
                     Background="Transparent"
                     Margin="28,40.5,28,28"
@@ -559,6 +577,7 @@
                         </DataTemplate>
                     </ItemsRepeater.ItemTemplate>
                 </ItemsRepeater>
+                </Grid>
                 </ScrollView>
                 <Button x:Name="DockEmptyAddButton" Visibility="Collapsed" HorizontalAlignment="Center" VerticalAlignment="Center"
                     Background="Transparent" BorderThickness="0" Padding="0" Click="AddItemMenuItem_Click"

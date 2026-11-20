@@ -212,6 +212,8 @@ public sealed class GlobalSettings
     public CompactVisualStyle CompactVisualStyle { get; set; } = CompactVisualStyle.GlassTile;
     public bool SnapFloatingToDesktopGrid { get; set; }
     public bool DesktopMarqueeSelectionEnabled { get; set; } = true;
+    public bool FreeGridPlacementEnabled { get; set; } = true;
+    public bool FreeGridPreferDirectSwap { get; set; }
 
     // The desktop visibility check is the cheapest way to notice a window the shell buried, but it
     // is also a periodic z-order probe, so it follows the performance profile like the other two
@@ -419,6 +421,7 @@ public sealed class OrganizerDefinition
     public string? StorageAbsolutePath { get; set; }
     public bool StorageOwnedByApp { get; set; }
     public List<string> ItemOrder { get; set; } = [];
+    public Dictionary<string, int> ItemSlots { get; set; } = new(StringComparer.OrdinalIgnoreCase);
     public List<NoteDefinition> Notes { get; set; } = [];
     public List<AutoOrganizeRule> AutoOrganizeRules { get; set; } = [];
 
@@ -437,6 +440,7 @@ public sealed class OrganizerDefinition
             StorageAbsolutePath = StorageAbsolutePath,
             StorageOwnedByApp = StorageOwnedByApp,
             ItemOrder = [.. ItemOrder],
+            ItemSlots = new Dictionary<string, int>(ItemSlots ?? [], StringComparer.OrdinalIgnoreCase),
             Notes = Notes.Select(note => note.Clone()).ToList(),
             AutoOrganizeRules = AutoOrganizeRules.Select(rule => rule.Clone()).ToList()
         };

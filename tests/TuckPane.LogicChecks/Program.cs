@@ -37,6 +37,12 @@ if (args is ["--native-desktop-fusion"])
     return;
 }
 
+if (args is ["--ios-free-grid"])
+{
+    await IosFreeGridReorderChecks.RunAsync();
+    return;
+}
+
 if (args.Length > 0 && args[0] == "--sep13-interactions")
 {
     if (args is not [_, string area]) throw new ArgumentException("Expected --sep13-interactions <resize|menu|shortcut>.");

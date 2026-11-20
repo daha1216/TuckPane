@@ -521,4 +521,7 @@ Storage path: {2}</value></data>
   <data name="CompactVisualStyleFluentFolder" xml:space="preserve"><value>Fluent folder silhouette</value></data>
   <data name="SnapFloatingToDesktopGridTitle" xml:space="preserve"><value>Snap floating organizers to desktop icon grid on drag</value></data>
   <data name="DesktopMarqueeSelectionTitle" xml:space="preserve"><value>Sync Windows desktop marquee selection with floating organizers</value></data>
+  <data name="ContextCompactGridGaps" xml:space="preserve"><value>Compact empty grid slots</value></data>
+  <data name="FreeGridPlacementTitle" xml:space="preserve"><value>Free grid slot placement in expanded organizers (iOS-style gaps)</value></data>
+  <data name="FreeGridPreferDirectSwapTitle" xml:space="preserve"><value>Direct 1-to-1 swap on occupied slots by default (hold Shift to toggle)</value></data>
 </root>

@@ -73,15 +73,15 @@
 
 ---
 
-## 三、两阶段 PR 交付架构
+## 三、四阶段 PR 交付架构
 
-为便于上游仓库清晰评审与按需合入，本次重构拆分为两条职责清晰的提交链路：
+为便于上游仓库清晰评审与按需合入，本次重构拆分为四条职责清晰的渐进式提交链路：
 
-1. **PR #1（`fix/startup-cloak-and-edge-placement`）— P0 开机体验救火专修**
+1. **PR #11（`fix/startup-cloak-and-edge-placement`）— P0 开机体验救火专修**
    - 解决开机巨型黑窗（DWM Cloak + 预定位 + 预样式化 + 首帧稳定后显现）。
    - 解决贴边悬浮窗重启跳回屏幕中央（确定性 `CompactPlacementMath` + 边缘亲和恢复 + 瞬态缩屏写回保护 + 显示拓扑变化防抖重算）。
    - 引入 `WindowResourceScope` 统一 LIFO 析构。
-2. **PR #2（`feat/endgame-ux-and-productivity-overhaul`，基于 PR #1）— 终局体验与生产力跃升**
+2. **PR #12（`feat/endgame-ux-and-productivity-overhaul`，基于 PR #11）— 终局体验与生产力跃升**
    - **三组可配置全局快捷键 + CLI 入口**：快速隐藏/恢复、Spotlight 全局搜索（`--search`）、Peek 置顶透视（`--peek`），内置跨快捷键冲突与系统占用检测。
    - **Spotlight 跨收纳窗全局搜索浮窗**：支持多词 AND、变音/全角归一化、驼峰/分词首字母缩写（如 `vsc` -> `Visual Studio Code`）、收纳窗名与扩展名过滤，全键盘操作。
    - **Peek 透视模式**：一键将所有收纳窗临时提升至最前端，点击任意文件/便签/待办打开后自动恢复桌面层，兼容 `DesktopLayerService` 安全探针。
@@ -94,6 +94,15 @@
    - **悬浮窗对齐真实 Windows 桌面图标网格（`DesktopGridSnapMath`）**：基于 `SysListView32` 的 `LVM_GETITEMSPACING` 与真实原生图标原点/占位避让，支持右键一键对齐桌面网格或拖动结束自动吸附。
    - **桌面级蓝色选框联动收纳窗 + 成组批量拖动（`DesktopMarqueeHookService` + `AppHost.NativeDesktop.cs`）**：超轻量无阻塞 `WH_MOUSE_LL` 监听桌面空区拉框，被 Windows 蓝色选框扫过的悬浮收纳窗实时同步高亮（并支持 `Ctrl+点击` 增删），拖动任意选中收纳窗即可**整组锁定相对偏移平滑同步移动并原子落盘**；另支持右键一键“收入桌面已选项目”（通过 `IShellWindows` / `IFolderView` / `IShellItemArray` 读取原生桌面已选文件批量收纳入箱）。
    - **展开窗内部橡皮筋拉框多选 + 原生多文件批量拖出（`ItemSelectionModel` + `MainWindow.ItemSelection.cs` + `ShellDragService` 多文件 `IShellItemArray`）**：在展开收纳窗内容区拉框、`Ctrl+点击`、`Shift+连选`、`Ctrl+A` 多选任意数量文件/快捷方式，支持一次拖动批量拖出到桌面/资源管理器/其他收纳窗，并支持批量 `Ctrl+C`、`Ctrl+X`、回收站批量 `Delete` 与多选右键菜单。
+4. **PR #14（`feat/ios-free-grid-and-fluid-reorder`，基于 PR #13）— iOS 18/26 自由方格摆放与流体弹簧重排引擎**
+   - **任意方格自由摆放（`FreeGridSlotMap` + `FreeSlotGridLayout`）**：将展开态网格从强制紧密排列的 `UniformGridLayout` 升级为稀疏坐标 `NonVirtualizingLayout`（`slotIndex = row * columns + col`），在不污染数据源的前提下支持把任意图标拖放到任意空方格、留白分区、隔行摆放；从桌面/资源管理器拖入外部文件时直接落位到鼠标所指目标方格；新增文件自动择优填入首个空位而不打乱已有手动布局；右键提供“整理方格空位”一键紧凑收拢动画。
+   - **iOS 18/26 局部波纹避让与一对一直换双模式引擎（`FreeGridReorderEngine`）**：彻底替代会留下混乱蛇形尾迹的“十五数码”BFS 路径算法：
+     - **空方格落位**：0ms 即时吸附，其余所有图标纹丝不动，零连锁干扰；
+     - **占用格波纹推开（默认）**：仅平移到最近空位之间的局部连续图标簇，空位充当天然“防波堤”，绝不波及隔空分区；
+     - **一对一直换（`A <-> B`）**：支持在交互设置中设为默认，或拖动中按住 `Shift` 实时切换（蓝色高亮预览框），只交换两个目标图标、零其余图标移动；
+     - **80ms 路过防误触驻留 + 18% 边界滞回迟滞**：快速斜穿其他图标时不再把整行图标掀翻，边界徘徊零抖动。
+   - **Apple 风格连续解析欠阻尼弹簧物理（`ItemMotionMath.StepIosSpring` + `MainWindow.FreeGridReorder.cs`）**：使用精确解析欠阻尼谐振子（`response = 0.28s, dampingFraction = 0.84`），全程保留动量并支持任意中途零停顿改向；拖动中图标抬升至 `1.12x` 并附带真实 `ThemeShadow` 投影与速度耦合微倾（`±4.5°`），背景显现极淡方格参考线与弹簧滑动落位幽灵框，放手时零跳变丝滑落位。
+   - **完全向后兼容持久化与 60 套回归校验**：在 `SchemaVersion = 16` 下扩展 `OrganizerDefinition.ItemSlots` 与两项交互设置开关，老版本配置自动无损迁移为紧凑槽位；新增 `--ios-free-grid` 回归测试（纳入 `--ci-headless`，共 60 套）。
 
 ---
 

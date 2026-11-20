@@ -243,6 +243,7 @@ public sealed partial class MainWindow : Window
         internal Vector3 Scale = Vector3.One;
         internal Vector3 ScaleTarget = Vector3.One;
         internal Vector3 ScaleVelocity;
+        internal float RotationAngle;
     }
 
     private sealed record CanvasResizeSession(
@@ -938,12 +939,15 @@ public sealed partial class MainWindow : Window
         ItemsRepeater.Height = double.NaN;
         (double cellWidth, double cellHeight) = GetItemCellSizeDip(width, height);
         ItemsRepeater.Width = width;
-        _gridLayout.MinItemWidth = cellWidth;
-        _gridLayout.MinItemHeight = cellHeight;
-        _gridLayout.MinColumnSpacing = GetItemLayoutGapDip();
-        _gridLayout.MinRowSpacing = GetItemLayoutGapDip();
-        _gridLayout.MaximumRowsOrColumns = GetItemLayoutColumnCount();
-        if (!ReferenceEquals(ItemsRepeater.Layout, _gridLayout)) ItemsRepeater.Layout = _gridLayout;
+        if (!TryConfigureFreeSlotGridLayout(width, height, cellWidth, cellHeight))
+        {
+            _gridLayout.MinItemWidth = cellWidth;
+            _gridLayout.MinItemHeight = cellHeight;
+            _gridLayout.MinColumnSpacing = GetItemLayoutGapDip();
+            _gridLayout.MinRowSpacing = GetItemLayoutGapDip();
+            _gridLayout.MaximumRowsOrColumns = GetItemLayoutColumnCount();
+            if (!ReferenceEquals(ItemsRepeater.Layout, _gridLayout)) ItemsRepeater.Layout = _gridLayout;
+        }
         if (updateItems) UpdateRealizedItems();
         ReconcileSmoothScrollBounds();
         InvalidateHoverGeometry();
@@ -3882,7 +3886,9 @@ public sealed partial class MainWindow : Window
         }
         TrySetItemDragClockBoost(true);
         if (_itemDragPointerType == PointerDeviceType.Mouse) StartItemDragBoundaryHook();
-        ApplyAllProvisionalItemVisuals(animate: false);
+        BeginIosFluidReorder(session);
+        if (_freeGridEngine is null)
+            ApplyAllProvisionalItemVisuals(animate: false);
         if (_hoverDragOriginOffset != Vector3.Zero)
         {
             Vector3 position = _hoverDragOriginOffset + new Vector3(
@@ -3908,7 +3914,9 @@ public sealed partial class MainWindow : Window
         }
         if (_itemDragLanding)
         {
-            bool settled = StepItemMotions(seconds, directDragHost: null);
+            bool settled = _freeGridEngine is not null
+                ? StepIosFluidItemSprings(seconds, directDragHost: null)
+                : StepItemMotions(seconds, directDragHost: null);
             if (settled) _itemMotionSettled?.TrySetResult();
             return;
         }
@@ -3938,6 +3946,11 @@ public sealed partial class MainWindow : Window
         Point pointerContent = new(
             pointerInViewport.X + ItemsScrollView.HorizontalOffset,
             pointerInViewport.Y + ItemsScrollView.VerticalOffset);
+        if (_freeGridEngine is not null)
+        {
+            UpdateIosFluidReorderFrame(session, pointerContent, seconds);
+            return;
+        }
         session.UpdateTarget(
             pointerContent,
             Math.Max(1, _itemDragHost.Width),
@@ -4428,6 +4441,11 @@ public sealed partial class MainWindow : Window
 
     private async Task CommitItemReorderAsync(ItemReorderSession session, bool nativeDrop = false)
     {
+        if (!nativeDrop && _freeGridEngine is not null)
+        {
+            await CommitIosFluidReorderAsync(session);
+            return;
+        }
         try
         {
         if (_itemDragTraceEnabled) AppLogger.Info($"换序跟踪：开始提交 {session.SourceIndex}->{session.TargetIndex}。");
@@ -4748,6 +4766,8 @@ public sealed partial class MainWindow : Window
         if (_itemReorderSession is not { } session) return;
         session.MarkOutcome(ItemDragState.Cancelled);
         StopItemDragInput(keepRendering: false);
+        CleanupIosFreeGridOverlays();
+        _freeGridEngine = null;
         ResetItemDragVisuals(preserveHover);
         FinishItemReorderSession(runPendingRefresh);
     }
@@ -4809,6 +4829,8 @@ public sealed partial class MainWindow : Window
             _itemDragRenderingSubscribed = false;
         }
         TrySetItemDragClockBoost(false);
+        CleanupIosFreeGridOverlays();
+        _freeGridEngine = null;
         _itemReorderSession = null;
         _itemDragIdentityWarnings.Clear();
         _shellPromotionPending = false;
@@ -4966,6 +4988,7 @@ public sealed partial class MainWindow : Window
             return;
         }
         e.Handled = true;
+        RecordExternalDropSlotFromEvent(e);
         try { await _catalogController.ImportFromDragAsync(e); }
         finally { _dragHasLocalFile = false; }
     }
@@ -6464,6 +6487,8 @@ public sealed partial class MainWindow : Window
         _shellPromotionPending = true;
         if (!releasePointerCapture) _shellPromotionRequestedAt = Stopwatch.GetTimestamp();
         StopItemDragInput(keepRendering: false, keepBoundaryHook: keepBoundaryHook, releasePointerCapture: releasePointerCapture);
+        CleanupIosFreeGridOverlays();
+        _freeGridEngine = null;
         if (hideHostImmediately)
         {
             ResetItemDragVisuals();

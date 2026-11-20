@@ -301,6 +301,16 @@ public sealed class StateStore
                 ids.Add(organizer.Id);
             }
             organizer.Name = string.IsNullOrWhiteSpace(organizer.Name) ? "收纳窗" : organizer.Name.Trim();
+            var normalizedSlots = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            if (organizer.ItemSlots is { Count: > 0 })
+            {
+                foreach ((string key, int slot) in organizer.ItemSlots)
+                {
+                    if (!string.IsNullOrWhiteSpace(key) && slot >= 0)
+                        normalizedSlots[key] = slot;
+                }
+            }
+            organizer.ItemSlots = normalizedSlots;
             organizer.AutoOrganizeRules ??= [];
             foreach (AutoOrganizeRule rule in organizer.AutoOrganizeRules)
             {

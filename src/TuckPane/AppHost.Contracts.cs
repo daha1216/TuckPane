@@ -177,6 +177,8 @@ internal interface IConsoleHost
     Task SetCompactVisualStyleAsync(CompactVisualStyle style);
     Task SetSnapFloatingToDesktopGridAsync(bool enabled);
     Task SetDesktopMarqueeSelectionEnabledAsync(bool enabled);
+    Task SetFreeGridPlacementEnabledAsync(bool enabled);
+    Task SetFreeGridPreferDirectSwapAsync(bool enabled);
     Task<int> AlignFloatingToDesktopGridAsync(Guid? anchorOrganizerId = null);
 }
 
@@ -323,6 +325,8 @@ public sealed partial class AppHost : IOrganizerHost, IConsoleHost
     Task IConsoleHost.SetCompactVisualStyleAsync(CompactVisualStyle style) => SetCompactVisualStyleAsync(style);
     Task IConsoleHost.SetSnapFloatingToDesktopGridAsync(bool enabled) => SetSnapFloatingToDesktopGridAsync(enabled);
     Task IConsoleHost.SetDesktopMarqueeSelectionEnabledAsync(bool enabled) => SetDesktopMarqueeSelectionEnabledAsync(enabled);
+    Task IConsoleHost.SetFreeGridPlacementEnabledAsync(bool enabled) => SetFreeGridPlacementEnabledAsync(enabled);
+    Task IConsoleHost.SetFreeGridPreferDirectSwapAsync(bool enabled) => SetFreeGridPreferDirectSwapAsync(enabled);
     Task<int> IConsoleHost.AlignFloatingToDesktopGridAsync(Guid? anchorOrganizerId) =>
         AlignFloatingToDesktopGridAsync(anchorOrganizerId);
     DockSettingsChanges IConsoleHost.DockSettings => DockSettings;

@@ -24,6 +24,7 @@ public sealed partial class MainWindow
             ? _allCatalogItems.Where(item => OrganizerSearch.MatchesItemQuery(item, _activeFilterQuery)).ToArray()
             : _allCatalogItems;
         ReconcileCatalogItems(visible);
+        SyncResolvedItemSlots();
         PruneItemSelection();
         ClampKeyboardFocusIndex();
         RenderAll();
@@ -66,6 +67,8 @@ public sealed partial class MainWindow
         if (hadFilter && _allCatalogItems.Count > 0)
         {
             ReconcileCatalogItems(_allCatalogItems);
+            SyncResolvedItemSlots();
+            ConfigureItemsLayout(updateItems: false);
             ClampKeyboardFocusIndex();
             RenderItems();
         }
@@ -91,6 +94,8 @@ public sealed partial class MainWindow
             ? _allCatalogItems.Where(item => OrganizerSearch.MatchesItemQuery(item, _activeFilterQuery)).ToArray()
             : _allCatalogItems;
         ReconcileCatalogItems(visible);
+        SyncResolvedItemSlots();
+        ConfigureItemsLayout(updateItems: false);
         _keyboardFocusedIndex = _items.Count > 0 ? 0 : -1;
         RenderItems();
         UpdateKeyboardSelectionVisuals();
