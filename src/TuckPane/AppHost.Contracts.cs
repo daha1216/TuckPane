@@ -82,6 +82,18 @@ internal interface IOrganizerHost
     void ExitPeekMode();
     Task<int> TidyFloatingEdgeStackAsync(Guid? anchorOrganizerId = null);
     Task NotifyDisplayTopologyChangedAsync();
+
+    bool IsOrganizerMultiSelected(Guid id);
+    int MultiSelectedOrganizerCount { get; }
+    void ToggleOrganizerMultiSelection(Guid id);
+    void ClearOrganizerMultiSelection();
+    void BeginMultiSelectedGroupDrag(MainWindow lead);
+    void UpdateMultiSelectedGroupDrag(MainWindow lead, int deltaX, int deltaY);
+    Task CommitMultiSelectedGroupDragAsync(MainWindow lead);
+    void CancelMultiSelectedGroupDrag(MainWindow lead);
+    NativeMethods.RECT SnapSingleFloatingToDesktopGrid(MainWindow source, NativeMethods.RECT desiredBounds);
+    Task<int> AlignFloatingToDesktopGridAsync(Guid? anchorOrganizerId = null);
+    Task<(int ImportedCount, int ShortcutCount, int FailedCount)> ImportSelectedDesktopIconsAsync(Guid organizerId);
 }
 
 internal interface IConsoleHost
@@ -161,6 +173,11 @@ internal interface IConsoleHost
     Task<AutoOrganizeRunSummary> RunAutoOrganizeAsync();
     Task<AutoOrganizeUndoSummary> UndoAutoOrganizeAsync();
     Task SaveOrganizerAutoOrganizeRulesAsync(Guid organizerId, IReadOnlyList<AutoOrganizeRule> rules);
+
+    Task SetCompactVisualStyleAsync(CompactVisualStyle style);
+    Task SetSnapFloatingToDesktopGridAsync(bool enabled);
+    Task SetDesktopMarqueeSelectionEnabledAsync(bool enabled);
+    Task<int> AlignFloatingToDesktopGridAsync(Guid? anchorOrganizerId = null);
 }
 
 public sealed partial class AppHost : IOrganizerHost, IConsoleHost
@@ -273,6 +290,21 @@ public sealed partial class AppHost : IOrganizerHost, IConsoleHost
         TidyFloatingEdgeStackAsync(anchorOrganizerId);
     Task IOrganizerHost.NotifyDisplayTopologyChangedAsync() =>
         NotifyDisplayTopologyChangedAsync();
+    bool IOrganizerHost.IsOrganizerMultiSelected(Guid id) => IsOrganizerMultiSelected(id);
+    int IOrganizerHost.MultiSelectedOrganizerCount => MultiSelectedOrganizerCount;
+    void IOrganizerHost.ToggleOrganizerMultiSelection(Guid id) => ToggleOrganizerMultiSelection(id);
+    void IOrganizerHost.ClearOrganizerMultiSelection() => ClearOrganizerMultiSelection();
+    void IOrganizerHost.BeginMultiSelectedGroupDrag(MainWindow lead) => BeginMultiSelectedGroupDrag(lead);
+    void IOrganizerHost.UpdateMultiSelectedGroupDrag(MainWindow lead, int deltaX, int deltaY) =>
+        UpdateMultiSelectedGroupDrag(lead, deltaX, deltaY);
+    Task IOrganizerHost.CommitMultiSelectedGroupDragAsync(MainWindow lead) => CommitMultiSelectedGroupDragAsync(lead);
+    void IOrganizerHost.CancelMultiSelectedGroupDrag(MainWindow lead) => CancelMultiSelectedGroupDrag(lead);
+    NativeMethods.RECT IOrganizerHost.SnapSingleFloatingToDesktopGrid(MainWindow source, NativeMethods.RECT desiredBounds) =>
+        SnapSingleFloatingToDesktopGrid(source, desiredBounds);
+    Task<int> IOrganizerHost.AlignFloatingToDesktopGridAsync(Guid? anchorOrganizerId) =>
+        AlignFloatingToDesktopGridAsync(anchorOrganizerId);
+    Task<(int ImportedCount, int ShortcutCount, int FailedCount)> IOrganizerHost.ImportSelectedDesktopIconsAsync(Guid organizerId) =>
+        ImportSelectedDesktopIconsAsync(organizerId);
 
     FolderContextMenuService IConsoleHost.FolderContextMenu => FolderContextMenu;
     FolderContextMenuService IConsoleHost.DesktopContextMenu => DesktopContextMenu;
@@ -288,6 +320,11 @@ public sealed partial class AppHost : IOrganizerHost, IConsoleHost
     Task<AutoOrganizeUndoSummary> IConsoleHost.UndoAutoOrganizeAsync() => UndoAutoOrganizeAsync();
     Task IConsoleHost.SaveOrganizerAutoOrganizeRulesAsync(Guid organizerId, IReadOnlyList<AutoOrganizeRule> rules) =>
         SaveOrganizerAutoOrganizeRulesAsync(organizerId, rules);
+    Task IConsoleHost.SetCompactVisualStyleAsync(CompactVisualStyle style) => SetCompactVisualStyleAsync(style);
+    Task IConsoleHost.SetSnapFloatingToDesktopGridAsync(bool enabled) => SetSnapFloatingToDesktopGridAsync(enabled);
+    Task IConsoleHost.SetDesktopMarqueeSelectionEnabledAsync(bool enabled) => SetDesktopMarqueeSelectionEnabledAsync(enabled);
+    Task<int> IConsoleHost.AlignFloatingToDesktopGridAsync(Guid? anchorOrganizerId) =>
+        AlignFloatingToDesktopGridAsync(anchorOrganizerId);
     DockSettingsChanges IConsoleHost.DockSettings => DockSettings;
     AppUpdateService IConsoleHost.Updates => Updates;
     event EventHandler? IConsoleHost.ThemeChanged

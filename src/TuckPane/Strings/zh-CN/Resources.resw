@@ -505,4 +505,20 @@
   <data name="AutoOrganizeRunResultFormat" xml:space="preserve"><value>整理完成：移动 {0} 项，创建快捷方式 {1} 项，失败 {2} 项。</value></data>
   <data name="AutoOrganizeUndoResultFormat" xml:space="preserve"><value>撤销完成：恢复 {0} 项，跳过 {1} 项，失败 {2} 项。</value></data>
   <data name="DiagnosticsInternalErrorNoticeFormat" xml:space="preserve"><value>本次运行捕获到 {0} 次已恢复的界面异常，可导出诊断包查看详情。</value></data>
+  <data name="ContextAlignToDesktopGrid" xml:space="preserve"><value>对齐桌面图标网格</value></data>
+  <data name="ContextImportDesktopSelection" xml:space="preserve"><value>收入桌面已选项目</value></data>
+  <data name="DesktopGridAlignDoneFormat" xml:space="preserve"><value>已将 {0} 个悬浮收纳窗对齐到桌面图标网格。</value></data>
+  <data name="ImportDesktopSelectionEmpty" xml:space="preserve"><value>当前桌面上没有已框选的文件或快捷方式。</value></data>
+  <data name="ImportDesktopSelectionResultFormat" xml:space="preserve"><value>已收入桌面选中项：移动 {0} 项，创建快捷方式 {1} 项，失败 {2} 项。</value></data>
+  <data name="SelectionCountBadgeFormat" xml:space="preserve"><value>已选 {0} 项</value></data>
+  <data name="ContextBatchCopyFormat" xml:space="preserve"><value>复制已选 {0} 项</value></data>
+  <data name="ContextBatchCutFormat" xml:space="preserve"><value>剪切已选 {0} 项</value></data>
+  <data name="ContextBatchCopyPaths" xml:space="preserve"><value>复制全部完整路径</value></data>
+  <data name="ContextBatchDeleteFormat" xml:space="preserve"><value>删除已选 {0} 项</value></data>
+  <data name="CompactVisualStyleTitle" xml:space="preserve"><value>收缩外观融合风格</value></data>
+  <data name="CompactVisualStyleGlassTile" xml:space="preserve"><value>经典毛玻璃卡片</value></data>
+  <data name="CompactVisualStyleNativeDesktop" xml:space="preserve"><value>原生桌面融合（无底框）</value></data>
+  <data name="CompactVisualStyleFluentFolder" xml:space="preserve"><value>Fluent 立体文件夹</value></data>
+  <data name="SnapFloatingToDesktopGridTitle" xml:space="preserve"><value>悬浮窗拖动时自动吸附桌面图标网格</value></data>
+  <data name="DesktopMarqueeSelectionTitle" xml:space="preserve"><value>桌面蓝色框选联动多选悬浮窗</value></data>
 </root>

@@ -180,10 +180,13 @@ internal sealed class ExternalItemDragCoordinator
                 "收纳窗元素拖出启动失败");
             return;
         }
-        if (item.Kind is WidgetItemKind.Shortcut or WidgetItemKind.InternetShortcut)
+        IReadOnlyList<WidgetItem> dragItems = _window.GetDragPayloadItems(item);
+        bool useNativeShellDrag = item.Kind is WidgetItemKind.Shortcut or WidgetItemKind.InternetShortcut ||
+            dragItems.Count > 1;
+        if (useNativeShellDrag)
         {
             await _window.RunWindowSafelyAsync(
-                () => BeginNativeShellDragAsync(item, host, session),
+                () => BeginNativeShellDragAsync(item, host, session, dragItems),
                 "快捷方式 Shell 拖出启动失败");
             return;
         }
@@ -262,11 +265,18 @@ internal sealed class ExternalItemDragCoordinator
         }
     }
 
-    private async Task BeginNativeShellDragAsync(WidgetItem item, Border host, ItemReorderSession session)
+    private async Task BeginNativeShellDragAsync(
+        WidgetItem item,
+        Border host,
+        ItemReorderSession session,
+        IReadOnlyList<WidgetItem>? batchItems = null)
     {
         using var modeInteraction = _window.HoldModeInteraction();
         ShellDragService.ShellDragSession? shellSession = null;
-        string dragPath = item.FullPath;
+        string[] dragPaths = batchItems is { Count: > 1 }
+            ? batchItems.Select(x => x.FullPath).Distinct(StringComparer.OrdinalIgnoreCase).ToArray()
+            : [item.FullPath];
+        string dragPath = dragPaths[0];
         bool internalDropAccepted = false;
         bool dragCompleted = false;
         bool visualStateFinished = false;
@@ -277,7 +287,7 @@ internal sealed class ExternalItemDragCoordinator
         {
             (double cellWidth, double cellHeight) = _window.NativeDragCellDimensions;
             shellSession = await ShellDragService.PrepareAsync(
-                dragPath,
+                dragPaths,
                 session.GrabOffset.X / cellWidth,
                 session.GrabOffset.Y / cellHeight,
                 cancellationToken: preparationCancellation.Token);
@@ -288,7 +298,7 @@ internal sealed class ExternalItemDragCoordinator
                 () => _window.IsClosing);
             dragCompleted = result.Outcome != ShellDragOutcome.Cancelled;
             internalDropAccepted = _window.WasInternalOleDropAccepted;
-            AppLogger.Info($"Shell拖出交接：结果={result.Outcome}，桌面复制={result.DesktopCopyRequested}，路径={dragPath}。");
+            AppLogger.Info($"Shell拖出交接：结果={result.Outcome}，桌面复制={result.DesktopCopyRequested}，项目数={dragPaths.Length}，路径={dragPath}。");
             if (internalDropAccepted && ReferenceEquals(_window.ActiveReorderSession, session))
             {
                 await _window.CommitNativeItemReorderAsync(session);
@@ -312,54 +322,70 @@ internal sealed class ExternalItemDragCoordinator
             {
                 if (result.DesktopCopyRequested)
                 {
-                    TransferOutcome copied = await _window.Host.TransferQueue.RunAsync(async token =>
+                    bool anyCopied = false;
+                    foreach (string currentPath in dragPaths)
                     {
-                        try { return await _window.Storage.CopyItemToDesktopAsync(dragPath, progress: null, token); }
-                        catch (OperationCanceledException) { throw; }
-                        catch (Exception ex) { return new TransferOutcome(dragPath, null, TransferStatus.Failed, ex.Message); }
-                    });
-                    if (copied.Status is not (TransferStatus.Copied or TransferStatus.ShortcutCreated))
-                    {
-                        dragCompleted = false;
-                        _window.ShowOrganizerMessage(copied.Message, copied.Status == TransferStatus.Cancelled
-                            ? InfoBarSeverity.Informational
-                            : InfoBarSeverity.Error);
+                        TransferOutcome copied = await _window.Host.TransferQueue.RunAsync(async token =>
+                        {
+                            try { return await _window.Storage.CopyItemToDesktopAsync(currentPath, progress: null, token); }
+                            catch (OperationCanceledException) { throw; }
+                            catch (Exception ex) { return new TransferOutcome(currentPath, null, TransferStatus.Failed, ex.Message); }
+                        });
+                        if (copied.Status is not (TransferStatus.Copied or TransferStatus.ShortcutCreated))
+                        {
+                            dragCompleted = false;
+                            _window.ShowOrganizerMessage(copied.Message, copied.Status == TransferStatus.Cancelled
+                                ? InfoBarSeverity.Informational
+                                : InfoBarSeverity.Error);
+                        }
+                        else if (copied.DestinationPath is { } copiedDestination)
+                        {
+                            anyCopied = true;
+                            await Task.Run(() => ShellChangeNotificationService.NotifyCreated(copiedDestination));
+                        }
                     }
-                    else if (copied.DestinationPath is { } copiedDestination)
-                    {
-                        await Task.Run(() => ShellChangeNotificationService.NotifyCreated(copiedDestination));
-                    }
+                    if (anyCopied && dragPaths.Length > 1) _window.ClearItemSelection();
                 }
                 else
                 {
-                    TransferOutcome moved = await _window.Host.TransferQueue.RunAsync(
-                        token => _window.Storage.MoveItemToDesktopAsync(dragPath, progress: null, token));
-                    if (moved.Status != TransferStatus.Moved)
+                    bool anyChanged = false;
+                    foreach (string currentPath in dragPaths)
                     {
-                        dragCompleted = false;
-                        _window.ShowOrganizerMessage(moved.Message, moved.Status == TransferStatus.Cancelled
-                            ? InfoBarSeverity.Informational
-                            : moved.Status == TransferStatus.CopiedSourceRetained ? InfoBarSeverity.Warning : InfoBarSeverity.Error);
-                        if (moved.Status == TransferStatus.CopiedSourceRetained)
+                        TransferOutcome moved = await _window.Host.TransferQueue.RunAsync(
+                            token => _window.Storage.MoveItemToDesktopAsync(currentPath, progress: null, token));
+                        if (moved.Status != TransferStatus.Moved)
                         {
-                            if (!File.Exists(dragPath) && moved.DestinationPath is { } retained && File.Exists(retained))
-                                _window.Host.RebindPortableWindowAfterMove(dragPath, retained);
-                            await _window.RefreshCatalogAsync(notifyUnsupported: false);
+                            dragCompleted = false;
+                            _window.ShowOrganizerMessage(moved.Message, moved.Status == TransferStatus.Cancelled
+                                ? InfoBarSeverity.Informational
+                                : moved.Status == TransferStatus.CopiedSourceRetained ? InfoBarSeverity.Warning : InfoBarSeverity.Error);
+                            if (moved.Status == TransferStatus.CopiedSourceRetained)
+                            {
+                                if (!File.Exists(currentPath) && moved.DestinationPath is { } retained && File.Exists(retained))
+                                    _window.Host.RebindPortableWindowAfterMove(currentPath, retained);
+                                anyChanged = true;
+                            }
+                        }
+                        else
+                        {
+                            if (moved.DestinationPath is { } destination)
+                            {
+                                _window.Host.RebindPortableWindowAfterMove(currentPath, destination);
+                                await Task.Run(() => ShellChangeNotificationService.NotifyMoved(currentPath, destination));
+                            }
+                            anyChanged = true;
                         }
                     }
-                    else
+                    if (anyChanged)
                     {
-                        if (moved.DestinationPath is { } destination)
-                        {
-                            _window.Host.RebindPortableWindowAfterMove(dragPath, destination);
-                            await Task.Run(() => ShellChangeNotificationService.NotifyMoved(dragPath, destination));
-                        }
+                        if (dragPaths.Length > 1) _window.ClearItemSelection();
                         await _window.RefreshCatalogAsync(notifyUnsupported: false);
                     }
                 }
             }
             else if (result.Outcome == ShellDragOutcome.ExternalMoved)
             {
+                if (dragPaths.Length > 1) _window.ClearItemSelection();
                 await Task.Delay(120);
                 await _window.RefreshCatalogAsync(notifyUnsupported: false);
             }

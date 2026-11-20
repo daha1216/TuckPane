@@ -209,6 +209,9 @@ public sealed class GlobalSettings
     public SearchHotkeyPreset SearchHotkey { get; set; } = SearchHotkeyPreset.Off;
     public PeekHotkeyPreset PeekHotkey { get; set; } = PeekHotkeyPreset.Off;
     public bool AutoApplyTopologySnapshots { get; set; } = true;
+    public CompactVisualStyle CompactVisualStyle { get; set; } = CompactVisualStyle.GlassTile;
+    public bool SnapFloatingToDesktopGrid { get; set; }
+    public bool DesktopMarqueeSelectionEnabled { get; set; } = true;
 
     // The desktop visibility check is the cheapest way to notice a window the shell buried, but it
     // is also a periodic z-order probe, so it follows the performance profile like the other two

@@ -73,6 +73,23 @@ internal static partial class NativeMethods
     }
 
     [ComImport]
+    [Guid("B63EA76D-1F85-456F-A19C-48159EFA858B")]
+    [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    internal interface IShellItemArray
+    {
+        [PreserveSig] int BindToHandler(IntPtr bindContext, ref Guid handlerId, ref Guid interfaceId, out IntPtr result);
+        [PreserveSig] int GetPropertyStore(int flags, ref Guid interfaceId, out IntPtr propertyStore);
+        [PreserveSig] int GetPropertyDescriptionList(IntPtr keyType, ref Guid interfaceId, out IntPtr list);
+        [PreserveSig] int GetAttributes(int attribFlags, uint sfgaoMask, out uint attributes);
+        [PreserveSig] int GetCount(out uint count);
+        [PreserveSig] int GetItemAt(uint index, out IShellItem item);
+        [PreserveSig] int EnumItems(out IntPtr enumerator);
+    }
+
+    internal const uint SVGIO_SELECTION = 0x00000001;
+    internal const uint SIGDN_FILESYSPATH = 0x80058000;
+
+    [ComImport]
     [Guid("DC1C5A9C-E88A-4DDE-A5A1-60F82A20AEF7")]
     internal class FileOpenDialog
     {
@@ -312,6 +329,23 @@ internal static partial class NativeMethods
     [DllImport("shell32.dll", EntryPoint = "ShellExecuteExW", CharSet = CharSet.Unicode, SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     internal static extern bool ShellExecuteEx(ref SHELLEXECUTEINFO lpExecInfo);
+
+    [DllImport("shell32.dll", EntryPoint = "SHParseDisplayName", CharSet = CharSet.Unicode, PreserveSig = true)]
+    internal static extern int SHParseDisplayName(
+        string name,
+        IntPtr bindContext,
+        out IntPtr pidl,
+        uint sfgaoIn,
+        out uint sfgaoOut);
+
+    [DllImport("shell32.dll", PreserveSig = true)]
+    internal static extern int SHCreateShellItemArrayFromIDLists(
+        uint count,
+        [In, MarshalAs(UnmanagedType.LPArray, SizeParamIndex = 0)] IntPtr[] itemIdLists,
+        [MarshalAs(UnmanagedType.Interface)] out IShellItemArray itemArray);
+
+    [DllImport("shell32.dll")]
+    internal static extern void ILFree(IntPtr pidl);
 
     [DllImport("kernel32.dll")]
     internal static extern IntPtr GlobalFree(IntPtr memory);

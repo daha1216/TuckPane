@@ -505,4 +505,20 @@ Storage path: {2}</value></data>
   <data name="AutoOrganizeRunResultFormat" xml:space="preserve"><value>Done: moved {0}, created {1} shortcuts, failed {2}.</value></data>
   <data name="AutoOrganizeUndoResultFormat" xml:space="preserve"><value>Undo done: restored {0}, skipped {1}, failed {2}.</value></data>
   <data name="DiagnosticsInternalErrorNoticeFormat" xml:space="preserve"><value>Captured {0} recovered UI exceptions in this session. Export a diagnostics bundle for details.</value></data>
+  <data name="ContextAlignToDesktopGrid" xml:space="preserve"><value>Align to desktop icon grid</value></data>
+  <data name="ContextImportDesktopSelection" xml:space="preserve"><value>Import selected desktop items</value></data>
+  <data name="DesktopGridAlignDoneFormat" xml:space="preserve"><value>Aligned {0} floating organizers to the Windows desktop icon grid.</value></data>
+  <data name="ImportDesktopSelectionEmpty" xml:space="preserve"><value>No files or shortcuts are currently selected on the Windows desktop.</value></data>
+  <data name="ImportDesktopSelectionResultFormat" xml:space="preserve"><value>Imported desktop selection: moved {0}, created {1} shortcuts, failed {2}.</value></data>
+  <data name="SelectionCountBadgeFormat" xml:space="preserve"><value>{0} selected</value></data>
+  <data name="ContextBatchCopyFormat" xml:space="preserve"><value>Copy {0} selected items</value></data>
+  <data name="ContextBatchCutFormat" xml:space="preserve"><value>Cut {0} selected items</value></data>
+  <data name="ContextBatchCopyPaths" xml:space="preserve"><value>Copy all full paths</value></data>
+  <data name="ContextBatchDeleteFormat" xml:space="preserve"><value>Delete {0} selected items</value></data>
+  <data name="CompactVisualStyleTitle" xml:space="preserve"><value>Collapsed visual blend style</value></data>
+  <data name="CompactVisualStyleGlassTile" xml:space="preserve"><value>Classic glass tile</value></data>
+  <data name="CompactVisualStyleNativeDesktop" xml:space="preserve"><value>Native desktop blend (frameless)</value></data>
+  <data name="CompactVisualStyleFluentFolder" xml:space="preserve"><value>Fluent folder silhouette</value></data>
+  <data name="SnapFloatingToDesktopGridTitle" xml:space="preserve"><value>Snap floating organizers to desktop icon grid on drag</value></data>
+  <data name="DesktopMarqueeSelectionTitle" xml:space="preserve"><value>Sync Windows desktop marquee selection with floating organizers</value></data>
 </root>

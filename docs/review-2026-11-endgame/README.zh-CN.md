@@ -89,6 +89,11 @@
    - **悬浮窗一键整齐贴边列队（`EdgeStackAlignMath`）**：自动识别贴边方向，按原始上下顺序等距无重叠紧贴屏幕边缘，不影响屏幕中央自由摆放的窗口。
    - **显示器拓扑感知布局快照（`LayoutSnapshotService`）**：按显示器设备/工作区/DPI 生成 SHA-256 拓扑指纹，切换外接屏/扩展坞自动记忆与恢复，支持手动命名快照及 JSON 导入导出。
    - **桌面 / 下载目录自动收纳规则引擎（`AutoOrganizeService`）**：支持扩展名、通配符、最小驻留天数、一键预设、安全保护、预览与一键撤销，并自动适配重定向后的系统 Downloads 目录。
+3. **PR #13（`feat/native-desktop-fusion-and-marquee-multiselect`，基于 PR #12）— 原生桌面视觉融合与全链路框选多选**
+   - **三种收缩外观融合风格（`CompactVisualStyle`）**：除保留默认 `经典毛玻璃卡片` 外，新增 **`原生桌面融合（无底框）`**（静止时零灰框直融壁纸、悬停/多选浮现 Windows 11 原生 Fluent 选框、双层高对比投影文字 + 2 行自动换行，彻底解决白底/高反差壁纸上标题消失与圆角灰框割裂感）与 **`Fluent 立体文件夹`**（带文件夹耳片与半透明玻璃袋轮廓）。
+   - **悬浮窗对齐真实 Windows 桌面图标网格（`DesktopGridSnapMath`）**：基于 `SysListView32` 的 `LVM_GETITEMSPACING` 与真实原生图标原点/占位避让，支持右键一键对齐桌面网格或拖动结束自动吸附。
+   - **桌面级蓝色选框联动收纳窗 + 成组批量拖动（`DesktopMarqueeHookService` + `AppHost.NativeDesktop.cs`）**：超轻量无阻塞 `WH_MOUSE_LL` 监听桌面空区拉框，被 Windows 蓝色选框扫过的悬浮收纳窗实时同步高亮（并支持 `Ctrl+点击` 增删），拖动任意选中收纳窗即可**整组锁定相对偏移平滑同步移动并原子落盘**；另支持右键一键“收入桌面已选项目”（通过 `IShellWindows` / `IFolderView` / `IShellItemArray` 读取原生桌面已选文件批量收纳入箱）。
+   - **展开窗内部橡皮筋拉框多选 + 原生多文件批量拖出（`ItemSelectionModel` + `MainWindow.ItemSelection.cs` + `ShellDragService` 多文件 `IShellItemArray`）**：在展开收纳窗内容区拉框、`Ctrl+点击`、`Shift+连选`、`Ctrl+A` 多选任意数量文件/快捷方式，支持一次拖动批量拖出到桌面/资源管理器/其他收纳窗，并支持批量 `Ctrl+C`、`Ctrl+X`、回收站批量 `Delete` 与多选右键菜单。
 
 ---
 

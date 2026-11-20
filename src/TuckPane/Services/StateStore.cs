@@ -265,6 +265,7 @@ public sealed class StateStore
         state.GlobalSettings.QuickHideHotkey = GlobalHotkeyDefinitions.Normalize(state.GlobalSettings.QuickHideHotkey);
         state.GlobalSettings.SearchHotkey = GlobalHotkeyDefinitions.Normalize(state.GlobalSettings.SearchHotkey);
         state.GlobalSettings.PeekHotkey = GlobalHotkeyDefinitions.Normalize(state.GlobalSettings.PeekHotkey);
+        state.GlobalSettings.CompactVisualStyle = CompactVisualStyles.Normalize(state.GlobalSettings.CompactVisualStyle);
         state.GlobalSettings.UniformFloatingCompactScale = GlobalSettings.NormalizeCompactScale(
             OrganizerPlacementMode.Floating,
             state.GlobalSettings.UniformFloatingCompactScale);

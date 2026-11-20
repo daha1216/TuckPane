@@ -26,10 +26,12 @@ public sealed partial class AppHost
         (string key, _) = LayoutSnapshotMath.BuildTopologyFingerprint(DisplayPlacementService.GetDisplays());
         _lastTopologyKey = key;
         _ = EnsureInitialTopologySnapshotAsync();
+        InitializeNativeDesktopServices();
     }
 
     private void DisposeProductivityServices()
     {
+        DisposeNativeDesktopServices();
         ExitPeekMode();
         _hotkeys?.Dispose();
         _hotkeys = null;

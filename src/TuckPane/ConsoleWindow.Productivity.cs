@@ -23,6 +23,9 @@ public sealed partial class ConsoleWindow
             SearchHotkeyCombo.SelectedIndex = Math.Clamp((int)settings.SearchHotkey, 0, SearchHotkeyCombo.Items.Count - 1);
             PeekHotkeyCombo.SelectedIndex = Math.Clamp((int)settings.PeekHotkey, 0, PeekHotkeyCombo.Items.Count - 1);
             AutoApplyTopologySnapshotsToggle.IsOn = settings.AutoApplyTopologySnapshots;
+            CompactVisualStyleCombo.SelectedIndex = Math.Clamp((int)settings.CompactVisualStyle, 0, CompactVisualStyleCombo.Items.Count - 1);
+            SnapFloatingToDesktopGridToggle.IsOn = settings.SnapFloatingToDesktopGrid;
+            DesktopMarqueeSelectionToggle.IsOn = settings.DesktopMarqueeSelectionEnabled;
             UndoAutoOrganizeButton.IsEnabled = _host.AutoOrganize.CanUndo;
 
             int uiErrors = App.RecoverableUiErrorCount;
@@ -53,6 +56,65 @@ public sealed partial class ConsoleWindow
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(SearchHotkeyCombo, AppStrings.Get("SearchHotkeyTitle"));
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(PeekHotkeyCombo, AppStrings.Get("PeekHotkeyTitle"));
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(AutoApplyTopologySnapshotsToggle, AppStrings.Get("LayoutSnapshotsAutoTitle"));
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(CompactVisualStyleCombo, AppStrings.Get("CompactVisualStyleTitle"));
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(SnapFloatingToDesktopGridToggle, AppStrings.Get("SnapFloatingToDesktopGridTitle"));
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(DesktopMarqueeSelectionToggle, AppStrings.Get("DesktopMarqueeSelectionTitle"));
+    }
+
+    private async void CompactVisualStyleCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_syncingProductivityControls || CompactVisualStyleCombo.SelectedIndex < 0) return;
+        var style = (CompactVisualStyle)CompactVisualStyleCombo.SelectedIndex;
+        try
+        {
+            await _host.SetCompactVisualStyleAsync(style);
+        }
+        catch (Exception ex)
+        {
+            ShowError(AppStrings.Get("SaveConfigurationError"), ex.Message);
+            RefreshProductivityControls();
+        }
+    }
+
+    private async void SnapFloatingToDesktopGridToggle_Toggled(object sender, RoutedEventArgs e)
+    {
+        if (_syncingProductivityControls) return;
+        try
+        {
+            await _host.SetSnapFloatingToDesktopGridAsync(SnapFloatingToDesktopGridToggle.IsOn);
+        }
+        catch (Exception ex)
+        {
+            ShowError(AppStrings.Get("SaveConfigurationError"), ex.Message);
+            RefreshProductivityControls();
+        }
+    }
+
+    private async void DesktopMarqueeSelectionToggle_Toggled(object sender, RoutedEventArgs e)
+    {
+        if (_syncingProductivityControls) return;
+        try
+        {
+            await _host.SetDesktopMarqueeSelectionEnabledAsync(DesktopMarqueeSelectionToggle.IsOn);
+        }
+        catch (Exception ex)
+        {
+            ShowError(AppStrings.Get("SaveConfigurationError"), ex.Message);
+            RefreshProductivityControls();
+        }
+    }
+
+    private async void AlignDesktopGridButton_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            int count = await _host.AlignFloatingToDesktopGridAsync();
+            ShowLayoutSnapshotStatus(AppStrings.Format("DesktopGridAlignDoneFormat", count));
+        }
+        catch (Exception ex)
+        {
+            ShowError(AppStrings.Get("LayoutSnapshotsErrorTitle"), ex.Message);
+        }
     }
 
     private async void QuickHideHotkeyCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)

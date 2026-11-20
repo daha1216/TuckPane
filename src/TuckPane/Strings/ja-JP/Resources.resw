@@ -505,4 +505,20 @@
   <data name="AutoOrganizeRunResultFormat" xml:space="preserve"><value>完了：移動 {0} 件、ショートカット作成 {1} 件、失敗 {2} 件。</value></data>
   <data name="AutoOrganizeUndoResultFormat" xml:space="preserve"><value>復元完了：戻した項目 {0} 件、スキップ {1} 件、失敗 {2} 件。</value></data>
   <data name="DiagnosticsInternalErrorNoticeFormat" xml:space="preserve"><value>このセッションで {0} 件の回復済み UI 例外を記録しました。詳細は診断パッケージをエクスポートしてください。</value></data>
+  <data name="ContextAlignToDesktopGrid" xml:space="preserve"><value>デスクトップアイコンのグリッドに揃える</value></data>
+  <data name="ContextImportDesktopSelection" xml:space="preserve"><value>デスクトップで選択中の項目を取り込む</value></data>
+  <data name="DesktopGridAlignDoneFormat" xml:space="preserve"><value>{0} 個のフローティングボックスをデスクトップグリッドに揃えました。</value></data>
+  <data name="ImportDesktopSelectionEmpty" xml:space="preserve"><value>現在デスクトップ上で選択されているファイルやショートカットがありません。</value></data>
+  <data name="ImportDesktopSelectionResultFormat" xml:space="preserve"><value>取り込み完了：移動 {0} 件、ショートカット作成 {1} 件、失敗 {2} 件。</value></data>
+  <data name="SelectionCountBadgeFormat" xml:space="preserve"><value>{0} 件選択中</value></data>
+  <data name="ContextBatchCopyFormat" xml:space="preserve"><value>選択中の {0} 件をコピー</value></data>
+  <data name="ContextBatchCutFormat" xml:space="preserve"><value>選択中の {0} 件を切り取り</value></data>
+  <data name="ContextBatchCopyPaths" xml:space="preserve"><value>すべてのフルパスをコピー</value></data>
+  <data name="ContextBatchDeleteFormat" xml:space="preserve"><value>選択中の {0} 件を削除</value></data>
+  <data name="CompactVisualStyleTitle" xml:space="preserve"><value>収納時のデスクトップ融合スタイル</value></data>
+  <data name="CompactVisualStyleGlassTile" xml:space="preserve"><value>クラシック・グラスタイル</value></data>
+  <data name="CompactVisualStyleNativeDesktop" xml:space="preserve"><value>ネイティブデスクトップ融合（枠なし）</value></data>
+  <data name="CompactVisualStyleFluentFolder" xml:space="preserve"><value>Fluent フォルダーシルエット</value></data>
+  <data name="SnapFloatingToDesktopGridTitle" xml:space="preserve"><value>ドラッグ時にデスクトップアイコンのグリッドへ吸着</value></data>
+  <data name="DesktopMarqueeSelectionTitle" xml:space="preserve"><value>デスクトップの範囲選択とフローティングボックスを連動</value></data>
 </root>

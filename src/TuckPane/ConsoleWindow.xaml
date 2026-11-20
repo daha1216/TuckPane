@@ -608,6 +608,46 @@
                                                 <ColumnDefinition Width="*"/>
                                                 <ColumnDefinition Width="Auto"/>
                                             </Grid.ColumnDefinitions>
+                                            <TextBlock VerticalAlignment="Center" FontSize="14" Tag="loc:CompactVisualStyleTitle" Text="收缩外观融合风格" TextWrapping="Wrap" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
+                                            <ComboBox x:Name="CompactVisualStyleCombo" Grid.Column="1" Width="190" Height="32" SelectionChanged="CompactVisualStyleCombo_SelectionChanged">
+                                                <ComboBoxItem Tag="loc:CompactVisualStyleGlassTile" Content="经典毛玻璃卡片"/>
+                                                <ComboBoxItem Tag="loc:CompactVisualStyleNativeDesktop" Content="原生桌面融合"/>
+                                                <ComboBoxItem Tag="loc:CompactVisualStyleFluentFolder" Content="Fluent 立体文件夹"/>
+                                            </ComboBox>
+                                        </Grid>
+                                    </Border>
+                                    <Border Style="{StaticResource GeneralRow}">
+                                        <Grid ColumnSpacing="12">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="Auto"/>
+                                                <ColumnDefinition Width="Auto"/>
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock VerticalAlignment="Center" FontSize="14" Tag="loc:SnapFloatingToDesktopGridTitle" Text="悬浮窗自动吸附桌面图标网格" TextWrapping="Wrap" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
+                                            <Button x:Name="AlignDesktopGridButton" Grid.Column="1" Height="30" Tag="loc:ContextAlignToDesktopGrid" Content="对齐桌面网格" Click="AlignDesktopGridButton_Click"/>
+                                            <ToggleSwitch x:Name="SnapFloatingToDesktopGridToggle" Grid.Column="2" VerticalAlignment="Center" Toggled="SnapFloatingToDesktopGridToggle_Toggled"/>
+                                        </Grid>
+                                    </Border>
+                                    <Border Style="{StaticResource GeneralRow}" BorderThickness="0">
+                                        <Grid ColumnSpacing="12">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="Auto"/>
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock VerticalAlignment="Center" FontSize="14" Tag="loc:DesktopMarqueeSelectionTitle" Text="桌面框选联动多选悬浮窗" TextWrapping="Wrap" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
+                                            <ToggleSwitch x:Name="DesktopMarqueeSelectionToggle" Grid.Column="1" VerticalAlignment="Center" Toggled="DesktopMarqueeSelectionToggle_Toggled"/>
+                                        </Grid>
+                                    </Border>
+                                </StackPanel>
+                            </Border>
+                            <Border Style="{StaticResource SettingsGroup}" Loaded="SettingsGroup_Loaded">
+                                <StackPanel Spacing="0">
+                                    <Border Style="{StaticResource GeneralRow}">
+                                        <Grid ColumnSpacing="12">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="Auto"/>
+                                            </Grid.ColumnDefinitions>
                                             <TextBlock VerticalAlignment="Center" FontSize="14" Tag="loc:LayoutSnapshotsAutoTitle" Text="显示器变化时自动恢复布局快照" TextWrapping="Wrap" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
                                             <ToggleSwitch x:Name="AutoApplyTopologySnapshotsToggle" Grid.Column="1" VerticalAlignment="Center" Toggled="AutoApplyTopologySnapshotsToggle_Toggled"/>
                                         </Grid>

@@ -1004,6 +1004,7 @@ public sealed partial class MainWindow : Window
         RegisterHoverItem(host);
         PrepareItemElement(host, item, loadIcon: true);
         ResetItemMotion(host);
+        ApplyItemSelectionVisual(host, item.RelativeName);
         int itemIndex = IndexOfItem(item.RelativeName);
         if (!_itemCollectionMoveInProgress && itemIndex >= 0) ApplyProvisionalItemVisual(host, itemIndex, animate: false);
         if (_shellDragActive && _itemReorderSession is { } session &&
@@ -1030,6 +1031,7 @@ public sealed partial class MainWindow : Window
         host.Opacity = 1;
         host.Shadow = null;
         host.Background = _transparentItemBrush;
+        host.BorderThickness = new Thickness(0);
         ResetItemContentTransform(host);
         Canvas.SetZIndex(host, 0);
     }
@@ -1629,6 +1631,8 @@ public sealed partial class MainWindow : Window
                 }
                 _collapseTransitionGeometry = null;
                 ClearExpandedFilter(releaseInputActivation: true);
+                CancelItemMarquee();
+                ClearItemSelection();
                 _keyboardFocusedIndex = -1;
                 if (_definition.PlacementMode == OrganizerPlacementMode.Station || contained) _appWindow?.Hide();
                 _desktopLayer?.SetExpanded(false, showWindow: false);
@@ -2069,6 +2073,14 @@ public sealed partial class MainWindow : Window
         {
             return;
         }
+        if (e.Pointer.PointerDeviceType == PointerDeviceType.Mouse &&
+            IsEligibleForDesktopMultiSelect &&
+            (NativeMethods.GetAsyncKeyState(NativeMethods.VK_CONTROL) & 0x8000) != 0)
+        {
+            _host.ToggleOrganizerMultiSelection(OrganizerId);
+            e.Handled = true;
+            return;
+        }
 
         BeginWidgetPress(CompactTile, e, point.Position, expanded: false);
     }
@@ -2095,6 +2107,8 @@ public sealed partial class MainWindow : Window
             e.Handled = true;
             return;
         }
+
+        if (TryBeginItemMarqueePress(e)) return;
 
         BeginWidgetPress(ExpandedView, e, point.Position, expanded: true);
         _pressedOrganizerTitle = _pressActive && !IsDock && !_definition.HideName &&
@@ -3098,7 +3112,11 @@ public sealed partial class MainWindow : Window
         {
             _dragCurrentBounds = nextBounds;
         }
-        else _compactBounds = nextBounds;
+        else
+        {
+            _compactBounds = nextBounds;
+            _host.UpdateMultiSelectedGroupDrag(this, nextBounds.Left - _pressWindowBounds.Left, nextBounds.Top - _pressWindowBounds.Top);
+        }
         _dragCommitCount++;
     }
 
@@ -3137,6 +3155,7 @@ public sealed partial class MainWindow : Window
             {
                 _desktopLayer?.SetExpanded(true, stayTopmost: true);
                 _widgetDragTopmost = true;
+                _host.BeginMultiSelectedGroupDrag(this);
             }
             _dragStartedAt = Stopwatch.GetTimestamp();
             _dragInputCount = 0;
@@ -3163,6 +3182,7 @@ public sealed partial class MainWindow : Window
             finally
             {
                 _host.EndOrganizerDragHover(this);
+                _host.CancelMultiSelectedGroupDrag(this);
                 if (!_closing && (_pressActive || _nativeMouseCapture)) ResetCompactPress();
             }
         });
@@ -3259,8 +3279,15 @@ public sealed partial class MainWindow : Window
             }
             else if (!wasExpandedDrag)
             {
+                if (_definition.PlacementMode == OrganizerPlacementMode.Floating &&
+                    _host.State.GlobalSettings.SnapFloatingToDesktopGrid)
+                {
+                    _compactBounds = _host.SnapSingleFloatingToDesktopGrid(this, _compactBounds);
+                    ApplyBounds(_compactBounds, show: true);
+                }
                 _definition.Position = DisplayPlacementService.Capture(_compactBounds, _hwnd);
                 await SaveStateAsync();
+                await _host.CommitMultiSelectedGroupDragAsync(this);
             }
             _desktopLayer?.Reattach();
         }
@@ -3538,6 +3565,7 @@ public sealed partial class MainWindow : Window
             ShowNoteContextMenu(host, noteId);
             return;
         }
+        if (TryShowBatchItemContextMenu(host, item)) return;
         ShowFileContextMenu(host, item);
     }
 
@@ -3751,7 +3779,18 @@ public sealed partial class MainWindow : Window
         {
             WidgetItem? item = _items.FirstOrDefault(candidate =>
                 candidate.RelativeName.Equals(session.RelativeName, StringComparison.OrdinalIgnoreCase));
-            CancelItemReorder(preserveHover: UseHoverPresentation && session.State == ItemDragState.Pressed && _hoverWave.HasPointer);
+            bool wasPressedClick = session.State == ItemDragState.Pressed;
+            CancelItemReorder(preserveHover: UseHoverPresentation && wasPressedClick && _hoverWave.HasPointer);
+            if (wasPressedClick && TryHandleItemSelectionClick(session.RelativeName))
+            {
+                e.Handled = true;
+                return;
+            }
+            if (wasPressedClick && !IsDock && item is not null)
+            {
+                _itemSelection.SelectSingle(item.RelativeName, IndexOfItem(item.RelativeName));
+                RefreshItemSelectionVisuals();
+            }
             if (item is { Kind: WidgetItemKind.Organizer, OrganizerId: Guid } && sender is FrameworkElement host)
             {
                 await OpenTaggedItemAsync(host);
@@ -5922,6 +5961,7 @@ public sealed partial class MainWindow : Window
         CollapseButtonSurface.Background = CollapseButton.IsPointerOver ? _collapseHoverBrush : _transparentItemBrush;
         UpdateRealizedItems();
         VisitTextBlocks(WindowRoot);
+        ApplyCompactVisualStyle();
     }
 
     private SolidColorBrush CreateOrganizerTextBrush()
@@ -6089,6 +6129,7 @@ public sealed partial class MainWindow : Window
                 : DisplayPlacementService.Clamp(_compactBounds, display.Work);
             if (repositionWindow && !IsContained) ApplyBounds(_compactBounds, show: true);
         }
+        ApplyCompactVisualStyle();
         UpdateSurfaceClips();
     }
 

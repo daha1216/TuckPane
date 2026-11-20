@@ -24,9 +24,11 @@ public sealed partial class MainWindow
             ? _allCatalogItems.Where(item => OrganizerSearch.MatchesItemQuery(item, _activeFilterQuery)).ToArray()
             : _allCatalogItems;
         ReconcileCatalogItems(visible);
+        PruneItemSelection();
         ClampKeyboardFocusIndex();
         RenderAll();
         if (refreshIcons) RefreshRealizedIcons();
+        RefreshItemSelectionVisuals();
         UpdateExpandedFilterStatus();
     }
 
@@ -148,6 +150,16 @@ public sealed partial class MainWindow
                 CancelItemReorder();
                 return;
             }
+            if (_itemSelection.HasSelection)
+            {
+                ClearItemSelection();
+                return;
+            }
+            if (_host.MultiSelectedOrganizerCount > 0)
+            {
+                _host.ClearOrganizerMultiSelection();
+                return;
+            }
             if (HasActiveFilter || ExpandedFilterBar.Visibility == Visibility.Visible)
             {
                 ClearExpandedFilter(releaseInputActivation: true);
@@ -167,6 +179,13 @@ public sealed partial class MainWindow
 
         if (!_expanded || IsDock || _definition.PlacementMode == OrganizerPlacementMode.Station) return;
         if (ExpandedFilterBox.FocusState != FocusState.Unfocused) return;
+
+        if (ctrl && e.Key == VirtualKey.A)
+        {
+            e.Handled = true;
+            SelectAllVisibleItems();
+            return;
+        }
 
         if (ctrl && e.Key == VirtualKey.F)
         {
@@ -219,7 +238,12 @@ public sealed partial class MainWindow
                 }
                 return;
             case VirtualKey.Delete:
-                if (TryGetKeyboardFocusedItem(out WidgetItem? deleteItem) && deleteItem!.Kind != WidgetItemKind.Organizer)
+                if (_itemSelection.HasMultipleSelection)
+                {
+                    e.Handled = true;
+                    await RunSafelyAsync(DeleteSelectedItemsAsync, "批量删除项目失败");
+                }
+                else if (TryGetKeyboardFocusedItem(out WidgetItem? deleteItem) && deleteItem!.Kind != WidgetItemKind.Organizer)
                 {
                     e.Handled = true;
                     if (deleteItem.Kind == WidgetItemKind.Note && deleteItem.NoteId is Guid noteId)
@@ -229,14 +253,24 @@ public sealed partial class MainWindow
                 }
                 return;
             case VirtualKey.C when ctrl:
-                if (TryGetKeyboardFocusedItem(out WidgetItem? copyItem) && copyItem!.Kind is not (WidgetItemKind.Organizer or WidgetItemKind.Note))
+                if (_itemSelection.HasMultipleSelection)
+                {
+                    e.Handled = true;
+                    await RunSafelyAsync(() => { CopySelectedItemsToClipboard(); return Task.CompletedTask; }, "批量复制项目失败");
+                }
+                else if (TryGetKeyboardFocusedItem(out WidgetItem? copyItem) && copyItem!.Kind is not (WidgetItemKind.Organizer or WidgetItemKind.Note))
                 {
                     e.Handled = true;
                     await _catalogController.CopyFileItemAsync(copyItem);
                 }
                 return;
             case VirtualKey.X when ctrl:
-                if (TryGetKeyboardFocusedItem(out WidgetItem? cutItem) && cutItem!.Kind is not (WidgetItemKind.Organizer or WidgetItemKind.Note))
+                if (_itemSelection.HasMultipleSelection)
+                {
+                    e.Handled = true;
+                    await RunSafelyAsync(() => { CutSelectedItemsToClipboard(); return Task.CompletedTask; }, "批量剪切项目失败");
+                }
+                else if (TryGetKeyboardFocusedItem(out WidgetItem? cutItem) && cutItem!.Kind is not (WidgetItemKind.Organizer or WidgetItemKind.Note))
                 {
                     e.Handled = true;
                     await _catalogController.CutFileItemAsync(cutItem);
