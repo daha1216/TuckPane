@@ -1,3 +1,27 @@
+## 4.3.0
+
+本版合入五项里程碑级重构与体验升级 PR（[#11](https://github.com/daha1216/TuckPane/pull/11)、[#12](https://github.com/daha1216/TuckPane/pull/12)、[#13](https://github.com/daha1216/TuckPane/pull/13)、[#14](https://github.com/daha1216/TuckPane/pull/14)、[#15](https://github.com/daha1216/TuckPane/pull/15)），彻底根治开机黑窗、贴边回中、桌面拖入变复制与软件快捷方式启动失败等核心痛点，全面引入原生桌面视觉融合、全链路框选多选、iOS 18/26 自由方格与多选叠卡弹簧重排，以及 `8×8` 大容量网格与主窗口深度瘦身（完全保持 `SchemaVersion = 16` 配置向后兼容，应用内更新只检查本 fork）。
+
+- **P0 启动与贴边位置根治（[#11](https://github.com/daha1216/TuckPane/pull/11)）**：
+  - **开机零巨型黑窗**：在窗口首帧显示前启用 `DWMWA_CLOAK` 隐身、预设 `WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE` 无边框样式并预定位至目标紧凑尺寸，待首帧渲染稳定后再解隐，彻底告别启动期满屏闪黑窗。
+  - **贴边悬浮窗零漂移**：新增 `CompactPlacementMath` 确定性边距几何与边缘亲和恢复、瞬态缩屏写回保护及显示拓扑变化防抖重算，贴边悬浮窗重启不再跳回屏幕中央；同步引入 `WindowResourceScope` 统一 LIFO 析构。
+- **桌面真移动与快捷方式无损启动（[#15](https://github.com/daha1216/TuckPane/pull/15)）**：
+  - **桌面拖入默认真移动（含公共桌面提权）**：来自用户桌面或 `C:\Users\Public\Desktop` 公共桌面的拖入默认按移动处理（仅按住 `Ctrl` 显式复制）；移/删前自动清除只读属性；受权保护的公共桌面快捷方式遇权限受限时自动桥接 COM `IFileOperation` 触发系统标准 UAC 真实移走，移动后立即广播 `SHChangeNotify` 刷新桌面，不再残留重复副本。
+  - **迁入快捷方式自愈与原生 `ShellExecuteExW` 启动**：新增 `ShortcutIntegrityService`，迁入标准 `.lnk` 时自动锚定空白/失效 `WorkingDirectory` 并通过 `SetRelativePath` 重锚相对路径，同时零破坏跳过 MSI 广告快捷方式（`SLDF_HAS_DARWINID`）与 UWP / `shell:AppsFolder` 虚拟 PIDL，完整保留参数、`SLDF_RUNAS_USER` 与 `AppUserModelID`；升级 `ShellLaunchService` 为原生 `ShellExecuteExW` 管线，彻底杜绝开机自启进程因 CWD 为 `System32` 导致便携工具/脚本启动失败，支持受损 `.lnk` / `.url` 自愈回退与静默忽略 UAC 取消（`1223`）。
+  - **Windows 11 重解析点兼容**：放行 OneDrive 云占位文件与 Store AppExecLink 别名，继续严格拦截符号链接与目录联接点。
+- **原生桌面视觉融合与全链路框选多选（[#13](https://github.com/daha1216/TuckPane/pull/13)）**：
+  - **三种收缩外观风格（`CompactVisualStyle`）**：除经典毛玻璃卡片外，新增**原生桌面融合（无底框）**（静止零灰框直融壁纸、双层高对比投影文字 + 两行换行、悬停浮现 Fluent 选框）与 **Fluent 立体文件夹**。
+  - **真实桌面图标网格对齐（`DesktopGridSnapMath`）**：基于 `SysListView32` 真实图标间距一键对齐或拖动吸附。
+  - **桌面蓝色选框联动收纳窗与成组拖动**：Windows 桌面拉框扫过收纳窗自动同步高亮并支持整组锁定偏移同步移动，另支持右键一键“收入桌面已选项目”。
+  - **展开窗内橡皮筋框选与批量原生拖出**：支持窗内拉框、`Ctrl`/`Shift`/`Ctrl+A` 多选，经多文件 `IShellItemArray` 一次性拖出到桌面/资源管理器，并支持批量复制、剪切与回收站删除。
+- **iOS 18 / iOS 26 自由方格、流体弹簧重排与 `8×8` 容量升级（[#14](https://github.com/daha1216/TuckPane/pull/14)、[#15](https://github.com/daha1216/TuckPane/pull/15)）**：
+  - **任意方格自由摆放 & `8×8` 扩容**：普通收纳窗上限从 `6×6` 提升至 **`8×8`（64 格/页）**；基于 `FreeSlotGridLayout` 支持任意空方格落位、留白分区、外部拖入直达鼠标目标格及右键一键“整理方格空位”。
+  - **双向最近空位分水岭 + 窗内多选叠卡成堆拖拽**：彻底替代蛇形尾迹算法，空位 0ms 零扰动直落、占用格自动选取最短双向避让链、支持默认或按住 `Shift` 实时一对一直换（`A <-> B`），窗内多选后拖动自动聚拢为 iOS 扇形叠卡 + 蓝色数量角标；搭配精确解析欠阻尼弹簧、距离分级波纹、轻盈有机微晃与真实抬起 `ThemeShadow`。
+- **终局生产力套件与架构瘦身（[#12](https://github.com/daha1216/TuckPane/pull/12)、[#15](https://github.com/daha1216/TuckPane/pull/15)）**：
+  - 新增三组可配置全局快捷键（快速隐藏、Spotlight 跨收纳窗全局搜索 `--search`、Peek 置顶透视 `--peek`）、展开态即时键入筛选与 5 维排序、悬浮窗一键贴边整齐列队、多显示器拓扑感知布局快照（独立 `layout-snapshots.json`）以及默认关闭可预览/撤销的桌面/下载自动收纳规则引擎；三语（`zh-CN`/`en-US`/`ja-JP`）词条 100% 对等。
+  - 将 6,531 行的 `MainWindow.xaml.cs` 按高内聚职责拆出 `MainWindow.TransitionsAndResize.cs` 与 `MainWindow.ItemDragAndDrop.cs`，主文件减重 **51.8%**。
+- **验证**：Release x64 0 警告 0 错误构建；4 工程 `--locked-mode` 零新增依赖；无头 `TuckPane.LogicChecks` **61/61**、`UpdateChecks` **4/4**、便携启动器 **6/6**、Node 便签 **3/3** 全部通过；Windows 11 Per-Monitor V2 独立沙盒（以 `C:\Windows\System32` 为 CWD 启动）实机验证 6 贴边窗零黑窗精准落位、`--peek`/`--search`、`8×8` 64 格稀疏常驻展开窗零报错。
+
 ## 4.2.7
 
 本版完成全面可靠性加固与分阶段架构重构，修复多项数据丢失竞态、资源泄漏与展开态桌面层级问题，并恢复完整无头 CI 门禁与稳定语义化更新链路（基于 4.2.6，应用内更新只检查本 fork）。
