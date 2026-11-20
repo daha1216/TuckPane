@@ -89,8 +89,7 @@ public sealed partial class MainWindow : IExpansionModeView
         ApplyBounds(visibleBounds, show: true, preserveZOrder: true);
         _desktopLayer?.SetExpanded(_expanded, showWindow: false);
         UpdateCanvasResizeEdgeWindows(show: _expanded);
-        if (_expanded) _canvasResizeInputTimer.Start();
-        else
+        if (!_expanded)
         {
             _canvasResizeInputTimer.Stop();
             _host.NotifyCollapsed(this);
@@ -118,6 +117,7 @@ public sealed partial class MainWindow : IExpansionModeView
         CompactView.Opacity = 1;
         ExpandedView.Visibility = _expanded ? Visibility.Visible : Visibility.Collapsed;
         ExpandedView.Opacity = _expanded ? 1 : 0;
+        ResetExpandedTransitionOpacities();
         GetExpandedCompositionVisual().Scale = Vector3.One;
         ApplyBounds(_expanded ? bounds : _compactBounds, show: true, preserveZOrder: true);
         _desktopLayer?.SetExpanded(_expanded, showWindow: false);
@@ -125,7 +125,6 @@ public sealed partial class MainWindow : IExpansionModeView
         if (_expanded)
         {
             _host.NotifyPermanentExpanded(this);
-            _canvasResizeInputTimer.Start();
         }
         else
         {
@@ -147,7 +146,9 @@ public sealed partial class MainWindow : IExpansionModeView
     {
         do
         {
-            _ = await _host.SetOrganizerExpansionModeAsync(OrganizerId, _host.GetRequestedExpansionMode(OrganizerId));
+            _pendingExpansionModeApply = false;
+            string? error = await _host.SetOrganizerExpansionModeAsync(OrganizerId, _host.GetRequestedExpansionMode(OrganizerId));
+            if (error is not null) break;
         }
         while (!_closing && _runtimeVisible && _pendingExpansionModeApply);
     }

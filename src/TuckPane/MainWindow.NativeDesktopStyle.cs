@@ -28,21 +28,59 @@ public sealed partial class MainWindow
     private bool _compactPointerPressed;
     private bool _organizerMultiSelected;
 
-    // GPU-composited shadow & iOS 26 Liquid Glass live specular visuals (zero per-frame XAML churn).
+    // GPU-composited shadow & iOS 26/27 Liquid Glass live specular visuals (zero per-frame XAML churn).
     private ContainerVisual? _compactNameShadowRoot;
     private SpriteVisual? _compactNameShadowAuraVisual;
     private DropShadow? _compactNameDropShadowAura;
     private SpriteVisual? _compactNameShadowVisual;
     private DropShadow? _compactNameDropShadow;
+    private CompositionBrush? _compactNameAlphaMask;
     private bool _compactNameShadowHooked;
+
+    private ContainerVisual? _expandedNameShadowRoot;
+    private SpriteVisual? _expandedNameShadowAuraVisual;
+    private DropShadow? _expandedNameDropShadowAura;
+    private SpriteVisual? _expandedNameShadowVisual;
+    private DropShadow? _expandedNameDropShadow;
+    private CompositionBrush? _expandedNameAlphaMask;
+    private bool _expandedNameShadowHooked;
+    private long _expandedNameVisibilityCallbackToken;
 
     private SpriteVisual? _compactTileShadowVisual;
     private DropShadow? _compactTileDropShadow;
+    private CompositionRoundedRectangleGeometry? _compactTileShadowMaskGeom;
+    private CompositionSpriteShape? _compactTileShadowMaskShape;
+    private CompositionColorBrush? _compactTileShadowMaskFill;
+    private ShapeVisual? _compactTileShadowMaskVisual;
+    private CompositionVisualSurface? _compactTileShadowMaskSurface;
+    private CompositionSurfaceBrush? _compactTileShadowMaskBrush;
+    private ImplicitAnimationCollection? _compactTileShadowImplicitAnims;
+    private ScalarKeyFrameAnimation? _compactTileShadowBlurAnim;
+    private Vector3KeyFrameAnimation? _compactTileShadowOffsetAnim;
+
     private CompositionRoundedRectangleGeometry? _compactTileShadowGeom;
     private CompositionGeometricClip? _compactTileShadowClip;
 
     private SpriteVisual? _compactSpecularVisual;
     private CompositionRadialGradientBrush? _compactSpecularBrush;
+    private ImplicitAnimationCollection? _compactSpecularImplicitAnims;
+    private ScalarKeyFrameAnimation? _compactSpecularOpacityAnim;
+
+    // Reusable DWM Composition spring animations (zero per-hover/per-press WinRT allocations).
+    private SpringVector3NaturalMotionAnimation? _tileScaleSpring;
+    private SpringVector3NaturalMotionAnimation? _iconScaleSpring;
+
+    // Reusable GPU implicit show/hide animations for ExpandedFilterBar & SelectionCountBadge.
+    private CompositionAnimationGroup? _overlayShowAnimGroup;
+    private CompositionAnimationGroup? _overlayHideAnimGroup;
+    private ScalarKeyFrameAnimation? _overlayShowOpacityAnim;
+    private Vector3KeyFrameAnimation? _overlayShowTranslationAnim;
+    private ScalarKeyFrameAnimation? _overlayHideOpacityAnim;
+    private Vector3KeyFrameAnimation? _overlayHideTranslationAnim;
+    private CubicBezierEasingFunction? _overlayEaseOut;
+    private bool _overlayImplicitAnimsAttached;
+
+    internal bool IsOrganizerMultiSelected => _organizerMultiSelected;
 
     internal bool IsEligibleForDesktopMultiSelect =>
         !_closing &&
@@ -102,13 +140,24 @@ public sealed partial class MainWindow
 
         CompactFolderTab.Visibility = folderStyle ? Visibility.Visible : Visibility.Collapsed;
         CompactFolderPocket.Visibility = folderStyle ? Visibility.Visible : Visibility.Collapsed;
+        double tileSize = Math.Max(24, CompactTile.Width);
         if (folderStyle)
         {
-            double tileWidth = Math.Max(24, CompactTile.Width);
-            CompactFolderTab.Width = Math.Max(16, Math.Round(tileWidth * 0.44));
-            CompactFolderTab.Height = Math.Max(6, Math.Round(tileWidth * 0.14));
-            CompactFolderTab.Margin = new Thickness(Math.Max(3, tileWidth * 0.08), -CompactFolderTab.Height + 2, 0, 0);
+            double tabOverlapOffset = Math.Max(4, Math.Round(tileSize * 0.11));
+            CompactFolderTab.Width = Math.Max(16, Math.Round(tileSize * 0.44));
+            CompactFolderTab.Height = Math.Max(6, Math.Round(tileSize * 0.14));
+            CompactFolderTab.Margin = new Thickness(Math.Max(3, tileSize * 0.08), 0, 0, 0);
+            CompactThumbnailHost.Height = Math.Max(20, tileSize - tabOverlapOffset);
+            CompactThumbnailHost.VerticalAlignment = VerticalAlignment.Bottom;
+            CompactShadowHost.VerticalAlignment = VerticalAlignment.Bottom;
         }
+        else
+        {
+            CompactThumbnailHost.Height = tileSize;
+            CompactThumbnailHost.VerticalAlignment = VerticalAlignment.Center;
+            CompactShadowHost.VerticalAlignment = VerticalAlignment.Center;
+        }
+        UpdateCompactPreviewItemScale();
 
         // Authentic Windows 11 desktop typography & proportional sizing (never giant 20px billboard labels!).
         bool positioned = _definition.PlacementMode == OrganizerPlacementMode.Positioned;
@@ -138,8 +187,10 @@ public sealed partial class MainWindow
 
         EnsureCompactGpuShadowVisuals();
         UpdateCompactNameShadowVisual(style, highContrast);
+        UpdateExpandedNameShadowVisual(highContrast);
         UpdateCompactTileShadowVisual(style, highContrast);
         UpdateCompactSelectionPlateVisual();
+        UpdateAllRealizedItemNameShadows(highContrast);
     }
 
     /// <summary>
@@ -175,9 +226,22 @@ public sealed partial class MainWindow
 
     internal void SyncCompactNameShadow()
     {
+        if (_closing) return;
         CompactVisualStyle style = CompactVisualStyles.Normalize(_host.State.GlobalSettings.CompactVisualStyle);
         UpdateCompactNameShadowVisual(style, DesktopTypographyService.IsHighContrast());
     }
+
+    internal void SyncExpandedNameShadow()
+    {
+        if (_closing) return;
+        UpdateExpandedNameShadowVisual(DesktopTypographyService.IsHighContrast());
+    }
+
+    private void CompactNameText_SizeChanged(object sender, SizeChangedEventArgs e) => SyncCompactNameShadow();
+
+    private void ExpandedNameText_SizeChanged(object sender, SizeChangedEventArgs e) => SyncExpandedNameShadow();
+
+    private void ExpandedNameText_VisibilityChanged(DependencyObject sender, DependencyProperty dp) => SyncExpandedNameShadow();
 
     internal void UpdateCompactShadowGeometry(double compactRadius)
     {
@@ -194,17 +258,32 @@ public sealed partial class MainWindow
         CompactShadowHost.Width = w;
         CompactShadowHost.Height = h;
 
-        if (_compactTileShadowVisual is not null && w > 1 && h > 1)
+        if (w > 1 && h > 1)
         {
-            _compactTileShadowVisual.Size = new Vector2((float)w, (float)h);
-        }
-        if (_compactSpecularVisual is not null && w > 1 && h > 1)
-        {
-            _compactSpecularVisual.Size = new Vector2((float)w, (float)h);
-            if (_compactTileShadowGeom is not null)
+            Vector2 tileSize = new((float)w, (float)h);
+            Vector2 cornerVec = new((float)compactRadius, (float)compactRadius);
+
+            if (_compactTileShadowVisual is not null)
+                _compactTileShadowVisual.Size = tileSize;
+
+            if (_compactTileShadowMaskGeom is not null &&
+                _compactTileShadowMaskVisual is not null &&
+                _compactTileShadowMaskSurface is not null)
             {
-                _compactTileShadowGeom.Size = new Vector2((float)w, (float)h);
-                _compactTileShadowGeom.CornerRadius = new Vector2((float)compactRadius, (float)compactRadius);
+                _compactTileShadowMaskGeom.Size = tileSize;
+                _compactTileShadowMaskGeom.CornerRadius = cornerVec;
+                _compactTileShadowMaskVisual.Size = tileSize;
+                _compactTileShadowMaskSurface.SourceSize = tileSize;
+            }
+
+            if (_compactSpecularVisual is not null)
+            {
+                _compactSpecularVisual.Size = tileSize;
+                if (_compactTileShadowGeom is not null)
+                {
+                    _compactTileShadowGeom.Size = tileSize;
+                    _compactTileShadowGeom.CornerRadius = cornerVec;
+                }
             }
         }
     }
@@ -218,7 +297,7 @@ public sealed partial class MainWindow
 
     private void EnsureCompactGpuShadowVisuals()
     {
-        if (!WindowRoot.IsLoaded) return;
+        if (!WindowRoot.IsLoaded || _closing) return;
 
         // 1. Dual-Layer Hardware Gaussian DropShadow on CompactNameText using GetAlphaMask():
         //    - Wide ambient aura (BlurRadius 5.6) + tight Windows Explorer DrawShadowText core (BlurRadius 2.1)
@@ -227,13 +306,14 @@ public sealed partial class MainWindow
         {
             Visual hostVisual = ElementCompositionPreview.GetElementVisual(CompactNameShadowHost);
             Compositor compositor = hostVisual.Compositor;
-            CompositionBrush alphaMask = CompactNameText.GetAlphaMask();
+            _compactNameAlphaMask?.Dispose();
+            _compactNameAlphaMask = CompactNameText.GetAlphaMask();
 
             _compactNameDropShadowAura = compositor.CreateDropShadow();
             _compactNameDropShadowAura.Color = Color.FromArgb(184, 0, 0, 0);
             _compactNameDropShadowAura.BlurRadius = 5.6f;
             _compactNameDropShadowAura.Offset = new Vector3(0f, 1.3f, 0f);
-            _compactNameDropShadowAura.Mask = alphaMask;
+            _compactNameDropShadowAura.Mask = _compactNameAlphaMask;
 
             _compactNameShadowAuraVisual = compositor.CreateSpriteVisual();
             _compactNameShadowAuraVisual.Shadow = _compactNameDropShadowAura;
@@ -242,7 +322,7 @@ public sealed partial class MainWindow
             _compactNameDropShadow.Color = Color.FromArgb(255, 0, 0, 0);
             _compactNameDropShadow.BlurRadius = 2.1f;
             _compactNameDropShadow.Offset = new Vector3(0f, 0.75f, 0f);
-            _compactNameDropShadow.Mask = alphaMask;
+            _compactNameDropShadow.Mask = _compactNameAlphaMask;
 
             _compactNameShadowVisual = compositor.CreateSpriteVisual();
             _compactNameShadowVisual.Shadow = _compactNameDropShadow;
@@ -255,26 +335,108 @@ public sealed partial class MainWindow
         if (!_compactNameShadowHooked)
         {
             _compactNameShadowHooked = true;
-            CompactNameText.SizeChanged += (_, _) => SyncCompactNameShadow();
+            CompactNameText.SizeChanged += CompactNameText_SizeChanged;
         }
 
-        // 2. Sculptural floating ambient DropShadow beneath CompactThumbnailHost (makes Liquid Glass float on pure white wallpaper!).
+        // 1b. Dual-Layer Hardware Gaussian DropShadow on ExpandedNameText using GetAlphaMask():
+        //     Ensures crisp legibility of white expanded organizer titles on pure white wallpaper!
+        if (_expandedNameShadowRoot is null)
+        {
+            Visual expandedHostVisual = ElementCompositionPreview.GetElementVisual(ExpandedNameShadowHost);
+            Compositor compositor = expandedHostVisual.Compositor;
+            _expandedNameAlphaMask?.Dispose();
+            _expandedNameAlphaMask = ExpandedNameText.GetAlphaMask();
+
+            _expandedNameDropShadowAura = compositor.CreateDropShadow();
+            _expandedNameDropShadowAura.Color = Color.FromArgb(176, 0, 0, 0);
+            _expandedNameDropShadowAura.BlurRadius = 8.5f;
+            _expandedNameDropShadowAura.Offset = new Vector3(0f, 2.2f, 0f);
+            _expandedNameDropShadowAura.Mask = _expandedNameAlphaMask;
+
+            _expandedNameShadowAuraVisual = compositor.CreateSpriteVisual();
+            _expandedNameShadowAuraVisual.Shadow = _expandedNameDropShadowAura;
+
+            _expandedNameDropShadow = compositor.CreateDropShadow();
+            _expandedNameDropShadow.Color = Color.FromArgb(238, 0, 0, 0);
+            _expandedNameDropShadow.BlurRadius = 3.0f;
+            _expandedNameDropShadow.Offset = new Vector3(0f, 1.0f, 0f);
+            _expandedNameDropShadow.Mask = _expandedNameAlphaMask;
+
+            _expandedNameShadowVisual = compositor.CreateSpriteVisual();
+            _expandedNameShadowVisual.Shadow = _expandedNameDropShadow;
+
+            _expandedNameShadowRoot = compositor.CreateContainerVisual();
+            _expandedNameShadowRoot.Children.InsertAtBottom(_expandedNameShadowAuraVisual);
+            _expandedNameShadowRoot.Children.InsertAtTop(_expandedNameShadowVisual);
+            ElementCompositionPreview.SetElementChildVisual(ExpandedNameShadowHost, _expandedNameShadowRoot);
+        }
+        if (!_expandedNameShadowHooked)
+        {
+            _expandedNameShadowHooked = true;
+            ExpandedNameText.SizeChanged += ExpandedNameText_SizeChanged;
+            _expandedNameVisibilityCallbackToken = ExpandedNameText.RegisterPropertyChangedCallback(
+                UIElement.VisibilityProperty, ExpandedNameText_VisibilityChanged);
+        }
+
+        // 2. Sculptural floating ambient DropShadow beneath CompactThumbnailHost with exact
+        //    rounded-rectangle alpha mask (zero square shadow ears!) + smooth GPU implicit bloom.
         if (_compactTileShadowVisual is null)
         {
             Visual shadowHostVisual = ElementCompositionPreview.GetElementVisual(CompactShadowHost);
             Compositor compositor = shadowHostVisual.Compositor;
 
+            double initW = Math.Max(1, CompactThumbnailHost.ActualWidth > 1 ? CompactThumbnailHost.ActualWidth : CompactThumbnailHost.Width);
+            double initH = Math.Max(1, CompactThumbnailHost.ActualHeight > 1 ? CompactThumbnailHost.ActualHeight : CompactThumbnailHost.Height);
+            float initRadius = (float)(CompactCornerRadiusDip * _appliedCompactScale);
+            Vector2 initSize = new((float)initW, (float)initH);
+
+            _compactTileShadowMaskGeom = compositor.CreateRoundedRectangleGeometry();
+            _compactTileShadowMaskGeom.Size = initSize;
+            _compactTileShadowMaskGeom.CornerRadius = new Vector2(initRadius, initRadius);
+
+            _compactTileShadowMaskFill = compositor.CreateColorBrush(Colors.White);
+            _compactTileShadowMaskShape = compositor.CreateSpriteShape(_compactTileShadowMaskGeom);
+            _compactTileShadowMaskShape.FillBrush = _compactTileShadowMaskFill;
+
+            _compactTileShadowMaskVisual = compositor.CreateShapeVisual();
+            _compactTileShadowMaskVisual.Size = initSize;
+            _compactTileShadowMaskVisual.Shapes.Add(_compactTileShadowMaskShape);
+
+            _compactTileShadowMaskSurface = compositor.CreateVisualSurface();
+            _compactTileShadowMaskSurface.SourceVisual = _compactTileShadowMaskVisual;
+            _compactTileShadowMaskSurface.SourceSize = initSize;
+
+            _compactTileShadowMaskBrush = compositor.CreateSurfaceBrush(_compactTileShadowMaskSurface);
+            _compactTileShadowMaskBrush.Stretch = CompositionStretch.Fill;
+
             _compactTileDropShadow = compositor.CreateDropShadow();
             _compactTileDropShadow.Color = Color.FromArgb(54, 0, 0, 0);
             _compactTileDropShadow.BlurRadius = 16f;
             _compactTileDropShadow.Offset = new Vector3(0f, 4.2f, 0f);
+            _compactTileDropShadow.Mask = _compactTileShadowMaskBrush;
+
+            _compactTileShadowBlurAnim = compositor.CreateScalarKeyFrameAnimation();
+            _compactTileShadowBlurAnim.Target = "BlurRadius";
+            _compactTileShadowBlurAnim.InsertExpressionKeyFrame(1f, "this.FinalValue");
+            _compactTileShadowBlurAnim.Duration = TimeSpan.FromMilliseconds(180);
+
+            _compactTileShadowOffsetAnim = compositor.CreateVector3KeyFrameAnimation();
+            _compactTileShadowOffsetAnim.Target = "Offset";
+            _compactTileShadowOffsetAnim.InsertExpressionKeyFrame(1f, "this.FinalValue");
+            _compactTileShadowOffsetAnim.Duration = TimeSpan.FromMilliseconds(180);
+
+            _compactTileShadowImplicitAnims = compositor.CreateImplicitAnimationCollection();
+            _compactTileShadowImplicitAnims["BlurRadius"] = _compactTileShadowBlurAnim;
+            _compactTileShadowImplicitAnims["Offset"] = _compactTileShadowOffsetAnim;
+            _compactTileDropShadow.ImplicitAnimations = _compactTileShadowImplicitAnims;
 
             _compactTileShadowVisual = compositor.CreateSpriteVisual();
+            _compactTileShadowVisual.Size = initSize;
             _compactTileShadowVisual.Shadow = _compactTileDropShadow;
             ElementCompositionPreview.SetElementChildVisual(CompactShadowHost, _compactTileShadowVisual);
         }
 
-        // 3. iOS 26 Liquid Glass live cursor-tracking specular catchlight (pure GPU CompositionRadialGradientBrush!).
+        // 3. iOS 26/27 Liquid Glass live cursor-tracking specular catchlight (pure GPU CompositionRadialGradientBrush + 160ms implicit bloom!).
         if (_compactSpecularVisual is null)
         {
             Visual specHostVisual = ElementCompositionPreview.GetElementVisual(CompactSpecularOverlay);
@@ -291,11 +453,67 @@ public sealed partial class MainWindow
             _compactTileShadowGeom = compositor.CreateRoundedRectangleGeometry();
             _compactTileShadowClip = compositor.CreateGeometricClip(_compactTileShadowGeom);
 
+            _compactSpecularOpacityAnim = compositor.CreateScalarKeyFrameAnimation();
+            _compactSpecularOpacityAnim.Target = "Opacity";
+            _compactSpecularOpacityAnim.InsertExpressionKeyFrame(1f, "this.FinalValue");
+            _compactSpecularOpacityAnim.Duration = TimeSpan.FromMilliseconds(160);
+
+            _compactSpecularImplicitAnims = compositor.CreateImplicitAnimationCollection();
+            _compactSpecularImplicitAnims["Opacity"] = _compactSpecularOpacityAnim;
+
             _compactSpecularVisual = compositor.CreateSpriteVisual();
             _compactSpecularVisual.Brush = _compactSpecularBrush;
             _compactSpecularVisual.Clip = _compactTileShadowClip;
             _compactSpecularVisual.Opacity = 0f;
+            _compactSpecularVisual.ImplicitAnimations = _compactSpecularImplicitAnims;
             ElementCompositionPreview.SetElementChildVisual(CompactSpecularOverlay, _compactSpecularVisual);
+        }
+
+        // 4. GPU ImplicitShowAnimation / ImplicitHideAnimation on ExpandedFilterBar & SelectionCountBadge.
+        if (!_overlayImplicitAnimsAttached)
+        {
+            _overlayImplicitAnimsAttached = true;
+            Visual filterVisual = ElementCompositionPreview.GetElementVisual(ExpandedFilterBar);
+            Compositor compositor = filterVisual.Compositor;
+            ElementCompositionPreview.SetIsTranslationEnabled(ExpandedFilterBar, true);
+            ElementCompositionPreview.SetIsTranslationEnabled(SelectionCountBadge, true);
+
+            _overlayEaseOut = compositor.CreateCubicBezierEasingFunction(new Vector2(0.22f, 1f), new Vector2(0.36f, 1f));
+
+            _overlayShowOpacityAnim = compositor.CreateScalarKeyFrameAnimation();
+            _overlayShowOpacityAnim.Target = "Opacity";
+            _overlayShowOpacityAnim.InsertKeyFrame(0f, 0f);
+            _overlayShowOpacityAnim.InsertKeyFrame(1f, 1f, _overlayEaseOut);
+            _overlayShowOpacityAnim.Duration = TimeSpan.FromMilliseconds(160);
+
+            _overlayShowTranslationAnim = compositor.CreateVector3KeyFrameAnimation();
+            _overlayShowTranslationAnim.Target = "Translation";
+            _overlayShowTranslationAnim.InsertKeyFrame(0f, new Vector3(0f, -8f, 0f));
+            _overlayShowTranslationAnim.InsertKeyFrame(1f, Vector3.Zero, _overlayEaseOut);
+            _overlayShowTranslationAnim.Duration = TimeSpan.FromMilliseconds(180);
+
+            _overlayShowAnimGroup = compositor.CreateAnimationGroup();
+            _overlayShowAnimGroup.Add(_overlayShowOpacityAnim);
+            _overlayShowAnimGroup.Add(_overlayShowTranslationAnim);
+
+            _overlayHideOpacityAnim = compositor.CreateScalarKeyFrameAnimation();
+            _overlayHideOpacityAnim.Target = "Opacity";
+            _overlayHideOpacityAnim.InsertKeyFrame(1f, 0f);
+            _overlayHideOpacityAnim.Duration = TimeSpan.FromMilliseconds(120);
+
+            _overlayHideTranslationAnim = compositor.CreateVector3KeyFrameAnimation();
+            _overlayHideTranslationAnim.Target = "Translation";
+            _overlayHideTranslationAnim.InsertKeyFrame(1f, new Vector3(0f, -6f, 0f));
+            _overlayHideTranslationAnim.Duration = TimeSpan.FromMilliseconds(120);
+
+            _overlayHideAnimGroup = compositor.CreateAnimationGroup();
+            _overlayHideAnimGroup.Add(_overlayHideOpacityAnim);
+            _overlayHideAnimGroup.Add(_overlayHideTranslationAnim);
+
+            ElementCompositionPreview.SetImplicitShowAnimation(ExpandedFilterBar, _overlayShowAnimGroup);
+            ElementCompositionPreview.SetImplicitHideAnimation(ExpandedFilterBar, _overlayHideAnimGroup);
+            ElementCompositionPreview.SetImplicitShowAnimation(SelectionCountBadge, _overlayShowAnimGroup);
+            ElementCompositionPreview.SetImplicitHideAnimation(SelectionCountBadge, _overlayHideAnimGroup);
         }
     }
 
@@ -327,11 +545,57 @@ public sealed partial class MainWindow
 
         float opacity = (float)Math.Clamp(CompactVisualStyles.LabelShadowOpacity(style, highContrast), 0.0, 1.0);
         CompositionBrush mask = CompactNameText.GetAlphaMask();
+        CompositionBrush? previousMask = _compactNameAlphaMask;
+        _compactNameAlphaMask = mask;
         _compactNameDropShadow.Opacity = opacity;
         _compactNameDropShadow.Mask = mask;
         _compactNameDropShadowAura.Opacity = opacity * 0.92f;
         _compactNameDropShadowAura.Mask = mask;
+        if (previousMask is not null && !ReferenceEquals(previousMask, mask))
+            previousMask.Dispose();
         _compactNameShadowRoot.IsVisible = true;
+    }
+
+    private void UpdateExpandedNameShadowVisual(bool highContrast)
+    {
+        if (_expandedNameShadowRoot is null || _expandedNameShadowVisual is null || _expandedNameDropShadow is null ||
+            _expandedNameShadowAuraVisual is null || _expandedNameDropShadowAura is null)
+        {
+            return;
+        }
+
+        bool visible = ExpandedNameText.Visibility == Visibility.Visible &&
+                       ExpandedNameEditor.Visibility != Visibility.Visible &&
+                       !string.IsNullOrEmpty(ExpandedNameText.Text) &&
+                       !highContrast;
+        if (!visible)
+        {
+            _expandedNameShadowRoot.IsVisible = false;
+            return;
+        }
+
+        double width = ExpandedNameText.ActualWidth > 0 ? ExpandedNameText.ActualWidth : ExpandedNameText.DesiredSize.Width;
+        double height = ExpandedNameText.ActualHeight > 0 ? ExpandedNameText.ActualHeight : ExpandedNameText.DesiredSize.Height;
+        if (width <= 1 || height <= 1)
+        {
+            _expandedNameShadowRoot.IsVisible = false;
+            return;
+        }
+
+        Vector2 size = new((float)width, (float)height);
+        ExpandedNameShadowHost.Height = size.Y;
+        _expandedNameShadowRoot.Size = size;
+        _expandedNameShadowVisual.Size = size;
+        _expandedNameShadowAuraVisual.Size = size;
+
+        CompositionBrush mask = ExpandedNameText.GetAlphaMask();
+        CompositionBrush? previousMask = _expandedNameAlphaMask;
+        _expandedNameAlphaMask = mask;
+        _expandedNameDropShadow.Mask = mask;
+        _expandedNameDropShadowAura.Mask = mask;
+        if (previousMask is not null && !ReferenceEquals(previousMask, mask))
+            previousMask.Dispose();
+        _expandedNameShadowRoot.IsVisible = true;
     }
 
     private void UpdateCompactTileShadowVisual(CompactVisualStyle style, bool highContrast)
@@ -392,16 +656,17 @@ public sealed partial class MainWindow
 
     /// <summary>
     /// Runs native GPU Composition spring animations on the Windows DWM compositor thread
-    /// (true 120-240Hz ProMotion smoothness with zero C# per-frame rendering loop!).
+    /// (true 120-240Hz ProMotion smoothness with zero C# per-frame rendering loop or WinRT allocations!).
     /// </summary>
     private void AnimateCompactTileHoverSpring()
     {
         if (_closing || !WindowRoot.IsLoaded) return;
         CompactVisualStyle style = CompactVisualStyles.Normalize(_host.State.GlobalSettings.CompactVisualStyle);
+        bool folderStyle = CompactVisualStyles.ShowsFolderSilhouette(style);
         float targetScale = _compactPointerPressed
             ? 0.94f
             : _compactPointerHovered
-                ? (style == CompactVisualStyle.GlassTile ? 1.06f : 1.035f)
+                ? (style == CompactVisualStyle.GlassTile ? 1.05f : 1.035f)
                 : 1.0f;
         float iconScale = _compactPointerPressed
             ? 0.96f
@@ -409,27 +674,40 @@ public sealed partial class MainWindow
                 ? 1.045f
                 : 1.0f;
 
-        Visual tileVisual = ElementCompositionPreview.GetElementVisual(CompactThumbnailHost);
+        // FluentFolder animates CompactTile so tab & pocket spring together as one physical object;
+        // GlassTile & NativeDesktop animate CompactThumbnailHost directly.
+        FrameworkElement springHost = folderStyle ? CompactTile : CompactThumbnailHost;
+        FrameworkElement inactiveHost = folderStyle ? CompactThumbnailHost : CompactTile;
+        Visual tileVisual = ElementCompositionPreview.GetElementVisual(springHost);
+        Visual inactiveVisual = ElementCompositionPreview.GetElementVisual(inactiveHost);
+        if (inactiveVisual.Scale != Vector3.One)
+        {
+            inactiveVisual.StopAnimation("Scale");
+            inactiveVisual.Scale = Vector3.One;
+        }
         Visual iconVisual = ElementCompositionPreview.GetElementVisual(CompactPreviewGrid);
-        double w = CompactThumbnailHost.ActualWidth > 1 ? CompactThumbnailHost.ActualWidth : CompactThumbnailHost.Width;
-        double h = CompactThumbnailHost.ActualHeight > 1 ? CompactThumbnailHost.ActualHeight : CompactThumbnailHost.Height;
-        tileVisual.CenterPoint = new Vector3((float)(w / 2.0), (float)(h / 2.0), 0f);
+        double w = springHost.ActualWidth > 1 ? springHost.ActualWidth : springHost.Width;
+        double h = springHost.ActualHeight > 1 ? springHost.ActualHeight : springHost.Height;
+        // Bias vertical pivot to 14% from top on hover/release so the top rim NEVER clips at y < 0!
+        tileVisual.CenterPoint = _compactPointerPressed
+            ? new Vector3((float)(w / 2.0), (float)(h / 2.0), 0f)
+            : new Vector3((float)(w / 2.0), (float)(h * 0.14f), 0f);
         iconVisual.CenterPoint = new Vector3((float)(CompactPreviewGrid.ActualWidth / 2.0), (float)(CompactPreviewGrid.ActualHeight / 2.0), 0f);
 
         if (UseCustomAnimations)
         {
             Compositor compositor = tileVisual.Compositor;
-            SpringVector3NaturalMotionAnimation tileSpring = compositor.CreateSpringVector3Animation();
-            tileSpring.FinalValue = new Vector3(targetScale, targetScale, 1f);
-            tileSpring.DampingRatio = _compactPointerPressed ? 0.78f : 0.64f;
-            tileSpring.Period = TimeSpan.FromMilliseconds(_compactPointerPressed ? 34 : 46);
-            tileVisual.StartAnimation("Scale", tileSpring);
+            _tileScaleSpring ??= compositor.CreateSpringVector3Animation();
+            _tileScaleSpring.FinalValue = new Vector3(targetScale, targetScale, 1f);
+            _tileScaleSpring.DampingRatio = _compactPointerPressed ? 0.78f : 0.64f;
+            _tileScaleSpring.Period = TimeSpan.FromMilliseconds(_compactPointerPressed ? 34 : 46);
+            tileVisual.StartAnimation("Scale", _tileScaleSpring);
 
-            SpringVector3NaturalMotionAnimation iconSpring = compositor.CreateSpringVector3Animation();
-            iconSpring.FinalValue = new Vector3(iconScale, iconScale, 1f);
-            iconSpring.DampingRatio = 0.68f;
-            iconSpring.Period = TimeSpan.FromMilliseconds(50);
-            iconVisual.StartAnimation("Scale", iconSpring);
+            _iconScaleSpring ??= compositor.CreateSpringVector3Animation();
+            _iconScaleSpring.FinalValue = new Vector3(iconScale, iconScale, 1f);
+            _iconScaleSpring.DampingRatio = 0.68f;
+            _iconScaleSpring.Period = TimeSpan.FromMilliseconds(50);
+            iconVisual.StartAnimation("Scale", _iconScaleSpring);
         }
         else
         {
@@ -437,9 +715,19 @@ public sealed partial class MainWindow
             iconVisual.Scale = new Vector3(iconScale, iconScale, 1f);
         }
 
-        if (_compactSpecularVisual is not null)
+        if (_compactSpecularVisual is not null && _compactSpecularBrush is not null)
         {
-            _compactSpecularVisual.Opacity = _compactPointerHovered && style == CompactVisualStyle.GlassTile ? 0.85f : 0f;
+            if (style == CompactVisualStyle.GlassTile && (_compactPointerHovered || _compactPointerPressed))
+            {
+                _compactSpecularBrush.EllipseRadius = _compactPointerPressed
+                    ? new Vector2(0.52f, 0.52f)
+                    : new Vector2(0.65f, 0.65f);
+                _compactSpecularVisual.Opacity = _compactPointerPressed ? 1.0f : 0.85f;
+            }
+            else
+            {
+                _compactSpecularVisual.Opacity = 0f;
+            }
         }
         UpdateCompactTileShadowVisual(style, DesktopTypographyService.IsHighContrast());
     }
@@ -467,6 +755,22 @@ public sealed partial class MainWindow
 
     private void DisposeCompactVisualResources()
     {
+        if (_compactNameShadowHooked)
+        {
+            CompactNameText.SizeChanged -= CompactNameText_SizeChanged;
+            _compactNameShadowHooked = false;
+        }
+        if (_expandedNameShadowHooked)
+        {
+            ExpandedNameText.SizeChanged -= ExpandedNameText_SizeChanged;
+            if (_expandedNameVisibilityCallbackToken != 0)
+            {
+                ExpandedNameText.UnregisterPropertyChangedCallback(UIElement.VisibilityProperty, _expandedNameVisibilityCallbackToken);
+                _expandedNameVisibilityCallbackToken = 0;
+            }
+            _expandedNameShadowHooked = false;
+        }
+
         if (_compactNameShadowRoot is not null)
         {
             ElementCompositionPreview.SetElementChildVisual(CompactNameShadowHost, null);
@@ -474,6 +778,10 @@ public sealed partial class MainWindow
             _compactNameShadowRoot.Dispose();
             _compactNameShadowRoot = null;
         }
+        if (_compactNameDropShadow is not null) _compactNameDropShadow.Mask = null;
+        if (_compactNameDropShadowAura is not null) _compactNameDropShadowAura.Mask = null;
+        _compactNameAlphaMask?.Dispose();
+        _compactNameAlphaMask = null;
         _compactNameShadowAuraVisual?.Dispose();
         _compactNameShadowAuraVisual = null;
         _compactNameDropShadowAura?.Dispose();
@@ -483,27 +791,111 @@ public sealed partial class MainWindow
         _compactNameDropShadow?.Dispose();
         _compactNameDropShadow = null;
 
+        if (_expandedNameShadowRoot is not null)
+        {
+            ElementCompositionPreview.SetElementChildVisual(ExpandedNameShadowHost, null);
+            _expandedNameShadowRoot.Children.RemoveAll();
+            _expandedNameShadowRoot.Dispose();
+            _expandedNameShadowRoot = null;
+        }
+        if (_expandedNameDropShadow is not null) _expandedNameDropShadow.Mask = null;
+        if (_expandedNameDropShadowAura is not null) _expandedNameDropShadowAura.Mask = null;
+        _expandedNameAlphaMask?.Dispose();
+        _expandedNameAlphaMask = null;
+        _expandedNameShadowAuraVisual?.Dispose();
+        _expandedNameShadowAuraVisual = null;
+        _expandedNameDropShadowAura?.Dispose();
+        _expandedNameDropShadowAura = null;
+        _expandedNameShadowVisual?.Dispose();
+        _expandedNameShadowVisual = null;
+        _expandedNameDropShadow?.Dispose();
+        _expandedNameDropShadow = null;
+
         if (_compactTileShadowVisual is not null)
         {
             ElementCompositionPreview.SetElementChildVisual(CompactShadowHost, null);
             _compactTileShadowVisual.Dispose();
             _compactTileShadowVisual = null;
         }
-        _compactTileDropShadow?.Dispose();
-        _compactTileDropShadow = null;
+        if (_compactTileDropShadow is not null)
+        {
+            _compactTileDropShadow.ImplicitAnimations = null;
+            _compactTileDropShadow.Mask = null;
+            _compactTileDropShadow.Dispose();
+            _compactTileDropShadow = null;
+        }
+        _compactTileShadowImplicitAnims?.Dispose();
+        _compactTileShadowImplicitAnims = null;
+        _compactTileShadowBlurAnim?.Dispose();
+        _compactTileShadowBlurAnim = null;
+        _compactTileShadowOffsetAnim?.Dispose();
+        _compactTileShadowOffsetAnim = null;
+        _compactTileShadowMaskBrush?.Dispose();
+        _compactTileShadowMaskBrush = null;
+        if (_compactTileShadowMaskSurface is not null)
+        {
+            _compactTileShadowMaskSurface.SourceVisual = null;
+            _compactTileShadowMaskSurface.Dispose();
+            _compactTileShadowMaskSurface = null;
+        }
+        if (_compactTileShadowMaskVisual is not null)
+        {
+            _compactTileShadowMaskVisual.Shapes.Clear();
+            _compactTileShadowMaskVisual.Dispose();
+            _compactTileShadowMaskVisual = null;
+        }
+        _compactTileShadowMaskShape?.Dispose();
+        _compactTileShadowMaskShape = null;
+        _compactTileShadowMaskFill?.Dispose();
+        _compactTileShadowMaskFill = null;
+        _compactTileShadowMaskGeom?.Dispose();
+        _compactTileShadowMaskGeom = null;
 
         if (_compactSpecularVisual is not null)
         {
+            _compactSpecularVisual.ImplicitAnimations = null;
             ElementCompositionPreview.SetElementChildVisual(CompactSpecularOverlay, null);
             _compactSpecularVisual.Dispose();
             _compactSpecularVisual = null;
         }
+        _compactSpecularImplicitAnims?.Dispose();
+        _compactSpecularImplicitAnims = null;
+        _compactSpecularOpacityAnim?.Dispose();
+        _compactSpecularOpacityAnim = null;
         _compactSpecularBrush?.Dispose();
         _compactSpecularBrush = null;
         _compactTileShadowClip?.Dispose();
         _compactTileShadowClip = null;
         _compactTileShadowGeom?.Dispose();
         _compactTileShadowGeom = null;
+
+        _tileScaleSpring?.Dispose();
+        _tileScaleSpring = null;
+        _iconScaleSpring?.Dispose();
+        _iconScaleSpring = null;
+
+        if (_overlayImplicitAnimsAttached)
+        {
+            ElementCompositionPreview.SetImplicitShowAnimation(ExpandedFilterBar, null);
+            ElementCompositionPreview.SetImplicitHideAnimation(ExpandedFilterBar, null);
+            ElementCompositionPreview.SetImplicitShowAnimation(SelectionCountBadge, null);
+            ElementCompositionPreview.SetImplicitHideAnimation(SelectionCountBadge, null);
+            _overlayImplicitAnimsAttached = false;
+        }
+        _overlayShowAnimGroup?.Dispose();
+        _overlayShowAnimGroup = null;
+        _overlayHideAnimGroup?.Dispose();
+        _overlayHideAnimGroup = null;
+        _overlayShowOpacityAnim?.Dispose();
+        _overlayShowOpacityAnim = null;
+        _overlayShowTranslationAnim?.Dispose();
+        _overlayShowTranslationAnim = null;
+        _overlayHideOpacityAnim?.Dispose();
+        _overlayHideOpacityAnim = null;
+        _overlayHideTranslationAnim?.Dispose();
+        _overlayHideTranslationAnim = null;
+        _overlayEaseOut?.Dispose();
+        _overlayEaseOut = null;
     }
 
     private void CompactTile_PointerEntered(object sender, PointerRoutedEventArgs e)

@@ -10,6 +10,7 @@ namespace TuckPane.Services;
 /// </summary>
 internal sealed class LayoutSnapshotService
 {
+    internal const long MaximumImportFileBytes = 5L * 1024 * 1024;
     private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly string _storePath;
@@ -85,7 +86,13 @@ internal sealed class LayoutSnapshotService
 
     internal async Task<int> ImportFromFileAsync(string sourcePath)
     {
-        string json = await File.ReadAllTextAsync(Path.GetFullPath(sourcePath));
+        string fullPath = Path.GetFullPath(sourcePath);
+        var fileInfo = new FileInfo(fullPath);
+        if (!fileInfo.Exists) throw new FileNotFoundException("布局快照文件不存在。", fullPath);
+        if (fileInfo.Length > MaximumImportFileBytes)
+            throw new InvalidDataException("布局快照文件超过 5 MB 上限。");
+
+        string json = await File.ReadAllTextAsync(fullPath);
         LayoutSnapshotStoreData? imported = JsonSerializer.Deserialize<LayoutSnapshotStoreData>(json, JsonOptions);
         if (imported?.Snapshots is not { Count: > 0 }) return 0;
 
@@ -136,19 +143,31 @@ internal sealed class LayoutSnapshotService
         Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
         string temporary = destination + ".tmp";
         byte[] utf8 = JsonSerializer.SerializeToUtf8Bytes(data, JsonOptions);
-        await using (var stream = new FileStream(temporary, new FileStreamOptions
+        try
         {
-            Mode = FileMode.Create,
-            Access = FileAccess.Write,
-            Share = FileShare.None,
-            Options = FileOptions.Asynchronous | FileOptions.WriteThrough,
-            PreallocationSize = utf8.Length
-        }))
-        {
-            await stream.WriteAsync(utf8);
-            await stream.FlushAsync();
-            stream.Flush(flushToDisk: true);
+            await using (var stream = new FileStream(temporary, new FileStreamOptions
+            {
+                Mode = FileMode.Create,
+                Access = FileAccess.Write,
+                Share = FileShare.None,
+                Options = FileOptions.Asynchronous | FileOptions.WriteThrough,
+                PreallocationSize = utf8.Length
+            }))
+            {
+                await stream.WriteAsync(utf8);
+                await stream.FlushAsync();
+                stream.Flush(flushToDisk: true);
+            }
+            File.Move(temporary, destination, overwrite: true);
         }
-        File.Move(temporary, destination, overwrite: true);
+        finally
+        {
+            try
+            {
+                if (File.Exists(temporary)) File.Delete(temporary);
+            }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
+        }
     }
 }

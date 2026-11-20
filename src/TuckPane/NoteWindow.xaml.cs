@@ -27,6 +27,7 @@ public sealed partial class NoteWindow : Window, IPortableDocumentWindow
     private NoteDocument _document = new();
     private Task<NoteDocument>? _documentLoadTask;
     private Uri? _editorUri;
+    private Microsoft.Web.WebView2.Core.CoreWebView2? _coreWebView;
 
     internal NoteWindow(
         AppHost host,
@@ -58,7 +59,7 @@ public sealed partial class NoteWindow : Window, IPortableDocumentWindow
         _saveTimer = DispatcherQueue.CreateTimer();
         _saveTimer.Interval = TimeSpan.FromMilliseconds(350);
         _saveTimer.IsRepeating = false;
-        _saveTimer.Tick += async (_, _) => await FlushAsync(readEditor: false);
+        _saveTimer.Tick += SaveTimer_Tick;
 
         _windowChrome = new PortableDocumentWindowChrome(
             this,
@@ -213,14 +214,9 @@ public sealed partial class NoteWindow : Window, IPortableDocumentWindow
             core.Settings.AreDefaultContextMenusEnabled = false;
             core.Settings.AreDevToolsEnabled = false;
             core.Settings.IsStatusBarEnabled = false;
-            core.NewWindowRequested += (_, eventArgs) => eventArgs.Handled = true;
-            core.NavigationStarting += (_, eventArgs) =>
-            {
-                if (_editorUri is null || !Uri.TryCreate(eventArgs.Uri, UriKind.Absolute, out Uri? target) ||
-                    !target.IsFile || !Path.GetFullPath(target.LocalPath)
-                        .Equals(Path.GetFullPath(_editorUri.LocalPath), StringComparison.OrdinalIgnoreCase))
-                    eventArgs.Cancel = true;
-            };
+            _coreWebView = core;
+            core.NewWindowRequested += CoreWebView2_NewWindowRequested;
+            core.NavigationStarting += CoreWebView2_NavigationStarting;
             core.WebMessageReceived += CoreWebView2_WebMessageReceived;
             string htmlPath = Path.Combine(AppContext.BaseDirectory, "Assets", "NoteEditor.html");
             _editorUri = new Uri(htmlPath);
@@ -435,14 +431,43 @@ public sealed partial class NoteWindow : Window, IPortableDocumentWindow
         }
     }
 
+    private static void CoreWebView2_NewWindowRequested(
+        Microsoft.Web.WebView2.Core.CoreWebView2 sender,
+        Microsoft.Web.WebView2.Core.CoreWebView2NewWindowRequestedEventArgs eventArgs) =>
+        eventArgs.Handled = true;
+
+    private void CoreWebView2_NavigationStarting(
+        Microsoft.Web.WebView2.Core.CoreWebView2 sender,
+        Microsoft.Web.WebView2.Core.CoreWebView2NavigationStartingEventArgs eventArgs)
+    {
+        if (_editorUri is null || !Uri.TryCreate(eventArgs.Uri, UriKind.Absolute, out Uri? target) ||
+            !target.IsFile || !Path.GetFullPath(target.LocalPath)
+                .Equals(Path.GetFullPath(_editorUri.LocalPath), StringComparison.OrdinalIgnoreCase))
+            eventArgs.Cancel = true;
+    }
+
+    private async void SaveTimer_Tick(Microsoft.UI.Dispatching.DispatcherQueueTimer sender, object args)
+    {
+        try { _ = await FlushAsync(readEditor: false); }
+        catch (Exception ex) { AppLogger.Error($"定时保存便签失败：{Id}", ex); }
+    }
+
     private async void RuledLinesButton_Click(object sender, RoutedEventArgs e)
     {
-        _definition.ShowRuledLines = HeaderBar.OptionToggleButton.IsChecked == true;
-        if (_editorReady && Editor.CoreWebView2 is not null)
-            await Editor.CoreWebView2.ExecuteScriptAsync(
-                $"window.__tuckpane?.setRuledLines({JsonSerializer.Serialize(_definition.ShowRuledLines)})");
-        await PersistMetadataAsync();
-        await FocusEditorAsync();
+        try
+        {
+            _definition.ShowRuledLines = HeaderBar.OptionToggleButton.IsChecked == true;
+            if (_editorReady && Editor.CoreWebView2 is not null)
+                await Editor.CoreWebView2.ExecuteScriptAsync(
+                    $"window.__tuckpane?.setRuledLines({JsonSerializer.Serialize(_definition.ShowRuledLines)})");
+            await PersistMetadataAsync();
+            await FocusEditorAsync();
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Error($"切换便签横线失败：{Id}", ex);
+            ShowError(AppStrings.Format("NoteEditorErrorFormat", ex.Message));
+        }
     }
 
     private async Task PersistMetadataAsync()
@@ -455,10 +480,17 @@ public sealed partial class NoteWindow : Window, IPortableDocumentWindow
 
     private async void WindowRoot_ActualThemeChanged(FrameworkElement sender, object args)
     {
-        ApplyTheme();
-        if (_editorReady && Editor.CoreWebView2 is not null)
-            await Editor.CoreWebView2.ExecuteScriptAsync(
-                $"window.__tuckpane?.setTheme({JsonSerializer.Serialize(_windowChrome.BuildEditorCssPalette(_definition.Theme))})");
+        try
+        {
+            ApplyTheme();
+            if (_editorReady && Editor.CoreWebView2 is not null)
+                await Editor.CoreWebView2.ExecuteScriptAsync(
+                    $"window.__tuckpane?.setTheme({JsonSerializer.Serialize(_windowChrome.BuildEditorCssPalette(_definition.Theme))})");
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Error($"同步便签系统主题失败：{Id}", ex);
+        }
     }
 
     private async Task CommitTitleRenameAsync(string candidate)
@@ -484,9 +516,20 @@ public sealed partial class NoteWindow : Window, IPortableDocumentWindow
 
     private void NoteWindow_Closed(object sender, WindowEventArgs args)
     {
+        Closed -= NoteWindow_Closed;
         Activated -= NoteWindow_Activated;
         WindowRoot.ActualThemeChanged -= WindowRoot_ActualThemeChanged;
+        HeaderBar.ColorButton.Click -= ColorButton_Click;
+        HeaderBar.OptionToggleButton.Click -= RuledLinesButton_Click;
+        if (_coreWebView is not null)
+        {
+            _coreWebView.NewWindowRequested -= CoreWebView2_NewWindowRequested;
+            _coreWebView.NavigationStarting -= CoreWebView2_NavigationStarting;
+            _coreWebView.WebMessageReceived -= CoreWebView2_WebMessageReceived;
+            _coreWebView = null;
+        }
         _saveTimer.Stop();
+        _saveTimer.Tick -= SaveTimer_Tick;
         _editorReady = false;
         _windowChrome.Dispose();
         Editor.Close();

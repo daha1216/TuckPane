@@ -96,6 +96,7 @@ internal sealed class FreeSlotGridLayout : NonVirtualizingLayout
         get => _slotResolver;
         set
         {
+            if (ReferenceEquals(_slotResolver, value)) return;
             _slotResolver = value;
             InvalidateMeasure();
         }

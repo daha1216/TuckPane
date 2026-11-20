@@ -97,6 +97,18 @@ internal sealed class DesktopAttachmentCoordinator
 
     private async void StationPointerTimer_Tick(DispatcherQueueTimer sender, object args)
     {
+        try
+        {
+            await StationPointerTimerTickCoreAsync();
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Error("边缘轮询定时器处理异常。", ex);
+        }
+    }
+
+    private async Task StationPointerTimerTickCoreAsync()
+    {
         OrganizerDefinition definition = _window.Definition;
         GlobalSettings settings = _window.Host.State.GlobalSettings;
         OrganizerInteractionSnapshot interaction = _window.CaptureInteractionState();
@@ -287,7 +299,7 @@ internal sealed class DesktopAttachmentCoordinator
                 AppLogger.Performance(
                     $"desktop repair pass state={attachment} remaining={remaining} {desktopLayer.DescribeAttachment()}");
             }
-            else
+            else if (!healthChecked)
             {
                 desktopLayer.Reattach();
             }

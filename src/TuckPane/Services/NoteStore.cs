@@ -167,7 +167,7 @@ public sealed class NoteStore
                 }
                 finally
                 {
-                    if (File.Exists(temporary)) File.Delete(temporary);
+                    TryDeleteTemporary(temporary);
                 }
             }
             throw new IOException("目标目录冲突过于频繁，未创建便签。");
@@ -204,7 +204,7 @@ public sealed class NoteStore
                 }
                 finally
                 {
-                    if (File.Exists(temporary)) File.Delete(temporary);
+                    TryDeleteTemporary(temporary);
                 }
             }
             throw new IOException("目标目录冲突过于频繁，未创建待办。");
@@ -256,8 +256,16 @@ public sealed class NoteStore
         }
         finally
         {
-            if (File.Exists(temporary)) File.Delete(temporary);
-            _gate.Release();
+            try
+            {
+                if (File.Exists(temporary)) File.Delete(temporary);
+            }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
+            finally
+            {
+                _gate.Release();
+            }
         }
     }
 
@@ -302,9 +310,27 @@ public sealed class NoteStore
         }
         finally
         {
-            if (File.Exists(temporary)) File.Delete(temporary);
-            _gate.Release();
+            try
+            {
+                if (File.Exists(temporary)) File.Delete(temporary);
+            }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
+            finally
+            {
+                _gate.Release();
+            }
         }
+    }
+
+    private static void TryDeleteTemporary(string temporary)
+    {
+        try
+        {
+            if (File.Exists(temporary)) File.Delete(temporary);
+        }
+        catch (IOException) { }
+        catch (UnauthorizedAccessException) { }
     }
 
     internal async Task<IReadOnlyList<string>> ApplyThemeToTopLevelPortableFilesAsync(

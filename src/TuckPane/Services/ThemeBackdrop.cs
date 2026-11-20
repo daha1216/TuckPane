@@ -1,3 +1,4 @@
+using Microsoft.Graphics.Canvas.Effects;
 using Microsoft.UI.Composition;
 using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml.Controls;
@@ -27,6 +28,16 @@ internal sealed class ThemeBackdrop : CompositionBrushBackdrop
     // the flag as if it owned the whole window.
     private static readonly object HostBackdropGate = new();
     private static readonly Dictionary<IntPtr, int> HostBackdropRequestCounts = [];
+    private static readonly object GlassFactoryGate = new();
+    private static readonly ConditionalWeakTable<Wuc.Compositor, Wuc.CompositionEffectFactory> GlassEffectFactories = [];
+    private static readonly string[] GlassAnimatableProperties =
+    [
+        "Blur.BlurAmount",
+        "TintOpacity.Opacity",
+        "TintColor.Color",
+        "NeutralOpacity.Opacity",
+        "NeutralColor.Color"
+    ];
 
     private ThemeValues _theme;
     private ThemeCompositionPlan _plan;
@@ -43,6 +54,9 @@ internal sealed class ThemeBackdrop : CompositionBrushBackdrop
     private IntPtr _hwnd;
     private Wuc.CompositionBrush? _currentBrush;
     private Wuc.CompositionBackdropBrush? _backdropBrush;
+    private Wuc.CompositionEffectBrush? _effectBrush;
+    private Wuc.CompositionColorBrush? _colorBrush;
+    private ThemeBackdropBranch? _activeBranch;
     private WindowMessageMonitor? _messageMonitor;
     private bool _hostBackdropCapabilityAvailable;
     private IntPtr _registeredHostBackdropHwnd;
@@ -200,11 +214,39 @@ internal sealed class ThemeBackdrop : CompositionBrushBackdrop
         _hasTheme = true;
         _theme = theme;
         _plan = next;
-        if (_target is not null && _compositor is not null)
+        if (_target is null || _compositor is null) return;
+
+        // Fast path: staying on the active Glass effect brush updates animatable
+        // compositor properties in place with zero shader recompilation, zero
+        // HostBackdrop/DWM calls, and zero RoundedBackdropMask churn.
+        if (_activeBranch == ThemeBackdropBranch.Glass &&
+            _effectBrush is not null &&
+            _hostBackdropCapabilityAvailable &&
+            ThemeEffectGraph.ResolveBranch(_plan, _hostBackdropCapabilityAvailable) == ThemeBackdropBranch.Glass)
         {
-            UpdateHostBackdropCapability();
-            ReplaceConnectedBrush();
+            ApplyGlassEffectProperties(_effectBrush, _plan);
+            IsAvailable = true;
+            return;
         }
+
+        // Fast path: staying on a color-only branch mutates the live color brush directly.
+        if (_activeBranch is ThemeBackdropBranch currentBranch &&
+            currentBranch is not (ThemeBackdropBranch.Glass or ThemeBackdropBranch.Fallback) &&
+            _colorBrush is not null &&
+            !_plan.RequiresHostBackdrop)
+        {
+            ThemeBackdropBranch nextBranch = ThemeEffectGraph.ResolveBranch(_plan, _hostBackdropCapabilityAvailable);
+            if (nextBranch is not (ThemeBackdropBranch.Glass or ThemeBackdropBranch.Fallback))
+            {
+                _colorBrush.Color = ThemePalette.WithOpacity(_plan.TintColor, _plan.TintOpacity);
+                _activeBranch = nextBranch;
+                IsAvailable = true;
+                return;
+            }
+        }
+
+        UpdateHostBackdropCapability();
+        ReplaceConnectedBrush();
     }
 
     protected override Wuc.CompositionBrush CreateBrush(Wuc.Compositor compositor)
@@ -268,6 +310,9 @@ internal sealed class ThemeBackdrop : CompositionBrushBackdrop
                     _target = null;
                     _compositor = null;
                     _currentBrush = null;
+                    _effectBrush = null;
+                    _colorBrush = null;
+                    _activeBranch = null;
                     WindowMessageMonitor? monitor = _messageMonitor;
                     _messageMonitor = null;
                     Wuc.CompositionBackdropBrush? backdrop = _backdropBrush;
@@ -318,6 +363,7 @@ internal sealed class ThemeBackdrop : CompositionBrushBackdrop
         // then rebuild the graph so availability changes cannot leave an old
         // brush (or stale blur topology) mounted on the target.
         _hwnd = e.Message.Hwnd;
+        InvalidateGlassEffectFactory(_compositor);
         UpdateHostBackdropCapability();
         ReplaceConnectedBrush();
     }
@@ -415,6 +461,9 @@ internal sealed class ThemeBackdrop : CompositionBrushBackdrop
         Wuc.CompositionBrush? previous = _currentBrush;
         Wuc.CompositionBackdropBrush? previousBackdrop = _backdropBrush;
         Wuc.CompositionBrush? previousSource = _maskedSourceBrush;
+        Wuc.CompositionEffectBrush? previousEffectBrush = _effectBrush;
+        Wuc.CompositionColorBrush? previousColorBrush = _colorBrush;
+        ThemeBackdropBranch? previousBranch = _activeBranch;
         Wuc.CompositionBrush next = ApplyRoundedMask(_compositor, BuildBrush(_compositor));
         try
         {
@@ -427,6 +476,9 @@ internal sealed class ThemeBackdrop : CompositionBrushBackdrop
             _backdropBrush?.Dispose();
             _maskedSourceBrush = previousSource;
             _backdropBrush = previousBackdrop;
+            _effectBrush = previousEffectBrush;
+            _colorBrush = previousColorBrush;
+            _activeBranch = previousBranch;
             if (_useRoundedMask && _surfaceHost is not null)
                 _surfaceHost.CornerRadius = new CornerRadius(previousSource is null ? _roundedGeometry.Radius : 0);
             throw;
@@ -481,6 +533,9 @@ internal sealed class ThemeBackdrop : CompositionBrushBackdrop
     private Wuc.CompositionBrush BuildBrush(Wuc.Compositor compositor)
     {
         _backdropBrush = null;
+        _effectBrush = null;
+        _colorBrush = null;
+        _activeBranch = null;
         Wuc.CompositionBackdropBrush? backdrop = null;
         Wuc.CompositionEffectBrush? effectBrush = null;
         ThemeBackdropBranch branch = ThemeEffectGraph.ResolveBranch(_plan, _hostBackdropCapabilityAvailable);
@@ -493,10 +548,10 @@ internal sealed class ThemeBackdrop : CompositionBrushBackdrop
             }
 
             backdrop = compositor.CreateHostBackdropBrush();
-            IGraphicsEffect effect = ThemeEffectGraph.Create(
-                _plan, new Wuc.CompositionEffectSourceParameter("Backdrop"));
-            effectBrush = CreateEffectBrush(compositor, effect, backdrop);
+            effectBrush = CreateGlassEffectBrush(compositor, _plan, backdrop);
             _backdropBrush = backdrop;
+            _effectBrush = effectBrush;
+            _activeBranch = ThemeBackdropBranch.Glass;
             IsAvailable = true;
             LogBranch(ThemeBackdropBranch.Glass);
             return effectBrush;
@@ -506,6 +561,7 @@ internal sealed class ThemeBackdrop : CompositionBrushBackdrop
             effectBrush?.Dispose();
             backdrop?.Dispose();
             _backdropBrush = null;
+            _effectBrush = null;
             AppLogger.Error("HostBackdrop 玻璃效果不可用，已切换为遵守不透明度的主题色。", ex);
             DisableHostBackdropCapability();
             return BuildColorBrush(compositor, ThemeBackdropBranch.Fallback);
@@ -515,8 +571,10 @@ internal sealed class ThemeBackdrop : CompositionBrushBackdrop
     private Wuc.CompositionBrush BuildColorBrush(Wuc.Compositor compositor, ThemeBackdropBranch branch)
     {
         IsAvailable = branch != ThemeBackdropBranch.Fallback;
-        Wuc.CompositionBrush brush = compositor.CreateColorBrush(
+        Wuc.CompositionColorBrush brush = compositor.CreateColorBrush(
             ThemePalette.WithOpacity(_plan.TintColor, _plan.TintOpacity));
+        _colorBrush = brush;
+        _activeBranch = branch;
         LogBranch(branch);
         return brush;
     }
@@ -531,22 +589,105 @@ internal sealed class ThemeBackdrop : CompositionBrushBackdrop
         AppLogger.Info(diagnostic);
     }
 
-    private static Wuc.CompositionEffectBrush CreateEffectBrush(
+    private static Wuc.CompositionEffectBrush CreateGlassEffectBrush(
         Wuc.Compositor compositor,
-        IGraphicsEffect effect,
+        ThemeCompositionPlan plan,
         Wuc.CompositionBackdropBrush backdrop)
     {
-        using Wuc.CompositionEffectFactory factory = compositor.CreateEffectFactory(effect);
-        Wuc.CompositionEffectBrush brush = factory.CreateBrush();
+        Wuc.CompositionEffectFactory factory = GetOrCreateGlassEffectFactory(compositor, plan);
+        Wuc.CompositionEffectBrush brush;
+        try
+        {
+            brush = factory.CreateBrush();
+        }
+        catch
+        {
+            InvalidateGlassEffectFactory(compositor);
+            factory = GetOrCreateGlassEffectFactory(compositor, plan);
+            brush = factory.CreateBrush();
+        }
         try
         {
             brush.SetSourceParameter("Backdrop", backdrop);
+            ApplyGlassEffectProperties(brush, plan);
             return brush;
         }
         catch
         {
             brush.Dispose();
             throw;
+        }
+    }
+
+    private static Wuc.CompositionEffectFactory GetOrCreateGlassEffectFactory(
+        Wuc.Compositor compositor,
+        ThemeCompositionPlan plan)
+    {
+        lock (GlassFactoryGate)
+        {
+            if (GlassEffectFactories.TryGetValue(compositor, out Wuc.CompositionEffectFactory? cached))
+                return cached;
+
+            IGraphicsEffect effect = ThemeEffectGraph.Create(
+                plan, new Wuc.CompositionEffectSourceParameter("Backdrop"));
+            try
+            {
+                Wuc.CompositionEffectFactory created = compositor.CreateEffectFactory(
+                    effect, GlassAnimatableProperties);
+                GlassEffectFactories.AddOrUpdate(compositor, created);
+                return created;
+            }
+            finally
+            {
+                DisposeEffectGraph(effect);
+            }
+        }
+    }
+
+    private static void InvalidateGlassEffectFactory(Wuc.Compositor compositor)
+    {
+        lock (GlassFactoryGate)
+        {
+            if (GlassEffectFactories.TryGetValue(compositor, out Wuc.CompositionEffectFactory? existing))
+            {
+                GlassEffectFactories.Remove(compositor);
+                try { existing.Dispose(); }
+                catch { /* Best-effort cleanup of stale factory after DWM reset. */ }
+            }
+        }
+    }
+
+    private static void ApplyGlassEffectProperties(Wuc.CompositionEffectBrush brush, ThemeCompositionPlan plan)
+    {
+        Wuc.CompositionPropertySet properties = brush.Properties;
+        properties.InsertScalar("Blur.BlurAmount", plan.BlurAmount);
+        properties.InsertScalar("TintOpacity.Opacity", plan.TintOpacity);
+        properties.InsertColor("TintColor.Color", plan.TintColor);
+        properties.InsertScalar("NeutralOpacity.Opacity", plan.LuminosityOpacity);
+        properties.InsertColor("NeutralColor.Color", plan.LuminosityColor);
+    }
+
+    private static void DisposeEffectGraph(IGraphicsEffectSource? node)
+    {
+        if (node is null) return;
+        switch (node)
+        {
+            case GaussianBlurEffect blur:
+                DisposeEffectGraph(blur.Source);
+                blur.Dispose();
+                break;
+            case CompositeEffect composite:
+                foreach (IGraphicsEffectSource source in composite.Sources)
+                    DisposeEffectGraph(source);
+                composite.Dispose();
+                break;
+            case OpacityEffect opacity:
+                DisposeEffectGraph(opacity.Source);
+                opacity.Dispose();
+                break;
+            case IDisposable disposable:
+                disposable.Dispose();
+                break;
         }
     }
 

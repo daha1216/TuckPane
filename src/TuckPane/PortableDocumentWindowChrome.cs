@@ -444,7 +444,18 @@ internal sealed class PortableDocumentWindowChrome : IDisposable
         HeightDip = placement.HeightDip
     };
 
-    private async void CloseButton_Click(object sender, RoutedEventArgs e) => await _hideWindowAsync();
+    private async void CloseButton_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            await _hideWindowAsync();
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Error("关闭便携文档窗口失败。", ex);
+            ShowError(ex.Message);
+        }
+    }
 
     private void TitleDragSurface_SizeChanged(object sender, SizeChangedEventArgs e) => UpdateTitlePassthrough();
 
@@ -549,8 +560,14 @@ internal sealed class PortableDocumentWindowChrome : IDisposable
             Bottom = top + height
         }, display.Work);
         _restoringPlacement = true;
-        _appWindow.MoveAndResize(new RectInt32(bounds.Left, bounds.Top, bounds.Width, bounds.Height));
-        _restoringPlacement = false;
+        try
+        {
+            _appWindow.MoveAndResize(new RectInt32(bounds.Left, bounds.Top, bounds.Width, bounds.Height));
+        }
+        finally
+        {
+            _restoringPlacement = false;
+        }
     }
 
     private void AppWindow_Changed(AppWindow sender, AppWindowChangedEventArgs args)
@@ -574,8 +591,14 @@ internal sealed class PortableDocumentWindowChrome : IDisposable
             if (width != sender.Size.Width || height != sender.Size.Height)
             {
                 _restoringPlacement = true;
-                sender.Resize(new SizeInt32(width, height));
-                _restoringPlacement = false;
+                try
+                {
+                    sender.Resize(new SizeInt32(width, height));
+                }
+                finally
+                {
+                    _restoringPlacement = false;
+                }
             }
         }
         if (!NativeMethods.GetWindowRect(_hwnd, out NativeMethods.RECT bounds)) return;
@@ -599,6 +622,12 @@ internal sealed class PortableDocumentWindowChrome : IDisposable
 
     public void Dispose()
     {
+        _titleBar.TitleDragSurface.SizeChanged -= TitleDragSurface_SizeChanged;
+        _titleBar.TitleText.SizeChanged -= TitleDragSurface_SizeChanged;
+        _titleBar.TitleText.Tapped -= TitleText_Tapped;
+        _titleBar.TitleEditor.KeyDown -= TitleEditor_KeyDown;
+        _titleBar.TitleEditor.LostFocus -= TitleEditor_LostFocus;
+        _titleBar.CloseButton.Click -= CloseButton_Click;
         if (_initialized)
         {
             _appWindow.Changed -= AppWindow_Changed;

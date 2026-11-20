@@ -1,72 +1,211 @@
 using System.Diagnostics;
+using System.Numerics;
 using Microsoft.UI;
+using Microsoft.UI.Composition;
+using Microsoft.UI.Composition.SystemBackdrops;
+using Microsoft.UI.Text;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Documents;
+using Microsoft.UI.Xaml.Hosting;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
+using Microsoft.UI.Xaml.Media.Imaging;
 using TuckPane.Core;
 using TuckPane.Models;
 using Windows.System;
 using Windows.UI;
+using Windows.UI.ViewManagement;
 using WinRT.Interop;
 
 namespace TuckPane.Services;
 
 /// <summary>
-/// Spotlight-style instant search window that searches across all organizers'
+/// Spotlight/Raycast-style instant search window that searches across all organizers'
 /// top-level items on a background thread without mutating storage directories.
 /// </summary>
 internal sealed class OrganizerSearchWindow : Window
 {
-    private const double WindowWidthDip = 620;
-    private const double WindowHeightDip = 440;
+    private const double WindowWidthDip = 660;
+    private const double WindowHeightDip = 456;
 
     private readonly AppHost _host;
+    private readonly UISettings _uiSettings = new();
+    private readonly AccessibilitySettings _accessibilitySettings = new();
     private readonly TextBox _queryBox;
+    private readonly Button _clearButton;
+    private readonly Border _countBadge;
+    private readonly TextBlock _countBadgeText;
     private readonly ListView _resultsList;
+    private readonly StackPanel _emptyStatePanel;
+    private readonly FontIcon _emptyStateIcon;
     private readonly TextBlock _statusText;
-    private readonly TextBlock _hintText;
+    private readonly StackPanel _footerPanel;
     private readonly Border _cardBorder;
     private readonly List<OrganizerSearchEntry> _index = [];
+
+    // Pre-allocated mutable brushes updated in-place on theme refresh (zero per-keystroke allocation).
+    private readonly SolidColorBrush _transparentBrush = new(Colors.Transparent);
+    private readonly SolidColorBrush _cardBackgroundBrush = new(Color.FromArgb(248, 248, 249, 251));
+    private readonly SolidColorBrush _cardBorderBrush = new(Color.FromArgb(40, 0, 0, 0));
+    private readonly SolidColorBrush _dividerBrush = new(Color.FromArgb(24, 0, 0, 0));
+    private readonly SolidColorBrush _primaryTextBrush = new(Color.FromArgb(255, 24, 26, 30));
+    private readonly SolidColorBrush _secondaryTextBrush = new(Color.FromArgb(255, 104, 108, 118));
+    private readonly SolidColorBrush _accentBrush = new(Color.FromArgb(255, 0, 103, 192));
+    private readonly SolidColorBrush _badgeBackgroundBrush = new(Color.FromArgb(24, 0, 120, 212));
+    private readonly SolidColorBrush _badgeTextBrush = new(Color.FromArgb(255, 0, 90, 170));
+    private readonly SolidColorBrush _countBadgeBackgroundBrush = new(Color.FromArgb(14, 0, 0, 0));
+    private readonly SolidColorBrush _kbdBackgroundBrush = new(Color.FromArgb(230, 255, 255, 255));
+    private readonly SolidColorBrush _kbdBorderBrush = new(Color.FromArgb(36, 0, 0, 0));
+    private readonly SolidColorBrush _kbdTextBrush = new(Color.FromArgb(255, 64, 68, 78));
+    private readonly SolidColorBrush _clearHoverBrush = new(Color.FromArgb(18, 0, 0, 0));
+    private readonly SolidColorBrush _clearPressedBrush = new(Color.FromArgb(32, 0, 0, 0));
+
+    private BitmapImage? _noteAssetIcon;
+    private BitmapImage? _todoAssetIcon;
+    private BitmapImage? _organizerAssetIcon;
+
     private IReadOnlyList<OrganizerSearchHit> _currentHits = [];
     private IntPtr _hwnd;
     private AppWindow? _appWindow;
+    private bool _usesBackdrop;
     private bool _initialized;
     private bool _closed;
+    private bool _isIndexing;
     private int _indexVersion;
+    private int _renderVersion;
     private long _lastOpenedTimestamp;
     private bool _hasBeenActivatedSinceOpen;
+    private IDisposable? _entranceBoost;
+    private CompositionScopedBatch? _entranceBatch;
 
     internal OrganizerSearchWindow(AppHost host)
     {
         _host = host;
         Title = AppStrings.Get("SearchWindowTitle");
 
+        try
+        {
+            if (DesktopAcrylicController.IsSupported())
+            {
+                SystemBackdrop = new DesktopAcrylicBackdrop();
+                _usesBackdrop = true;
+            }
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Error("搜索窗口启用系统半透明背景失败，将回退至纯色表面。", ex);
+            _usesBackdrop = false;
+        }
+
         _queryBox = new TextBox
         {
             PlaceholderText = AppStrings.Get("SearchPlaceholder"),
-            FontSize = 16,
+            FontSize = 16.5,
             BorderThickness = new Thickness(0),
-            Background = new SolidColorBrush(Colors.Transparent),
-            Padding = new Thickness(8, 10, 8, 10)
+            Background = _transparentBrush,
+            Foreground = _primaryTextBrush,
+            PlaceholderForeground = _secondaryTextBrush,
+            Padding = new Thickness(6, 12, 6, 12),
+            VerticalAlignment = VerticalAlignment.Center
         };
-        _queryBox.TextChanged += (_, _) => ApplyFilter();
+        ConfigureBorderlessQueryBoxResources(_queryBox);
+        _queryBox.TextChanged += (_, _) =>
+        {
+            UpdateClearButtonVisibility();
+            ApplyFilter();
+        };
         _queryBox.PreviewKeyDown += QueryBox_PreviewKeyDown;
 
-        _statusText = new TextBlock
+        _clearButton = new Button
         {
-            FontSize = 12,
-            Opacity = 0.7,
-            Margin = new Thickness(12, 0, 12, 6),
-            Text = AppStrings.Get("SearchIndexing")
+            Width = 26,
+            Height = 26,
+            Padding = new Thickness(0),
+            CornerRadius = new CornerRadius(13),
+            Background = _transparentBrush,
+            BorderThickness = new Thickness(0),
+            VerticalAlignment = VerticalAlignment.Center,
+            Visibility = Visibility.Collapsed,
+            Content = new FontIcon
+            {
+                Glyph = "\uE711",
+                FontSize = 10,
+                Foreground = _secondaryTextBrush
+            }
+        };
+        _clearButton.Resources["ButtonBackground"] = _transparentBrush;
+        _clearButton.Resources["ButtonBackgroundPointerOver"] = _clearHoverBrush;
+        _clearButton.Resources["ButtonBackgroundPressed"] = _clearPressedBrush;
+        _clearButton.Resources["ButtonBorderBrush"] = _transparentBrush;
+        _clearButton.Resources["ButtonBorderBrushPointerOver"] = _transparentBrush;
+        _clearButton.Resources["ButtonBorderBrushPressed"] = _transparentBrush;
+        _clearButton.Click += (_, _) =>
+        {
+            _queryBox.Text = string.Empty;
+            _queryBox.Focus(FocusState.Programmatic);
+        };
+
+        _countBadgeText = new TextBlock
+        {
+            FontSize = 11.5,
+            FontWeight = FontWeights.Medium,
+            Foreground = _secondaryTextBrush,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        _countBadge = new Border
+        {
+            CornerRadius = new CornerRadius(10),
+            Padding = new Thickness(9, 3, 9, 3),
+            Margin = new Thickness(6, 0, 14, 0),
+            Background = _countBadgeBackgroundBrush,
+            VerticalAlignment = VerticalAlignment.Center,
+            Visibility = Visibility.Collapsed,
+            Child = _countBadgeText
+        };
+
+        var searchGlyph = new FontIcon
+        {
+            Glyph = "\uE721",
+            FontSize = 16,
+            Foreground = _secondaryTextBrush,
+            Margin = new Thickness(16, 0, 6, 0),
+            VerticalAlignment = VerticalAlignment.Center
+        };
+
+        var headerGrid = new Grid
+        {
+            ColumnDefinitions =
+            {
+                new ColumnDefinition { Width = GridLength.Auto },
+                new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) },
+                new ColumnDefinition { Width = GridLength.Auto },
+                new ColumnDefinition { Width = GridLength.Auto }
+            }
+        };
+        Grid.SetColumn(searchGlyph, 0);
+        Grid.SetColumn(_queryBox, 1);
+        Grid.SetColumn(_clearButton, 2);
+        Grid.SetColumn(_countBadge, 3);
+        headerGrid.Children.Add(searchGlyph);
+        headerGrid.Children.Add(_queryBox);
+        headerGrid.Children.Add(_clearButton);
+        headerGrid.Children.Add(_countBadge);
+
+        var headerBorder = new Border
+        {
+            Padding = new Thickness(0, 4, 0, 4),
+            BorderThickness = new Thickness(0, 0, 0, 1),
+            BorderBrush = _dividerBrush,
+            Child = headerGrid
         };
 
         _resultsList = new ListView
         {
             SelectionMode = ListViewSelectionMode.Single,
             IsItemClickEnabled = true,
-            Padding = new Thickness(6, 0, 6, 6)
+            Padding = new Thickness(8, 6, 8, 6)
         };
         _resultsList.ItemClick += async (_, e) =>
         {
@@ -75,13 +214,49 @@ internal sealed class OrganizerSearchWindow : Window
         };
         _resultsList.KeyDown += ResultsList_KeyDown;
 
-        _hintText = new TextBlock
+        _emptyStateIcon = new FontIcon
         {
-            FontSize = 11,
-            Opacity = 0.65,
-            Margin = new Thickness(14, 6, 14, 10),
-            Text = AppStrings.Get("SearchFooterHint"),
-            TextWrapping = TextWrapping.Wrap
+            Glyph = "\uE721",
+            FontSize = 26,
+            Foreground = _secondaryTextBrush,
+            Opacity = 0.55,
+            HorizontalAlignment = HorizontalAlignment.Center
+        };
+        _statusText = new TextBlock
+        {
+            FontSize = 13,
+            Foreground = _secondaryTextBrush,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            TextAlignment = TextAlignment.Center,
+            Text = AppStrings.Get("SearchIndexing")
+        };
+        _emptyStatePanel = new StackPanel
+        {
+            Spacing = 8,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center,
+            IsHitTestVisible = false,
+            Visibility = Visibility.Visible,
+            Children = { _emptyStateIcon, _statusText }
+        };
+
+        var resultsHost = new Grid
+        {
+            Children = { _resultsList, _emptyStatePanel }
+        };
+
+        _footerPanel = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 10,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        var footerBorder = new Border
+        {
+            Padding = new Thickness(14, 8, 14, 9),
+            BorderThickness = new Thickness(0, 1, 0, 0),
+            BorderBrush = _dividerBrush,
+            Child = _footerPanel
         };
 
         var rootGrid = new Grid
@@ -89,42 +264,35 @@ internal sealed class OrganizerSearchWindow : Window
             RowDefinitions =
             {
                 new RowDefinition { Height = GridLength.Auto },
-                new RowDefinition { Height = GridLength.Auto },
-                new RowDefinition { Height = GridLength.Auto },
                 new RowDefinition { Height = new GridLength(1, GridUnitType.Star) },
                 new RowDefinition { Height = GridLength.Auto }
             }
         };
-
-        var headerBorder = new Border
-        {
-            Padding = new Thickness(10, 6, 10, 4),
-            BorderThickness = new Thickness(0, 0, 0, 1),
-            BorderBrush = new SolidColorBrush(Color.FromArgb(30, 0, 0, 0)),
-            Child = _queryBox
-        };
         Grid.SetRow(headerBorder, 0);
-        Grid.SetRow(_statusText, 1);
-        Grid.SetRow(_resultsList, 3);
-        Grid.SetRow(_hintText, 4);
-
+        Grid.SetRow(resultsHost, 1);
+        Grid.SetRow(footerBorder, 2);
         rootGrid.Children.Add(headerBorder);
-        rootGrid.Children.Add(_statusText);
-        rootGrid.Children.Add(_resultsList);
-        rootGrid.Children.Add(_hintText);
+        rootGrid.Children.Add(resultsHost);
+        rootGrid.Children.Add(footerBorder);
 
+        bool nativeRounded = NativeMethods.SupportsWindows11DwmAttributes;
         _cardBorder = new Border
         {
-            CornerRadius = new CornerRadius(12),
-            BorderThickness = new Thickness(1),
-            BorderBrush = new SolidColorBrush(Color.FromArgb(45, 0, 0, 0)),
-            Background = new SolidColorBrush(Color.FromArgb(248, 248, 249, 251)),
+            CornerRadius = new CornerRadius(nativeRounded ? 0 : 12),
+            BorderThickness = new Thickness(nativeRounded ? 0 : 1),
+            BorderBrush = _cardBorderBrush,
+            Background = _cardBackgroundBrush,
             Child = rootGrid
         };
 
         Content = _cardBorder;
         Activated += OrganizerSearchWindow_Activated;
-        Closed += (_, _) => _closed = true;
+        Closed += (_, _) =>
+        {
+            _closed = true;
+            ++_renderVersion;
+            CancelEntranceAnimation();
+        };
     }
 
     internal void OpenAndFocus()
@@ -134,11 +302,13 @@ internal sealed class OrganizerSearchWindow : Window
         ApplyLanguageAndTheme();
         PositionOnCursorMonitor();
         _queryBox.Text = string.Empty;
+        UpdateClearButtonVisibility();
         _lastOpenedTimestamp = Stopwatch.GetTimestamp();
         _hasBeenActivatedSinceOpen = false;
         _appWindow?.Show();
         Activate();
         _ = NativeMethods.SetForegroundWindow(_hwnd);
+        StartEntranceAnimation();
         _queryBox.Focus(FocusState.Programmatic);
         _ = RefreshIndexAsync(++_indexVersion);
     }
@@ -146,6 +316,8 @@ internal sealed class OrganizerSearchWindow : Window
     internal void Dismiss()
     {
         if (_closed) return;
+        ++_renderVersion;
+        CancelEntranceAnimation();
         _appWindow?.Hide();
     }
 
@@ -153,7 +325,27 @@ internal sealed class OrganizerSearchWindow : Window
     {
         if (_closed) return;
         _closed = true;
+        ++_renderVersion;
+        CancelEntranceAnimation();
         Close();
+    }
+
+    private void ConfigureBorderlessQueryBoxResources(TextBox box)
+    {
+        box.Resources["TextControlBackground"] = _transparentBrush;
+        box.Resources["TextControlBackgroundPointerOver"] = _transparentBrush;
+        box.Resources["TextControlBackgroundFocused"] = _transparentBrush;
+        box.Resources["TextControlBackgroundDisabled"] = _transparentBrush;
+        box.Resources["TextControlBorderBrush"] = _transparentBrush;
+        box.Resources["TextControlBorderBrushPointerOver"] = _transparentBrush;
+        box.Resources["TextControlBorderBrushFocused"] = _transparentBrush;
+        box.Resources["TextControlBorderBrushDisabled"] = _transparentBrush;
+        box.Resources["TextControlForeground"] = _primaryTextBrush;
+        box.Resources["TextControlForegroundPointerOver"] = _primaryTextBrush;
+        box.Resources["TextControlForegroundFocused"] = _primaryTextBrush;
+        box.Resources["TextControlPlaceholderForeground"] = _secondaryTextBrush;
+        box.Resources["TextControlPlaceholderForegroundPointerOver"] = _secondaryTextBrush;
+        box.Resources["TextControlPlaceholderForegroundFocused"] = _secondaryTextBrush;
     }
 
     private void EnsureInitialized()
@@ -166,11 +358,21 @@ internal sealed class OrganizerSearchWindow : Window
         catch { /* Fallback to WS_EX_TOOLWINDOW below on builds where SetShownInSwitchers is unsupported. */ }
         if (_appWindow.Presenter is OverlappedPresenter presenter)
         {
-            presenter.SetBorderAndTitleBar(false, false);
+            // Keep native Windows 11 thin border + drop shadow while removing the titlebar.
+            presenter.SetBorderAndTitleBar(true, false);
             presenter.IsResizable = false;
             presenter.IsMaximizable = false;
             presenter.IsMinimizable = false;
             presenter.IsAlwaysOnTop = true;
+        }
+        if (NativeMethods.SupportsWindows11DwmAttributes)
+        {
+            int cornerPref = NativeMethods.DWMWCP_ROUND;
+            _ = NativeMethods.DwmSetWindowAttribute(
+                _hwnd,
+                NativeMethods.DWMWA_WINDOW_CORNER_PREFERENCE,
+                ref cornerPref,
+                sizeof(int));
         }
         long exStyle = NativeMethods.GetWindowLongPtr(_hwnd, NativeMethods.GWL_EXSTYLE).ToInt64();
         NativeMethods.SetWindowLongPtr(_hwnd, NativeMethods.GWL_EXSTYLE,
@@ -187,16 +389,195 @@ internal sealed class OrganizerSearchWindow : Window
     {
         Title = AppStrings.Get("SearchWindowTitle");
         _queryBox.PlaceholderText = AppStrings.Get("SearchPlaceholder");
-        _hintText.Text = AppStrings.Get("SearchFooterHint");
-        ThemeValues theme = _host.State.GlobalSettings.GetTheme(ThemeTarget.Settings);
-        bool dark = ThemePalette.IsDark(theme);
+
+        bool highContrast = _accessibilitySettings.HighContrast;
+        Color systemBg = _uiSettings.GetColorValue(UIColorType.Background);
+        bool dark = (0.299 * systemBg.R + 0.587 * systemBg.G + 0.114 * systemBg.B) < 128.0;
         _cardBorder.RequestedTheme = dark ? ElementTheme.Dark : ElementTheme.Light;
-        _cardBorder.Background = new SolidColorBrush(dark
-            ? Color.FromArgb(250, 32, 34, 38)
-            : Color.FromArgb(252, 248, 249, 251));
-        _cardBorder.BorderBrush = new SolidColorBrush(dark
-            ? Color.FromArgb(64, 255, 255, 255)
-            : Color.FromArgb(40, 0, 0, 0));
+
+        if (highContrast)
+        {
+            Color windowBg = _uiSettings.UIElementColor(UIElementType.Window);
+            Color windowText = _uiSettings.UIElementColor(UIElementType.WindowText);
+            Color grayText = _uiSettings.UIElementColor(UIElementType.GrayText);
+            Color accent = _uiSettings.UIElementColor(UIElementType.Highlight);
+            Color highlightText = _uiSettings.UIElementColor(UIElementType.HighlightText);
+
+            _cardBackgroundBrush.Color = windowBg;
+            _cardBorderBrush.Color = windowText;
+            _dividerBrush.Color = windowText;
+            _primaryTextBrush.Color = windowText;
+            _secondaryTextBrush.Color = grayText;
+            _accentBrush.Color = accent;
+            _badgeBackgroundBrush.Color = accent;
+            _badgeTextBrush.Color = highlightText;
+            _countBadgeBackgroundBrush.Color = windowBg;
+            _kbdBackgroundBrush.Color = windowBg;
+            _kbdBorderBrush.Color = windowText;
+            _kbdTextBrush.Color = windowText;
+            _clearHoverBrush.Color = accent;
+            _clearPressedBrush.Color = accent;
+        }
+        else if (dark)
+        {
+            _cardBackgroundBrush.Color = _usesBackdrop
+                ? Color.FromArgb(166, 28, 30, 36)
+                : Color.FromArgb(250, 28, 30, 36);
+            _cardBorderBrush.Color = Color.FromArgb(52, 255, 255, 255);
+            _dividerBrush.Color = Color.FromArgb(28, 255, 255, 255);
+            _primaryTextBrush.Color = Color.FromArgb(255, 244, 246, 250);
+            _secondaryTextBrush.Color = Color.FromArgb(255, 166, 173, 186);
+            _accentBrush.Color = Color.FromArgb(255, 96, 178, 255);
+            _badgeBackgroundBrush.Color = Color.FromArgb(38, 96, 178, 255);
+            _badgeTextBrush.Color = Color.FromArgb(255, 178, 218, 255);
+            _countBadgeBackgroundBrush.Color = Color.FromArgb(24, 255, 255, 255);
+            _kbdBackgroundBrush.Color = Color.FromArgb(26, 255, 255, 255);
+            _kbdBorderBrush.Color = Color.FromArgb(48, 255, 255, 255);
+            _kbdTextBrush.Color = Color.FromArgb(255, 212, 217, 226);
+            _clearHoverBrush.Color = Color.FromArgb(28, 255, 255, 255);
+            _clearPressedBrush.Color = Color.FromArgb(46, 255, 255, 255);
+        }
+        else
+        {
+            _cardBackgroundBrush.Color = _usesBackdrop
+                ? Color.FromArgb(182, 248, 249, 252)
+                : Color.FromArgb(252, 248, 249, 252);
+            _cardBorderBrush.Color = Color.FromArgb(34, 0, 0, 0);
+            _dividerBrush.Color = Color.FromArgb(20, 0, 0, 0);
+            _primaryTextBrush.Color = Color.FromArgb(255, 24, 26, 30);
+            _secondaryTextBrush.Color = Color.FromArgb(255, 102, 108, 118);
+            _accentBrush.Color = Color.FromArgb(255, 0, 103, 192);
+            _badgeBackgroundBrush.Color = Color.FromArgb(22, 0, 120, 212);
+            _badgeTextBrush.Color = Color.FromArgb(255, 0, 90, 170);
+            _countBadgeBackgroundBrush.Color = Color.FromArgb(14, 0, 0, 0);
+            _kbdBackgroundBrush.Color = Color.FromArgb(236, 255, 255, 255);
+            _kbdBorderBrush.Color = Color.FromArgb(34, 0, 0, 0);
+            _kbdTextBrush.Color = Color.FromArgb(255, 64, 68, 78);
+            _clearHoverBrush.Color = Color.FromArgb(16, 0, 0, 0);
+            _clearPressedBrush.Color = Color.FromArgb(30, 0, 0, 0);
+        }
+
+        RebuildFooterKeycaps();
+    }
+
+    private void RebuildFooterKeycaps()
+    {
+        _footerPanel.Children.Clear();
+        string hint = AppStrings.Get("SearchFooterHint");
+        string[] segments = hint.Split(['·', '•'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        foreach (string segment in segments)
+        {
+            int splitIndex = segment.IndexOf(' ');
+            if (splitIndex <= 0 || splitIndex >= segment.Length - 1)
+            {
+                _footerPanel.Children.Add(new TextBlock
+                {
+                    Text = segment,
+                    FontSize = 11,
+                    Foreground = _secondaryTextBrush,
+                    VerticalAlignment = VerticalAlignment.Center
+                });
+                continue;
+            }
+
+            string keyCap = segment[..splitIndex];
+            string actionLabel = segment[(splitIndex + 1)..].Trim();
+
+            var kbd = new Border
+            {
+                CornerRadius = new CornerRadius(4),
+                BorderThickness = new Thickness(1),
+                BorderBrush = _kbdBorderBrush,
+                Background = _kbdBackgroundBrush,
+                Padding = new Thickness(5, 1, 5, 1),
+                VerticalAlignment = VerticalAlignment.Center,
+                Child = new TextBlock
+                {
+                    Text = keyCap,
+                    FontSize = 10.5,
+                    FontWeight = FontWeights.SemiBold,
+                    Foreground = _kbdTextBrush,
+                    VerticalAlignment = VerticalAlignment.Center
+                }
+            };
+            var label = new TextBlock
+            {
+                Text = actionLabel,
+                FontSize = 11,
+                Foreground = _secondaryTextBrush,
+                VerticalAlignment = VerticalAlignment.Center
+            };
+            var item = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                Spacing = 5,
+                VerticalAlignment = VerticalAlignment.Center,
+                Children = { kbd, label }
+            };
+            _footerPanel.Children.Add(item);
+        }
+    }
+
+    private void StartEntranceAnimation()
+    {
+        CancelEntranceAnimation();
+        Visual visual = ElementCompositionPreview.GetElementVisual(_cardBorder);
+        visual.StopAnimation("Scale");
+        visual.StopAnimation("Opacity");
+
+        if (!_host.State.GlobalSettings.ShouldUseCustomAnimations(_uiSettings.AnimationsEnabled))
+        {
+            visual.Scale = Vector3.One;
+            visual.Opacity = 1f;
+            return;
+        }
+
+        float width = (float)(_cardBorder.ActualWidth > 0 ? _cardBorder.ActualWidth : WindowWidthDip);
+        float height = (float)(_cardBorder.ActualHeight > 0 ? _cardBorder.ActualHeight : WindowHeightDip);
+        visual.CenterPoint = new Vector3(width * 0.5f, height * 0.35f, 0f);
+        visual.Scale = new Vector3(0.96f, 0.96f, 1f);
+        visual.Opacity = 0f;
+
+        Compositor compositor = visual.Compositor;
+        _entranceBoost = CompositorClockBoost.Acquire();
+        CompositionScopedBatch batch = compositor.CreateScopedBatch(CompositionBatchTypes.Animation);
+        _entranceBatch = batch;
+        batch.Completed += EntranceBatch_Completed;
+
+        SpringVector3NaturalMotionAnimation scaleSpring = compositor.CreateSpringVector3Animation();
+        scaleSpring.InitialValue = new Vector3(0.96f, 0.96f, 1f);
+        scaleSpring.FinalValue = Vector3.One;
+        scaleSpring.DampingRatio = 0.86f;
+        scaleSpring.Period = TimeSpan.FromMilliseconds(54);
+        visual.StartAnimation("Scale", scaleSpring);
+
+        CubicBezierEasingFunction easeOut = compositor.CreateCubicBezierEasingFunction(
+            new Vector2(0.16f, 1.0f), new Vector2(0.30f, 1.0f));
+        ScalarKeyFrameAnimation opacityAnim = compositor.CreateScalarKeyFrameAnimation();
+        opacityAnim.InsertKeyFrame(0f, 0f);
+        opacityAnim.InsertKeyFrame(1f, 1f, easeOut);
+        opacityAnim.Duration = TimeSpan.FromMilliseconds(150);
+        visual.StartAnimation("Opacity", opacityAnim);
+
+        batch.End();
+    }
+
+    private void EntranceBatch_Completed(object sender, CompositionBatchCompletedEventArgs args)
+    {
+        if (ReferenceEquals(_entranceBatch, sender))
+            CancelEntranceAnimation();
+    }
+
+    private void CancelEntranceAnimation()
+    {
+        if (_entranceBatch is not null)
+        {
+            _entranceBatch.Completed -= EntranceBatch_Completed;
+            _entranceBatch.Dispose();
+            _entranceBatch = null;
+        }
+        _entranceBoost?.Dispose();
+        _entranceBoost = null;
     }
 
     private void PositionOnCursorMonitor()
@@ -209,8 +590,8 @@ internal sealed class OrganizerSearchWindow : Window
             : DisplayPlacementService.GetDisplay();
 
         double scale = Math.Max(1.0, display.Scale);
-        int width = Math.Min(display.Work.Width - 32, Math.Max(320, (int)Math.Round(WindowWidthDip * scale)));
-        int height = Math.Min(display.Work.Height - 48, Math.Max(260, (int)Math.Round(WindowHeightDip * scale)));
+        int width = Math.Min(display.Work.Width - 32, Math.Max(360, (int)Math.Round(WindowWidthDip * scale)));
+        int height = Math.Min(display.Work.Height - 48, Math.Max(280, (int)Math.Round(WindowHeightDip * scale)));
         int left = display.Work.Left + (display.Work.Width - width) / 2;
         int top = display.Work.Top + Math.Max(24, (display.Work.Height - height) / 4);
 
@@ -224,9 +605,22 @@ internal sealed class OrganizerSearchWindow : Window
             NativeMethods.SWP_SHOWWINDOW);
     }
 
+    private void UpdateClearButtonVisibility()
+    {
+        _clearButton.Visibility = string.IsNullOrEmpty(_queryBox.Text)
+            ? Visibility.Collapsed
+            : Visibility.Visible;
+    }
+
     private async Task RefreshIndexAsync(int version)
     {
-        _statusText.Text = AppStrings.Get("SearchIndexing");
+        _isIndexing = true;
+        if (_index.Count == 0)
+        {
+            _statusText.Text = AppStrings.Get("SearchIndexing");
+            _emptyStatePanel.Visibility = Visibility.Visible;
+            _countBadge.Visibility = Visibility.Collapsed;
+        }
         (Guid Id, string Name, string Path, IReadOnlyList<NoteDefinition> Notes)[] snapshot = _host.State.Organizers
             .Select(o => (o.Id, o.Name, AppPaths.ResolveStoragePath(o), (IReadOnlyList<NoteDefinition>)o.Notes.ToArray()))
             .ToArray();
@@ -274,6 +668,7 @@ internal sealed class OrganizerSearchWindow : Window
         });
 
         if (_closed || version != _indexVersion) return;
+        _isIndexing = false;
         _index.Clear();
         _index.AddRange(entries);
         ApplyFilter();
@@ -281,7 +676,9 @@ internal sealed class OrganizerSearchWindow : Window
 
     private void ApplyFilter()
     {
+        int renderVersion = ++_renderVersion;
         string query = _queryBox.Text ?? string.Empty;
+        string[] queryTokens = OrganizerSearch.Tokenize(query);
         _currentHits = OrganizerSearch.Search(_index, query, OrganizerSearch.DefaultMaxResults);
         _resultsList.Items.Clear();
 
@@ -290,45 +687,38 @@ internal sealed class OrganizerSearchWindow : Window
             var row = new Grid
             {
                 Padding = new Thickness(8, 6, 8, 6),
-                ColumnSpacing = 10,
+                ColumnSpacing = 12,
                 Tag = hit,
                 ColumnDefinitions =
                 {
-                    new ColumnDefinition { Width = GridLength.Auto },
+                    new ColumnDefinition { Width = new GridLength(26) },
                     new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) },
                     new ColumnDefinition { Width = GridLength.Auto }
                 }
             };
-            var icon = new FontIcon
-            {
-                Glyph = GlyphForKind(hit.Entry.Kind),
-                FontSize = 15,
-                VerticalAlignment = VerticalAlignment.Center
-            };
-            var title = new TextBlock
-            {
-                Text = hit.Entry.ItemName,
-                FontSize = 14,
-                TextTrimming = TextTrimming.CharacterEllipsis,
-                VerticalAlignment = VerticalAlignment.Center
-            };
+
+            FrameworkElement iconHost = BuildRowIcon(hit.Entry, renderVersion);
+            TextBlock title = BuildHighlightedTitle(hit.Entry.ItemName, queryTokens);
+
             var badge = new Border
             {
                 CornerRadius = new CornerRadius(6),
                 Padding = new Thickness(8, 2, 8, 2),
-                Background = new SolidColorBrush(Color.FromArgb(26, 0, 120, 212)),
+                Background = _badgeBackgroundBrush,
                 VerticalAlignment = VerticalAlignment.Center,
                 Child = new TextBlock
                 {
                     Text = hit.Entry.OrganizerName,
                     FontSize = 11,
-                    Opacity = 0.85
+                    FontWeight = FontWeights.Medium,
+                    Foreground = _badgeTextBrush
                 }
             };
-            Grid.SetColumn(icon, 0);
+
+            Grid.SetColumn(iconHost, 0);
             Grid.SetColumn(title, 1);
             Grid.SetColumn(badge, 2);
-            row.Children.Add(icon);
+            row.Children.Add(iconHost);
             row.Children.Add(title);
             row.Children.Add(badge);
             _resultsList.Items.Add(row);
@@ -337,9 +727,155 @@ internal sealed class OrganizerSearchWindow : Window
         if (_resultsList.Items.Count > 0)
             _resultsList.SelectedIndex = 0;
 
-        _statusText.Text = _currentHits.Count == 0
-            ? AppStrings.Get("SearchNoResults")
-            : AppStrings.Format("SearchResultCountFormat", _currentHits.Count, _index.Count);
+        if (_currentHits.Count == 0)
+        {
+            _statusText.Text = _isIndexing ? AppStrings.Get("SearchIndexing") : AppStrings.Get("SearchNoResults");
+            _emptyStatePanel.Visibility = Visibility.Visible;
+            _countBadge.Visibility = Visibility.Collapsed;
+        }
+        else
+        {
+            _emptyStatePanel.Visibility = Visibility.Collapsed;
+            _countBadgeText.Text = AppStrings.Format("SearchResultCountFormat", _currentHits.Count, _index.Count);
+            _countBadge.Visibility = Visibility.Visible;
+        }
+    }
+
+    private FrameworkElement BuildRowIcon(OrganizerSearchEntry entry, int renderVersion)
+    {
+        var slot = new Grid
+        {
+            Width = 26,
+            Height = 26,
+            VerticalAlignment = VerticalAlignment.Center,
+            HorizontalAlignment = HorizontalAlignment.Center
+        };
+
+        BitmapImage? builtIn = GetBuiltInAssetIcon(entry.Kind);
+        if (builtIn is not null)
+        {
+            slot.Children.Add(new Image
+            {
+                Source = builtIn,
+                Width = 24,
+                Height = 24,
+                Stretch = Stretch.Uniform
+            });
+            return slot;
+        }
+
+        var fallback = new FontIcon
+        {
+            Glyph = GlyphForKind(entry.Kind),
+            FontSize = 15,
+            Foreground = _secondaryTextBrush,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        var image = new Image
+        {
+            Width = 26,
+            Height = 26,
+            Stretch = Stretch.Uniform,
+            Visibility = Visibility.Collapsed
+        };
+        slot.Children.Add(fallback);
+        slot.Children.Add(image);
+
+        if (!string.IsNullOrWhiteSpace(entry.FullPath))
+            _ = LoadRowShellIconAsync(entry.FullPath, image, fallback, renderVersion);
+
+        return slot;
+    }
+
+    private BitmapImage? GetBuiltInAssetIcon(WidgetItemKind kind) => kind switch
+    {
+        WidgetItemKind.Note or WidgetItemKind.PortableNote =>
+            _noteAssetIcon ??= new BitmapImage(new Uri("ms-appx:///Assets/Note.png")),
+        WidgetItemKind.PortableTodo =>
+            _todoAssetIcon ??= new BitmapImage(new Uri("ms-appx:///Assets/Todo.png")),
+        WidgetItemKind.Organizer =>
+            _organizerAssetIcon ??= new BitmapImage(new Uri("ms-appx:///Assets/TuckPane.png")),
+        _ => null
+    };
+
+    private async Task LoadRowShellIconAsync(string path, Image targetImage, FontIcon fallbackIcon, int renderVersion)
+    {
+        try
+        {
+            BitmapImage? bitmap = await _host.SharedIconCache.GetIconAsync(path);
+            if (_closed || renderVersion != _renderVersion || bitmap is null) return;
+            targetImage.Source = bitmap;
+            targetImage.Visibility = Visibility.Visible;
+            fallbackIcon.Visibility = Visibility.Collapsed;
+        }
+        catch
+        {
+            // Keep clean FontIcon fallback if shell icon extraction fails.
+        }
+    }
+
+    private TextBlock BuildHighlightedTitle(string itemName, string[] tokens)
+    {
+        var title = new TextBlock
+        {
+            FontSize = 14,
+            Foreground = _primaryTextBrush,
+            TextTrimming = TextTrimming.CharacterEllipsis,
+            MaxLines = 1,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+
+        if (tokens.Length == 0 || string.IsNullOrEmpty(itemName))
+        {
+            title.Text = itemName;
+            return title;
+        }
+
+        List<(int Start, int End)>? ranges = null;
+        foreach (string token in tokens)
+        {
+            if (token.Length == 0) continue;
+            int searchFrom = 0;
+            while (searchFrom < itemName.Length)
+            {
+                int found = itemName.IndexOf(token, searchFrom, StringComparison.OrdinalIgnoreCase);
+                if (found < 0) break;
+                ranges ??= [];
+                ranges.Add((found, found + token.Length));
+                searchFrom = found + token.Length;
+            }
+        }
+
+        if (ranges is null || ranges.Count == 0)
+        {
+            title.Text = itemName;
+            return title;
+        }
+
+        ranges.Sort(static (a, b) => a.Start != b.Start ? a.Start.CompareTo(b.Start) : b.End.CompareTo(a.End));
+        int cursor = 0;
+        foreach (var (start, end) in ranges)
+        {
+            int clampedStart = Math.Max(start, cursor);
+            if (clampedStart >= end) continue;
+            if (clampedStart > cursor)
+            {
+                title.Inlines.Add(new Run { Text = itemName[cursor..clampedStart] });
+            }
+            title.Inlines.Add(new Run
+            {
+                Text = itemName[clampedStart..end],
+                FontWeight = FontWeights.SemiBold,
+                Foreground = _accentBrush
+            });
+            cursor = end;
+        }
+        if (cursor < itemName.Length)
+        {
+            title.Inlines.Add(new Run { Text = itemName[cursor..] });
+        }
+        return title;
     }
 
     private async void QueryBox_PreviewKeyDown(object sender, KeyRoutedEventArgs e)
@@ -347,6 +883,11 @@ internal sealed class OrganizerSearchWindow : Window
         if (e.Key == VirtualKey.Escape)
         {
             e.Handled = true;
+            if (!string.IsNullOrEmpty(_queryBox.Text))
+            {
+                _queryBox.Text = string.Empty;
+                return;
+            }
             Dismiss();
             return;
         }
@@ -380,8 +921,16 @@ internal sealed class OrganizerSearchWindow : Window
             if (index >= 0 && index < _currentHits.Count && _currentHits[index].Entry.Kind != WidgetItemKind.Note)
             {
                 e.Handled = true;
-                ShellItemCommands.CopyPathToClipboard(_currentHits[index].Entry.FullPath);
-                Dismiss();
+                try
+                {
+                    ShellItemCommands.CopyPathToClipboard(_currentHits[index].Entry.FullPath);
+                    Dismiss();
+                }
+                catch (Exception ex)
+                {
+                    AppLogger.Error($"全局搜索复制路径到剪贴板失败：{_currentHits[index].Entry.FullPath}", ex);
+                    _host.ReportOperationError(AppStrings.Get("SearchWindowTitle"), ex.Message);
+                }
             }
         }
     }

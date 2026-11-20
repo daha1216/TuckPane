@@ -11,6 +11,7 @@ namespace TuckPane;
 public sealed partial class ConsoleWindow
 {
     private bool _syncingProductivityControls;
+    private long _layoutSnapshotRefreshVersion;
     private readonly List<LayoutSnapshot> _loadedSnapshots = [];
 
     private void RefreshProductivityControls()
@@ -225,9 +226,11 @@ public sealed partial class ConsoleWindow
 
     private async Task RefreshLayoutSnapshotListAsync()
     {
+        long version = ++_layoutSnapshotRefreshVersion;
         try
         {
             LayoutSnapshotStoreData store = await _host.LayoutSnapshots.LoadAsync();
+            if (_closingPermanently || version != _layoutSnapshotRefreshVersion) return;
             _loadedSnapshots.Clear();
             _loadedSnapshots.AddRange(store.Snapshots);
             LayoutSnapshotCombo.Items.Clear();

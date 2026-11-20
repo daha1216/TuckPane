@@ -67,7 +67,8 @@ internal static class CiHeadlessRunner
         ["--native-desktop-fusion"],
         ["--ios-free-grid"],
         ["--desktop-move-8x8"],
-        ["--liquid-glass-perf"]
+        ["--liquid-glass-perf"],
+        ["--commercial-grade-audit"]
     ];
 
     internal static async Task RunAsync()

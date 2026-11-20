@@ -21,8 +21,41 @@ internal sealed class DesktopMarqueeHookService : IDisposable
     private readonly NativeMethods.HookProc _callback;
     private readonly object _lifecycleSync = new();
 
-    private Thread? _hookThread;
-    private uint _hookThreadId;
+    private sealed class HookSession
+    {
+        private readonly ManualResetEventSlim _ready = new(false);
+        private int _readyRefs = 2;
+
+        internal Thread? Thread;
+        internal uint ThreadId;
+        internal volatile bool StopRequested;
+
+        internal void SignalReady()
+        {
+            try { _ready.Set(); }
+            finally { ReleaseReadyRef(); }
+        }
+
+        internal void WaitReady(TimeSpan timeout)
+        {
+            try { _ = _ready.Wait(timeout); }
+            finally { ReleaseReadyRef(); }
+        }
+
+        internal void AbandonBeforeStart()
+        {
+            ReleaseReadyRef();
+            ReleaseReadyRef();
+        }
+
+        private void ReleaseReadyRef()
+        {
+            if (Interlocked.Decrement(ref _readyRefs) == 0)
+                _ready.Dispose();
+        }
+    }
+
+    private HookSession? _session;
     private IntPtr _hook;
     private long _generation;
     private volatile bool _running;
@@ -51,21 +84,35 @@ internal sealed class DesktopMarqueeHookService : IDisposable
 
     internal void Start()
     {
+        HookSession session;
         lock (_lifecycleSync)
         {
-            if (_running) return;
+            if (_running && _session is not null) return;
             _running = true;
-            using var ready = new ManualResetEventSlim(false);
-            var thread = new Thread(() => HookThreadMain(ready))
+            session = new HookSession();
+            var thread = new Thread(() => HookThreadMain(session))
             {
                 IsBackground = true,
                 Name = "TuckPane Desktop Marquee Hook",
                 Priority = ThreadPriority.AboveNormal
             };
-            _hookThread = thread;
-            thread.Start();
-            ready.Wait(TimeSpan.FromMilliseconds(500));
+            session.Thread = thread;
+            _session = session;
+            try
+            {
+                thread.Start();
+            }
+            catch
+            {
+                _session = null;
+                _running = false;
+                session.AbandonBeforeStart();
+                throw;
+            }
         }
+
+        // Wait outside _lifecycleSync so HookThreadMain can safely publish ThreadId under _lifecycleSync.
+        session.WaitReady(TimeSpan.FromMilliseconds(500));
     }
 
     internal void Stop()
@@ -75,12 +122,21 @@ internal sealed class DesktopMarqueeHookService : IDisposable
         lock (_lifecycleSync)
         {
             Interlocked.Increment(ref _generation);
-            if (!_running && _hookThread is null) return;
+            HookSession? session = _session;
+            if (!_running && session is null) return;
             _running = false;
-            threadToJoin = _hookThread;
-            threadId = _hookThreadId;
-            _hookThread = null;
-            _hookThreadId = 0;
+            _session = null;
+            if (session is not null)
+            {
+                session.StopRequested = true;
+                threadToJoin = session.Thread;
+                threadId = session.ThreadId;
+            }
+            else
+            {
+                threadToJoin = null;
+                threadId = 0;
+            }
         }
 
         if (threadId != 0)
@@ -91,44 +147,74 @@ internal sealed class DesktopMarqueeHookService : IDisposable
 
     public void Dispose() => Stop();
 
-    private void HookThreadMain(ManualResetEventSlim ready)
+    private void HookThreadMain(HookSession session)
     {
-        _hookThreadId = NativeMethods.GetCurrentThreadId();
-        _trackingDesktopPress = false;
-        _marqueeActivated = false;
-        _lastMovePostTimestamp = 0;
-
-        // Force message queue creation before signaling ready so PostThreadMessage(WM_QUIT) never races.
-        _ = NativeMethods.PeekMessage(out _, IntPtr.Zero, 0, 0, 0);
-
-        IntPtr installed = NativeMethods.SetWindowsHookEx(
-            NativeMethods.WH_MOUSE_LL,
-            _callback,
-            NativeMethods.GetModuleHandle(null),
-            0);
-        _hook = installed;
-        ready.Set();
-
-        if (installed == IntPtr.Zero)
-        {
-            _running = false;
-            AppLogger.Error($"无法安装桌面框选联动钩子，Win32={Marshal.GetLastWin32Error()}。");
-            return;
-        }
-
+        IntPtr installed = IntPtr.Zero;
+        bool signaled = false;
         try
         {
-            while (_running && NativeMethods.GetMessage(out _, IntPtr.Zero, 0, 0) > 0)
+            _trackingDesktopPress = false;
+            _marqueeActivated = false;
+            _lastMovePostTimestamp = 0;
+
+            // Force message queue creation before publishing ThreadId so PostThreadMessage(WM_QUIT) never races.
+            _ = NativeMethods.PeekMessage(out _, IntPtr.Zero, 0, 0, 0);
+
+            lock (_lifecycleSync)
+            {
+                if (session.StopRequested) return;
+                session.ThreadId = NativeMethods.GetCurrentThreadId();
+            }
+
+            installed = NativeMethods.SetWindowsHookEx(
+                NativeMethods.WH_MOUSE_LL,
+                _callback,
+                NativeMethods.GetModuleHandle(null),
+                0);
+            Volatile.Write(ref _hook, installed);
+
+            if (installed == IntPtr.Zero)
+            {
+                lock (_lifecycleSync)
+                {
+                    if (ReferenceEquals(_session, session))
+                    {
+                        _session = null;
+                        _running = false;
+                    }
+                }
+                AppLogger.Error($"无法安装桌面框选联动钩子，Win32={Marshal.GetLastWin32Error()}。");
+                return;
+            }
+
+            signaled = true;
+            session.SignalReady();
+
+            while (!session.StopRequested && _running &&
+                   NativeMethods.GetMessage(out _, IntPtr.Zero, 0, 0) > 0)
             {
                 // Low-level hooks are dispatched automatically inside GetMessage.
             }
         }
+        catch (Exception ex)
+        {
+            AppLogger.Error("桌面框选钩子线程异常退出。", ex);
+        }
         finally
         {
-            if (_hook != IntPtr.Zero)
+            if (!signaled) session.SignalReady();
+            if (installed != IntPtr.Zero)
             {
-                _ = NativeMethods.UnhookWindowsHookEx(_hook);
-                _hook = IntPtr.Zero;
+                _ = NativeMethods.UnhookWindowsHookEx(installed);
+                _ = Interlocked.CompareExchange(ref _hook, IntPtr.Zero, installed);
+            }
+            lock (_lifecycleSync)
+            {
+                if (ReferenceEquals(_session, session))
+                {
+                    _session = null;
+                    _running = false;
+                }
             }
             _trackingDesktopPress = false;
             _marqueeActivated = false;
@@ -137,70 +223,87 @@ internal sealed class DesktopMarqueeHookService : IDisposable
 
     private IntPtr OnMouse(int code, IntPtr wParam, IntPtr lParam)
     {
+        IntPtr hook = Volatile.Read(ref _hook);
         if (code < 0 || !_running)
-            return NativeMethods.CallNextHookEx(_hook, code, wParam, lParam);
+            return NativeMethods.CallNextHookEx(hook, code, wParam, lParam);
 
-        int message = wParam.ToInt32();
-
-        // Ultra-fast path: when not tracking a desktop press, bypass EVERY WM_MOUSEMOVE / UP / WHEEL
-        // in ~15 nanoseconds with zero marshaling and zero Win32 queries!
-        if (!_trackingDesktopPress)
+        try
         {
-            if (message == NativeMethods.WM_LBUTTONDOWN)
+            int message = wParam.ToInt32();
+
+            // Ultra-fast path: when not tracking a desktop press, bypass EVERY WM_MOUSEMOVE / UP / WHEEL
+            // in ~15 nanoseconds with zero marshaling and zero Win32 queries!
+            if (!_trackingDesktopPress)
+            {
+                if (message == NativeMethods.WM_LBUTTONDOWN)
+                {
+                    var data = Marshal.PtrToStructure<NativeMethods.MSLLHOOKSTRUCT>(lParam);
+                    if (IsDesktopSurfaceAt(data.Point))
+                    {
+                        _trackingDesktopPress = true;
+                        _marqueeActivated = false;
+                        _startPoint = data.Point;
+                        _ctrlAtStart = (NativeMethods.GetAsyncKeyState(NativeMethods.VK_CONTROL) & 0x8000) != 0;
+                        _lastMovePostTimestamp = 0;
+                    }
+                }
+                return NativeMethods.CallNextHookEx(hook, code, wParam, lParam);
+            }
+
+            if (message == NativeMethods.WM_MOUSEMOVE)
             {
                 var data = Marshal.PtrToStructure<NativeMethods.MSLLHOOKSTRUCT>(lParam);
-                if (IsDesktopSurfaceAt(data.Point))
+                if (!_marqueeActivated && !MarqueeSelectionMath.IsMarqueeActive(_startPoint, data.Point))
+                    return NativeMethods.CallNextHookEx(hook, code, wParam, lParam);
+
+                _marqueeActivated = true;
+                long now = Stopwatch.GetTimestamp();
+                if (_lastMovePostTimestamp == 0 ||
+                    Stopwatch.GetElapsedTime(_lastMovePostTimestamp, now).TotalMilliseconds >= 16)
                 {
-                    _trackingDesktopPress = true;
-                    _marqueeActivated = false;
-                    _startPoint = data.Point;
-                    _ctrlAtStart = (NativeMethods.GetAsyncKeyState(NativeMethods.VK_CONTROL) & 0x8000) != 0;
-                    _lastMovePostTimestamp = 0;
+                    _lastMovePostTimestamp = now;
+                    NativeMethods.RECT rect = MarqueeSelectionMath.NormalizeRect(_startPoint, data.Point);
+                    bool ctrl = _ctrlAtStart;
+                    long generation = Volatile.Read(ref _generation);
+                    _ = _dispatcher.TryEnqueue(() =>
+                    {
+                        if (_running && generation == Volatile.Read(ref _generation))
+                            _onMarqueeUpdated(rect, ctrl);
+                    });
                 }
             }
-            return NativeMethods.CallNextHookEx(_hook, code, wParam, lParam);
-        }
-
-        if (message == NativeMethods.WM_MOUSEMOVE)
-        {
-            var data = Marshal.PtrToStructure<NativeMethods.MSLLHOOKSTRUCT>(lParam);
-            if (!_marqueeActivated && !MarqueeSelectionMath.IsMarqueeActive(_startPoint, data.Point))
-                return NativeMethods.CallNextHookEx(_hook, code, wParam, lParam);
-
-            _marqueeActivated = true;
-            long now = Stopwatch.GetTimestamp();
-            if (_lastMovePostTimestamp == 0 ||
-                Stopwatch.GetElapsedTime(_lastMovePostTimestamp, now).TotalMilliseconds >= 16)
+            else if (message is NativeMethods.WM_LBUTTONUP or NativeMethods.WM_RBUTTONDOWN)
             {
-                _lastMovePostTimestamp = now;
-                NativeMethods.RECT rect = MarqueeSelectionMath.NormalizeRect(_startPoint, data.Point);
+                var data = Marshal.PtrToStructure<NativeMethods.MSLLHOOKSTRUCT>(lParam);
+                bool wasMarquee = _marqueeActivated;
                 bool ctrl = _ctrlAtStart;
+                bool commit = message == NativeMethods.WM_LBUTTONUP;
+                NativeMethods.RECT rect = MarqueeSelectionMath.NormalizeRect(_startPoint, data.Point);
+                _trackingDesktopPress = false;
+                _marqueeActivated = false;
                 long generation = Volatile.Read(ref _generation);
                 _ = _dispatcher.TryEnqueue(() =>
                 {
-                    if (_running && generation == Volatile.Read(ref _generation))
-                        _onMarqueeUpdated(rect, ctrl);
+                    if (!_running || generation != Volatile.Read(ref _generation)) return;
+                    if (wasMarquee)
+                    {
+                        if (commit) _onMarqueeCompleted(rect, ctrl, true);
+                        else
+                        {
+                            _onMarqueeCompleted(rect, ctrl, false);
+                            if (!ctrl) _onDesktopEmptyClick();
+                        }
+                    }
+                    else if (commit) _onDesktopEmptyClick();
                 });
             }
         }
-        else if (message is NativeMethods.WM_LBUTTONUP or NativeMethods.WM_RBUTTONDOWN)
+        catch (Exception ex)
         {
-            var data = Marshal.PtrToStructure<NativeMethods.MSLLHOOKSTRUCT>(lParam);
-            bool wasMarquee = _marqueeActivated;
-            bool ctrl = _ctrlAtStart;
-            NativeMethods.RECT rect = MarqueeSelectionMath.NormalizeRect(_startPoint, data.Point);
-            _trackingDesktopPress = false;
-            _marqueeActivated = false;
-            long generation = Volatile.Read(ref _generation);
-            _ = _dispatcher.TryEnqueue(() =>
-            {
-                if (!_running || generation != Volatile.Read(ref _generation)) return;
-                if (wasMarquee) _onMarqueeCompleted(rect, ctrl, true);
-                else if (message == NativeMethods.WM_LBUTTONUP) _onDesktopEmptyClick();
-            });
+            AppLogger.Error("桌面框选钩子回调异常。", ex);
         }
 
-        return NativeMethods.CallNextHookEx(_hook, code, wParam, lParam);
+        return NativeMethods.CallNextHookEx(hook, code, wParam, lParam);
     }
 
     private static bool IsDesktopSurfaceAt(NativeMethods.POINT point)

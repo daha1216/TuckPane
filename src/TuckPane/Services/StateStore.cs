@@ -37,11 +37,15 @@ public sealed class StateStore
         try
         {
             snapshotCaptured?.Invoke();
-            Directory.CreateDirectory(Path.GetDirectoryName(_statePath)!);
-            string temporary = _statePath + ".tmp";
-            await WriteStateTemporaryAsync(temporary, Normalize(state));
-            if (File.Exists(_statePath)) File.Copy(_statePath, _backupPath, overwrite: true);
-            await MoveIntoPlaceAsync(temporary, _statePath);
+            byte[] utf8 = JsonSerializer.SerializeToUtf8Bytes(Normalize(state), JsonOptions);
+            await Task.Run(async () =>
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(_statePath)!);
+                string temporary = _statePath + ".tmp";
+                await WriteStateTemporaryBytesAsync(temporary, utf8).ConfigureAwait(false);
+                if (File.Exists(_statePath)) File.Copy(_statePath, _backupPath, overwrite: true);
+                await MoveIntoPlaceAsync(temporary, _statePath).ConfigureAwait(false);
+            }).ConfigureAwait(false);
         }
         finally
         {
@@ -54,13 +58,17 @@ public sealed class StateStore
         await _saveGate.WaitAsync();
         try
         {
-            string temporary = _statePath + ".tmp";
-            if (!legacyPath.Equals(_backupPath, StringComparison.OrdinalIgnoreCase))
+            byte[] utf8 = JsonSerializer.SerializeToUtf8Bytes(state, JsonOptions);
+            await Task.Run(async () =>
             {
-                File.Copy(legacyPath, _backupPath, overwrite: true);
-            }
-            await WriteStateTemporaryAsync(temporary, state);
-            await MoveIntoPlaceAsync(temporary, _statePath);
+                string temporary = _statePath + ".tmp";
+                if (!legacyPath.Equals(_backupPath, StringComparison.OrdinalIgnoreCase))
+                {
+                    File.Copy(legacyPath, _backupPath, overwrite: true);
+                }
+                await WriteStateTemporaryBytesAsync(temporary, utf8).ConfigureAwait(false);
+                await MoveIntoPlaceAsync(temporary, _statePath).ConfigureAwait(false);
+            }).ConfigureAwait(false);
         }
         finally
         {
@@ -68,9 +76,8 @@ public sealed class StateStore
         }
     }
 
-    private static async Task WriteStateTemporaryAsync(string temporary, AppStateV2 state)
+    private static async Task WriteStateTemporaryBytesAsync(string temporary, byte[] utf8)
     {
-        byte[] utf8 = JsonSerializer.SerializeToUtf8Bytes(state, JsonOptions);
         await using var stream = new FileStream(temporary, new FileStreamOptions
         {
             Mode = FileMode.Create,
@@ -79,8 +86,8 @@ public sealed class StateStore
             Options = FileOptions.Asynchronous | FileOptions.WriteThrough,
             PreallocationSize = utf8.Length
         });
-        await stream.WriteAsync(utf8);
-        await stream.FlushAsync();
+        await stream.WriteAsync(utf8).ConfigureAwait(false);
+        await stream.FlushAsync().ConfigureAwait(false);
         stream.Flush(flushToDisk: true);
     }
 
@@ -95,7 +102,7 @@ public sealed class StateStore
             }
             catch (Exception ex) when (attempt < 9 && ex is IOException or UnauthorizedAccessException)
             {
-                await Task.Delay(50);
+                await Task.Delay(50).ConfigureAwait(false);
             }
         }
     }

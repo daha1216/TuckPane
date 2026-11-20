@@ -35,10 +35,14 @@ public sealed partial class MainWindow
     private readonly Dictionary<Border, HoverItemVisual> _hoverItems = new();
     private Border? _hoverPressedHost;
     private bool _hoverRenderingSubscribed;
+    private IDisposable? _hoverWaveClockBoost;
     private bool _hoverGeometryDirty = true;
     private bool _hoverLayoutPending;
     private bool _hoverTargetsDirty = true;
     private long _hoverLastFrame;
+    private PointerEventHandler? _hoverPointerEnteredHandler;
+    private PointerEventHandler? _hoverPointerMovedHandler;
+    private PointerEventHandler? _hoverPointerExitedHandler;
     private readonly HoverAnchorMotion _hoverAnchor = new();
     private readonly DockHoverMotion _dockHoverMotion = new();
     private KeyValuePair<Border, HoverItemVisual>[] _hoverLayout = [];
@@ -67,6 +71,7 @@ public sealed partial class MainWindow
         internal HoverRect VisibleBounds;
         internal Vector2 Translation;
         internal Border? Proxy;
+        internal Action? DetachProxyHandlers;
         internal string? DockToolTipText;
         internal bool Presented;
         internal float RenderScale = 1;
@@ -74,12 +79,12 @@ public sealed partial class MainWindow
 
     private void InitializeHoverWave()
     {
-        WindowRoot.AddHandler(UIElement.PointerEnteredEvent,
-            new PointerEventHandler(HoverViewport_PointerMoved), handledEventsToo: true);
-        WindowRoot.AddHandler(UIElement.PointerMovedEvent,
-            new PointerEventHandler(HoverViewport_PointerMoved), handledEventsToo: true);
-        WindowRoot.AddHandler(UIElement.PointerExitedEvent,
-            new PointerEventHandler(HoverViewport_PointerExited), handledEventsToo: true);
+        _hoverPointerEnteredHandler = new PointerEventHandler(HoverViewport_PointerMoved);
+        _hoverPointerMovedHandler = new PointerEventHandler(HoverViewport_PointerMoved);
+        _hoverPointerExitedHandler = new PointerEventHandler(HoverViewport_PointerExited);
+        WindowRoot.AddHandler(UIElement.PointerEnteredEvent, _hoverPointerEnteredHandler, handledEventsToo: true);
+        WindowRoot.AddHandler(UIElement.PointerMovedEvent, _hoverPointerMovedHandler, handledEventsToo: true);
+        WindowRoot.AddHandler(UIElement.PointerExitedEvent, _hoverPointerExitedHandler, handledEventsToo: true);
         ItemsScrollView.PointerExited += HoverViewport_PointerExited;
         ItemsScrollView.ViewChanged += HoverViewport_ViewChanged;
         ItemsScrollView.StateChanged += HoverViewport_StateChanged;
@@ -119,8 +124,19 @@ public sealed partial class MainWindow
     private void RegisterHoverItem(Border host)
     {
         UnregisterHoverItem(host);
-        if (FindItemPart<StackPanel>(host, "ItemContent") is not StackPanel content ||
-            FindItemPart<Grid>(host, "ItemIconContainer") is not Grid icon) return;
+        StackPanel? content;
+        Grid? icon;
+        if (GetOrResolveItemHostParts(host) is { } parts)
+        {
+            content = parts.ItemContent;
+            icon = parts.IconContainer;
+        }
+        else
+        {
+            content = FindItemPart<StackPanel>(host, "ItemContent");
+            icon = FindItemPart<Grid>(host, "ItemIconContainer");
+        }
+        if (content is null || icon is null) return;
         content.ScaleTransition = null;
         content.TranslationTransition = null;
         content.Scale = Vector3.One;
@@ -165,7 +181,6 @@ public sealed partial class MainWindow
             if (IsDock) return; // The queued current-layout commit owns this transition.
             _hoverLayoutPending = false;
             _hoverGeometryDirty = true;
-            if (IsDock) UpdateDockInputRegion();
         }
         if (!_hoverGeometryDirty || _closing || !_expanded || !UseHoverPresentation ||
             !UseCustomAnimations && !IsCompactList || HoverInteractionBusy || !WindowRoot.IsLoaded) return;
@@ -290,6 +305,7 @@ public sealed partial class MainWindow
             _hoverLastFrame = Stopwatch.GetTimestamp();
             CompositionTarget.Rendering += HoverWave_Rendering;
             _hoverRenderingSubscribed = true;
+            _hoverWaveClockBoost ??= CompositorClockBoost.Acquire();
         }
         UpdateHoverPointerGuard();
     }
@@ -411,7 +427,7 @@ public sealed partial class MainWindow
                 Mirror(proxy, UIElement.OpacityProperty, host, nameof(UIElement.Opacity));
                 proxy.IsHitTestVisible = true;
                 item.Content.Opacity = 0;
-                item.Presented = true;
+                SetHoverProxyPresented(item, true);
             }
             if (item.Bounce.IsActive) ApplyItemBounce(item);
         }
@@ -554,6 +570,8 @@ public sealed partial class MainWindow
     {
         if (_hoverRenderingSubscribed) CompositionTarget.Rendering -= HoverWave_Rendering;
         _hoverRenderingSubscribed = false;
+        _hoverWaveClockBoost?.Dispose();
+        _hoverWaveClockBoost = null;
         _hoverLastFrame = 0;
     }
 
@@ -602,9 +620,15 @@ public sealed partial class MainWindow
         _visibleDockToolTip = null;
         ResetItemBounces();
         ResetHoverWave();
-        WindowRoot.RemoveHandler(UIElement.PointerEnteredEvent, new PointerEventHandler(HoverViewport_PointerMoved));
-        WindowRoot.RemoveHandler(UIElement.PointerMovedEvent, new PointerEventHandler(HoverViewport_PointerMoved));
-        WindowRoot.RemoveHandler(UIElement.PointerExitedEvent, new PointerEventHandler(HoverViewport_PointerExited));
+        if (_hoverPointerEnteredHandler is not null)
+            WindowRoot.RemoveHandler(UIElement.PointerEnteredEvent, _hoverPointerEnteredHandler);
+        if (_hoverPointerMovedHandler is not null)
+            WindowRoot.RemoveHandler(UIElement.PointerMovedEvent, _hoverPointerMovedHandler);
+        if (_hoverPointerExitedHandler is not null)
+            WindowRoot.RemoveHandler(UIElement.PointerExitedEvent, _hoverPointerExitedHandler);
+        _hoverPointerEnteredHandler = null;
+        _hoverPointerMovedHandler = null;
+        _hoverPointerExitedHandler = null;
         ItemsScrollView.PointerExited -= HoverViewport_PointerExited;
         ItemsScrollView.ViewChanged -= HoverViewport_ViewChanged;
         ItemsScrollView.StateChanged -= HoverViewport_StateChanged;
@@ -615,8 +639,10 @@ public sealed partial class MainWindow
             ClearDockToolTip(host, item);
             host.SizeChanged -= HoverElement_SizeChanged;
             item.Content.SizeChanged -= HoverElement_SizeChanged;
+            RemoveHoverProxy(item);
         }
         _hoverItems.Clear();
+        _presentedHoverProxyCount = 0;
         if (_hoverPointerGuard is not null) _hoverPointerGuard.Tick -= HoverPointerGuard_Tick;
         _hoverPointerGuard = null;
         if (_hoverPresentationLayer is not null) ExpandedContentLayer.Children.Remove(_hoverPresentationLayer);

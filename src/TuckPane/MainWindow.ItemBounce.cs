@@ -13,6 +13,7 @@ public sealed partial class MainWindow
 {
     private bool _itemBounceRenderingSubscribed;
     private long _itemBounceLastFrame;
+    private IDisposable? _itemBounceClockBoost;
 
     private void StartItemBounce(WidgetItem item)
     {
@@ -24,11 +25,17 @@ public sealed partial class MainWindow
         AdvanceItemBounces();
         visual.Bounce.Restart((float)visual.Icon.ActualHeight, isDock: IsDock);
         // Bounce uses the overflow presentation even when hover magnification is disabled.
-        if (HorizontalHover) RenderHoverPresentation();
+        // Set ONE union bounce HRGN at bounce start (never per-frame SetWindowRgn!).
+        if (HorizontalHover)
+        {
+            RenderHoverPresentation();
+            UpdateDockInputRegion();
+        }
         if (_itemBounceRenderingSubscribed) return;
         _itemBounceLastFrame = Stopwatch.GetTimestamp();
         CompositionTarget.Rendering += ItemBounce_Rendering;
         _itemBounceRenderingSubscribed = true;
+        _itemBounceClockBoost ??= CompositorClockBoost.Acquire();
     }
 
     private void ItemBounce_Rendering(object? sender, object args)
@@ -41,7 +48,12 @@ public sealed partial class MainWindow
             return;
         }
         AdvanceItemBounces();
-        if (!_hoverItems.Values.Any(item => item.Bounce.IsActive)) StopItemBounceRendering();
+        bool anyActive = false;
+        foreach (HoverItemVisual item in _hoverItems.Values)
+        {
+            if (item.Bounce.IsActive) { anyActive = true; break; }
+        }
+        if (!anyActive) StopItemBounceRendering();
     }
 
     private void AdvanceItemBounces()
@@ -62,7 +74,6 @@ public sealed partial class MainWindow
         if (HorizontalHover)
         {
             RenderHoverPresentation();
-            UpdateDockInputRegion();
         }
         else UpdateDockToolTipPosition();
     }
@@ -106,7 +117,6 @@ public sealed partial class MainWindow
         if (!_itemBounceRenderingSubscribed) return;
         foreach (var item in _hoverItems.Values) ResetItemBounce(item);
         StopItemBounceRendering();
-        if (HorizontalHover) UpdateDockInputRegion();
     }
 
     private void ResetItemBounce(HoverItemVisual item)
@@ -119,6 +129,9 @@ public sealed partial class MainWindow
     {
         if (_itemBounceRenderingSubscribed) CompositionTarget.Rendering -= ItemBounce_Rendering;
         _itemBounceRenderingSubscribed = false;
+        _itemBounceClockBoost?.Dispose();
+        _itemBounceClockBoost = null;
         _itemBounceLastFrame = 0;
+        if (HorizontalHover && !_closing) UpdateDockInputRegion();
     }
 }

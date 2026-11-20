@@ -272,10 +272,23 @@ internal sealed class ExternalItemDragCoordinator
         IReadOnlyList<WidgetItem>? batchItems = null)
     {
         using var modeInteraction = _window.HoldModeInteraction();
+        IReadOnlyList<WidgetItem> dragWidgets = batchItems is { Count: > 1 } ? batchItems : [item];
+        // Flush ALL open portable .tucknote / .tucktodo windows in the drag payload before Shell handoff!
+        foreach (WidgetItem dragWidget in dragWidgets)
+        {
+            if (MainWindow.IsDocumentWidgetItem(dragWidget) &&
+                !await _window.Host.FlushPortableWindowAsync(dragWidget.FullPath))
+            {
+                _window.ShowOrganizerMessage(AppStrings.Get(dragWidget.Kind == WidgetItemKind.PortableTodo
+                    ? "TodoDragSaveFailed"
+                    : "NoteDragSaveFailed"), InfoBarSeverity.Error);
+                _window.CancelActiveItemReorder();
+                return;
+            }
+        }
+
         ShellDragService.ShellDragSession? shellSession = null;
-        string[] dragPaths = batchItems is { Count: > 1 }
-            ? batchItems.Select(x => x.FullPath).Distinct(StringComparer.OrdinalIgnoreCase).ToArray()
-            : [item.FullPath];
+        string[] dragPaths = dragWidgets.Select(x => x.FullPath).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
         string dragPath = dragPaths[0];
         bool internalDropAccepted = false;
         bool dragCompleted = false;
@@ -385,6 +398,11 @@ internal sealed class ExternalItemDragCoordinator
             }
             else if (result.Outcome == ShellDragOutcome.ExternalMoved)
             {
+                foreach (WidgetItem dragWidget in dragWidgets)
+                {
+                    if (MainWindow.IsDocumentWidgetItem(dragWidget) && !File.Exists(dragWidget.FullPath))
+                        _window.Host.ClosePortableWindowWithoutSave(dragWidget.FullPath);
+                }
                 if (dragPaths.Length > 1) _window.ClearItemSelection();
                 await Task.Delay(120);
                 await _window.RefreshCatalogAsync(notifyUnsupported: false);

@@ -111,7 +111,7 @@ public sealed partial class MainWindow
                 _dropPositionedInPlace = true;
                 _resolvedItemSlots = FreeGridSlotMap.ResolveSlots(names, _definition.ItemSlots);
                 _definition.ItemOrder = FreeGridSlotMap.BuildReadingOrder(names, _resolvedItemSlots);
-                _ = SaveStateAsync();
+                DispatcherQueue.TryEnqueue(() => { if (!_closing) _ = SaveStateAsync(); });
                 _freeSlotGridLayout.InvalidateSlots();
                 return;
             }
@@ -223,7 +223,8 @@ public sealed partial class MainWindow
             {
                 _dragHostIndexLookup[siblingHost] = index;
                 siblingHost.CenterPoint = pivot;
-                Visual siblingVisual = ElementCompositionPreview.GetElementVisual(siblingHost);
+                ItemMotionState siblingMotion = GetItemMotion(siblingHost);
+                Visual siblingVisual = siblingMotion.Visual ??= ElementCompositionPreview.GetElementVisual(siblingHost);
                 siblingVisual.CenterPoint = pivot;
                 siblingVisual.RotationAngleInDegrees = 0f;
             }
@@ -353,7 +354,7 @@ public sealed partial class MainWindow
                 seconds,
                 responseSeconds: 0.20,
                 dampingFraction: 0.76);
-            ElementCompositionPreview.GetElementVisual(_itemDragHost).RotationAngleInDegrees = _dragTiltAngleDeg;
+            (draggedMotion.Visual ??= ElementCompositionPreview.GetElementVisual(_itemDragHost)).RotationAngleInDegrees = _dragTiltAngleDeg;
         }
 
         // Flock multi-selected icons behind the primary dragged icon in a fanned iOS 18 stack!
@@ -362,8 +363,10 @@ public sealed partial class MainWindow
             Point primaryOrigin = FreeGridSlotMap.SlotOrigin(_freeGridEngine.SourceSlot, columns, cellWidth, cellHeight, gap);
             Point livePrimaryTopLeft = new(primaryOrigin.X + nextTranslation.X, primaryOrigin.Y + nextTranslation.Y);
             UpdateDragStackFollowers(livePrimaryTopLeft, columns, cellWidth, cellHeight, gap);
-            Canvas.SetLeft(FreeGridDragStackBadge, livePrimaryTopLeft.X + cellWidth - 18);
-            Canvas.SetTop(FreeGridDragStackBadge, livePrimaryTopLeft.Y - 6);
+            FreeGridDragStackBadge.Translation = new Vector3(
+                (float)(livePrimaryTopLeft.X + cellWidth - 18),
+                (float)(livePrimaryTopLeft.Y - 6),
+                0f);
         }
 
         // Continuously integrate all sibling icons with velocity-preserving iOS underdamped springs!
@@ -397,7 +400,7 @@ public sealed partial class MainWindow
             follower.Opacity = k <= 3 ? 0.94 - fanLayer * 0.08 : 0.0;
             float fanAngle = fanLayer % 2 == 1 ? -3.5f : 3.5f;
             motion.RotationAngle = fanAngle;
-            ElementCompositionPreview.GetElementVisual(follower).RotationAngleInDegrees = fanAngle;
+            (motion.Visual ??= ElementCompositionPreview.GetElementVisual(follower)).RotationAngleInDegrees = fanAngle;
         }
     }
 
@@ -426,7 +429,6 @@ public sealed partial class MainWindow
                 motion.ScaleTarget = new Vector3(0.93f, 0.93f, 1f);
                 _swapHighlightHost = host;
                 host.BorderBrush = SwapPeerBorderBrush;
-                host.BorderThickness = new Thickness(1.5);
             }
             else
             {
@@ -442,7 +444,7 @@ public sealed partial class MainWindow
                 motion.RotationAngle = 0;
                 host.Translation = motion.Translation;
                 host.Scale = Vector3.One;
-                ElementCompositionPreview.GetElementVisual(host).RotationAngleInDegrees = 0f;
+                (motion.Visual ??= ElementCompositionPreview.GetElementVisual(host)).RotationAngleInDegrees = 0f;
             }
         }
     }
@@ -461,7 +463,7 @@ public sealed partial class MainWindow
                 motion.RotationAngle = 0;
                 host.Translation = motion.Translation;
                 host.Scale = motion.Scale;
-                ElementCompositionPreview.GetElementVisual(host).RotationAngleInDegrees = 0f;
+                (motion.Visual ??= ElementCompositionPreview.GetElementVisual(host)).RotationAngleInDegrees = 0f;
             }
             return true;
         }
@@ -532,7 +534,7 @@ public sealed partial class MainWindow
                 dampingFraction: 0.85);
             host.Scale = motion.Scale;
 
-            // Subtle living iOS edit-mode micro-jiggle driven directly on GPU Composition Visual (zero XAML DP churn!).
+            // Subtle living iOS edit-mode micro-jiggle driven directly on cached GPU Composition Visual (zero XAML/interop churn!).
             if (!isStackFollower)
             {
                 if (isActivelyDragging && Vector3.DistanceSquared(motion.Translation, motion.TranslationTarget) < 4f)
@@ -540,14 +542,14 @@ public sealed partial class MainWindow
                     double phase = hostOrdinal * 1.61803398875;
                     float targetWiggle = (float)(Math.Sin(_dragWiggleClockSeconds * 11.5 + phase) * 1.05);
                     motion.RotationAngle = targetWiggle;
-                    ElementCompositionPreview.GetElementVisual(host).RotationAngleInDegrees = targetWiggle;
+                    (motion.Visual ??= ElementCompositionPreview.GetElementVisual(host)).RotationAngleInDegrees = targetWiggle;
                 }
                 else if (Math.Abs(motion.RotationAngle) > 0.02f)
                 {
                     motion.RotationAngle *= 0.72f;
                     if (Math.Abs(motion.RotationAngle) <= 0.05f) motion.RotationAngle = 0f;
                     else settled = false;
-                    ElementCompositionPreview.GetElementVisual(host).RotationAngleInDegrees = motion.RotationAngle;
+                    (motion.Visual ??= ElementCompositionPreview.GetElementVisual(host)).RotationAngleInDegrees = motion.RotationAngle;
                 }
             }
             else if (!isActivelyDragging && Math.Abs(motion.RotationAngle) > 0.02f)
@@ -555,7 +557,7 @@ public sealed partial class MainWindow
                 motion.RotationAngle *= 0.70f;
                 if (Math.Abs(motion.RotationAngle) <= 0.05f) motion.RotationAngle = 0f;
                 else settled = false;
-                ElementCompositionPreview.GetElementVisual(host).RotationAngleInDegrees = motion.RotationAngle;
+                (motion.Visual ??= ElementCompositionPreview.GetElementVisual(host)).RotationAngleInDegrees = motion.RotationAngle;
             }
         }
 
@@ -569,7 +571,10 @@ public sealed partial class MainWindow
                 responseSeconds: 0.18,
                 dampingFraction: 0.85);
             if (_itemDragHost is { } landingHost)
-                ElementCompositionPreview.GetElementVisual(landingHost).RotationAngleInDegrees = _dragTiltAngleDeg;
+            {
+                ItemMotionState landingMotion = GetItemMotion(landingHost);
+                (landingMotion.Visual ??= ElementCompositionPreview.GetElementVisual(landingHost)).RotationAngleInDegrees = _dragTiltAngleDeg;
+            }
             if (Math.Abs(_dragTiltAngleDeg) > 0.05f) settled = false;
         }
 
@@ -666,11 +671,27 @@ public sealed partial class MainWindow
                 }
                 else
                 {
-                    var lookup = _items.ToDictionary(i => i.RelativeName, StringComparer.OrdinalIgnoreCase);
-                    WidgetItem[] desired = nextReadingOrder
-                        .Where(lookup.ContainsKey)
-                        .Select(name => lookup[name])
-                        .ToArray();
+                    var lookup = new Dictionary<string, WidgetItem>(_items.Count, StringComparer.OrdinalIgnoreCase);
+                    var duplicates = new List<WidgetItem>();
+                    foreach (WidgetItem entry in _items)
+                    {
+                        if (!lookup.TryAdd(entry.RelativeName, entry))
+                            duplicates.Add(entry);
+                    }
+                    var desiredList = new List<WidgetItem>(_items.Count);
+                    var emitted = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                    foreach (string name in nextReadingOrder)
+                    {
+                        if (lookup.TryGetValue(name, out WidgetItem? matched) && emitted.Add(name))
+                            desiredList.Add(matched);
+                    }
+                    foreach (WidgetItem entry in _items)
+                    {
+                        if (!emitted.Contains(entry.RelativeName))
+                            desiredList.Add(entry);
+                    }
+                    desiredList.AddRange(duplicates);
+                    WidgetItem[] desired = desiredList.ToArray();
                     _itemCollectionMoveInProgress = true;
                     try
                     {
@@ -693,6 +714,8 @@ public sealed partial class MainWindow
         }
         finally
         {
+            _itemDragLanding = false;
+            StopItemDragInput(keepRendering: false);
             CleanupIosFreeGridOverlays();
             _freeGridEngine = null;
         }
@@ -703,8 +726,7 @@ public sealed partial class MainWindow
         if (_swapHighlightHost is not null)
         {
             string? tag = _swapHighlightHost.Tag as string;
-            _swapHighlightHost.BorderThickness = new Thickness(0);
-            _swapHighlightHost.BorderBrush = null;
+            _swapHighlightHost.BorderBrush = ItemTransparentBorderBrush;
             if (!string.IsNullOrEmpty(tag))
                 ApplyItemSelectionVisual(_swapHighlightHost, tag);
             _swapHighlightHost = null;
@@ -725,9 +747,11 @@ public sealed partial class MainWindow
         _dragWiggleClockSeconds = 0;
         if (_itemDragHost is { } host)
         {
-            ElementCompositionPreview.GetElementVisual(host).RotationAngleInDegrees = 0f;
-            host.BorderThickness = new Thickness(0);
-            host.BorderBrush = null;
+            if (_itemMotionStates.TryGetValue(host, out ItemMotionState? dragMotion) && dragMotion.Visual is not null)
+                dragMotion.Visual.RotationAngleInDegrees = 0f;
+            else
+                ElementCompositionPreview.GetElementVisual(host).RotationAngleInDegrees = 0f;
+            host.BorderBrush = ItemTransparentBorderBrush;
             if (host.Tag is string dragTag)
                 ApplyItemSelectionVisual(host, dragTag);
         }
@@ -736,7 +760,10 @@ public sealed partial class MainWindow
             if (TryGetRealizedItemHost(idx, out Border member))
             {
                 member.Opacity = 1.0;
-                ElementCompositionPreview.GetElementVisual(member).RotationAngleInDegrees = 0f;
+                if (_itemMotionStates.TryGetValue(member, out ItemMotionState? memberMotion) && memberMotion.Visual is not null)
+                    memberMotion.Visual.RotationAngleInDegrees = 0f;
+                else
+                    ElementCompositionPreview.GetElementVisual(member).RotationAngleInDegrees = 0f;
                 Canvas.SetZIndex(member, 0);
             }
         }
@@ -746,7 +773,7 @@ public sealed partial class MainWindow
         foreach ((Border motionHost, ItemMotionState motion) in _itemMotionStates)
         {
             motion.RotationAngle = 0f;
-            ElementCompositionPreview.GetElementVisual(motionHost).RotationAngleInDegrees = 0f;
+            (motion.Visual ??= ElementCompositionPreview.GetElementVisual(motionHost)).RotationAngleInDegrees = 0f;
         }
         // Pool guide cells (collapse instead of destroying/rebuilding XAML tree on every drag!).
         foreach (Border cell in _freeGridGuideCells)
@@ -825,8 +852,7 @@ public sealed partial class MainWindow
             _dropGhostScale = Vector3.One;
             _dropGhostScaleVelocity = Vector3.Zero;
             _dropGhostPositioned = true;
-            Canvas.SetLeft(FreeGridDropSlotGhost, _dropGhostPosition.X);
-            Canvas.SetTop(FreeGridDropSlotGhost, _dropGhostPosition.Y);
+            FreeGridDropSlotGhost.Translation = _dropGhostPosition;
             FreeGridDropSlotGhost.Scale = Vector3.One;
         }
         else
@@ -854,8 +880,7 @@ public sealed partial class MainWindow
             seconds,
             responseSeconds: 0.22,
             dampingFraction: 0.72);
-        Canvas.SetLeft(FreeGridDropSlotGhost, _dropGhostPosition.X);
-        Canvas.SetTop(FreeGridDropSlotGhost, _dropGhostPosition.Y);
+        FreeGridDropSlotGhost.Translation = _dropGhostPosition;
         FreeGridDropSlotGhost.Scale = _dropGhostScale;
     }
 
@@ -893,16 +918,42 @@ public sealed partial class MainWindow
 
         string[] names = _items.Select(i => i.RelativeName).ToArray();
         List<string> readingOrder = FreeGridSlotMap.BuildReadingOrder(names, _resolvedItemSlots);
+        List<string> previousOrder = _definition.ItemOrder.ToList();
+        var previousSlots = new Dictionary<string, int>(_definition.ItemSlots ?? [], StringComparer.OrdinalIgnoreCase);
         _definition.ItemOrder = readingOrder;
         _definition.ItemSlots = FreeGridSlotMap.CompactToDense(readingOrder);
-        await SaveStateAsync();
+        try
+        {
+            await _host.SaveStateAsync();
+        }
+        catch
+        {
+            _definition.ItemOrder = previousOrder;
+            _definition.ItemSlots = previousSlots;
+            throw;
+        }
 
-        var lookup = _items.ToDictionary(i => i.RelativeName, StringComparer.OrdinalIgnoreCase);
-        WidgetItem[] ordered = readingOrder
-            .Where(lookup.ContainsKey)
-            .Select(n => lookup[n])
-            .ToArray();
-        ApplyCatalogItemsAndRender(ordered, refreshIcons: false);
+        var lookup = new Dictionary<string, WidgetItem>(_items.Count, StringComparer.OrdinalIgnoreCase);
+        var duplicates = new List<WidgetItem>();
+        foreach (WidgetItem entry in _items)
+        {
+            if (!lookup.TryAdd(entry.RelativeName, entry))
+                duplicates.Add(entry);
+        }
+        var orderedList = new List<WidgetItem>(_items.Count);
+        var emitted = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (string n in readingOrder)
+        {
+            if (lookup.TryGetValue(n, out WidgetItem? matched) && emitted.Add(n))
+                orderedList.Add(matched);
+        }
+        foreach (WidgetItem entry in _items)
+        {
+            if (!emitted.Contains(entry.RelativeName))
+                orderedList.Add(entry);
+        }
+        orderedList.AddRange(duplicates);
+        ApplyCatalogItemsAndRender(orderedList, refreshIcons: false);
         SyncResolvedItemSlots();
         ItemsRepeater.UpdateLayout();
         if (before is not null) ApplyFlipFromCapturedPositions(before);

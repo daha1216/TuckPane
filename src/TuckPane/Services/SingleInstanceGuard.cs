@@ -14,16 +14,46 @@ public sealed class SingleInstanceGuard : IDisposable
 
     public SingleInstanceGuard(string name, string? legacyName = null)
     {
-        _mutex = new Mutex(initiallyOwned: true, $"Local\\{name}", out bool createdNew);
-        _ownsMutex = createdNew;
-        if (!string.IsNullOrWhiteSpace(legacyName))
+        Mutex? mutex = null;
+        Mutex? legacyMutex = null;
+        EventWaitHandle? activationEvent = null;
+        EventWaitHandle? activationAcknowledged = null;
+        bool ownsMutex = false;
+        bool ownsLegacyMutex = false;
+        try
         {
-            _legacyMutex = new Mutex(initiallyOwned: true, $"Local\\{legacyName}", out bool legacyCreatedNew);
-            _ownsLegacyMutex = legacyCreatedNew;
+            mutex = new Mutex(initiallyOwned: true, $"Local\\{name}", out ownsMutex);
+            if (!string.IsNullOrWhiteSpace(legacyName))
+            {
+                legacyMutex = new Mutex(initiallyOwned: true, $"Local\\{legacyName}", out ownsLegacyMutex);
+            }
+            activationEvent = new EventWaitHandle(false, EventResetMode.AutoReset, $"Local\\{name}-activate");
+            activationAcknowledged = new EventWaitHandle(false, EventResetMode.AutoReset, $"Local\\{name}-activate-ack");
+
+            _mutex = mutex;
+            _ownsMutex = ownsMutex;
+            _legacyMutex = legacyMutex;
+            _ownsLegacyMutex = ownsLegacyMutex;
+            _activationEvent = activationEvent;
+            _activationAcknowledged = activationAcknowledged;
+            IsPrimary = _ownsMutex && (_legacyMutex is null || _ownsLegacyMutex);
         }
-        _activationEvent = new EventWaitHandle(false, EventResetMode.AutoReset, $"Local\\{name}-activate");
-        _activationAcknowledged = new EventWaitHandle(false, EventResetMode.AutoReset, $"Local\\{name}-activate-ack");
-        IsPrimary = _ownsMutex && (_legacyMutex is null || _ownsLegacyMutex);
+        catch
+        {
+            activationAcknowledged?.Dispose();
+            activationEvent?.Dispose();
+            if (ownsLegacyMutex && legacyMutex is not null)
+            {
+                try { legacyMutex.ReleaseMutex(); } catch { }
+            }
+            legacyMutex?.Dispose();
+            if (ownsMutex && mutex is not null)
+            {
+                try { mutex.ReleaseMutex(); } catch { }
+            }
+            mutex?.Dispose();
+            throw;
+        }
     }
 
     public bool IsPrimary { get; }

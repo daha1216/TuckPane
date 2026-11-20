@@ -32,24 +32,24 @@ internal static partial class NativeMethods
     [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
     internal interface IShellLinkW
     {
-        [PreserveSig] int GetPath(StringBuilder file, int capacity, IntPtr findData, uint flags);
+        [PreserveSig] int GetPath([Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder file, int capacity, IntPtr findData, uint flags);
         [PreserveSig] int GetIDList(out IntPtr itemIdList);
         [PreserveSig] int SetIDList(IntPtr itemIdList);
-        [PreserveSig] int GetDescription(StringBuilder description, int capacity);
-        [PreserveSig] int SetDescription(string description);
-        [PreserveSig] int GetWorkingDirectory(StringBuilder directory, int capacity);
-        [PreserveSig] int SetWorkingDirectory(string directory);
-        [PreserveSig] int GetArguments(StringBuilder arguments, int capacity);
-        [PreserveSig] int SetArguments(string arguments);
+        [PreserveSig] int GetDescription([Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder description, int capacity);
+        [PreserveSig] int SetDescription([MarshalAs(UnmanagedType.LPWStr)] string description);
+        [PreserveSig] int GetWorkingDirectory([Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder directory, int capacity);
+        [PreserveSig] int SetWorkingDirectory([MarshalAs(UnmanagedType.LPWStr)] string directory);
+        [PreserveSig] int GetArguments([Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder arguments, int capacity);
+        [PreserveSig] int SetArguments([MarshalAs(UnmanagedType.LPWStr)] string arguments);
         [PreserveSig] int GetHotkey(out ushort hotkey);
         [PreserveSig] int SetHotkey(ushort hotkey);
         [PreserveSig] int GetShowCmd(out int showCommand);
         [PreserveSig] int SetShowCmd(int showCommand);
-        [PreserveSig] int GetIconLocation(StringBuilder iconPath, int capacity, out int iconIndex);
-        [PreserveSig] int SetIconLocation(string iconPath, int iconIndex);
-        [PreserveSig] int SetRelativePath(string path, uint reserved);
+        [PreserveSig] int GetIconLocation([Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder iconPath, int capacity, out int iconIndex);
+        [PreserveSig] int SetIconLocation([MarshalAs(UnmanagedType.LPWStr)] string iconPath, int iconIndex);
+        [PreserveSig] int SetRelativePath([MarshalAs(UnmanagedType.LPWStr)] string path, uint reserved);
         [PreserveSig] int Resolve(IntPtr hWnd, uint flags);
-        [PreserveSig] int SetPath(string path);
+        [PreserveSig] int SetPath([MarshalAs(UnmanagedType.LPWStr)] string path);
     }
 
     [ComImport]
@@ -369,6 +369,7 @@ internal static partial class NativeMethods
     internal const uint FOFX_NOCOPYHOOKS = 0x00000800;
     internal const uint FOFX_ADDUNDORECORD = 0x20000000;
 
+    internal const uint FILE_ATTRIBUTE_REPARSE_POINT = 0x00000400;
     internal const uint IO_REPARSE_TAG_MOUNT_POINT = 0xA0000003;
     internal const uint IO_REPARSE_TAG_SYMLINK = 0xA000000C;
     internal const uint IO_REPARSE_TAG_APPEXECLINK = 0x8000001B;

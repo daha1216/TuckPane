@@ -116,7 +116,8 @@ internal sealed class TransparentWindowBackdrop : CompositionBrushBackdrop
     }
 
     /// <summary>
-    /// Fills client pixels with GDI black and releases temporary handles via NativeMethods.DeleteObject(brush).
+    /// Fills client pixels with GDI black using the cached stock BLACK_BRUSH when available,
+    /// falling back to a temporary brush released via NativeMethods.DeleteObject(brush).
     /// </summary>
     private static bool ClearBackground(IntPtr hwnd)
     {
@@ -127,6 +128,12 @@ internal sealed class TransparentWindowBackdrop : CompositionBrushBackdrop
         try
         {
             if (!NativeMethods.GetClientRect(hwnd, out NativeMethods.RECT rect)) return false;
+
+            IntPtr stockBrush = NativeMethods.GetStockObject(NativeMethods.BLACK_BRUSH);
+            if (stockBrush != IntPtr.Zero)
+            {
+                return NativeMethods.FillRect(hdc, ref rect, stockBrush) != 0;
+            }
 
             IntPtr brush = NativeMethods.CreateSolidBrush(0);
             if (brush == IntPtr.Zero) return false;

@@ -38,7 +38,8 @@ public sealed partial class MainWindow : Window
     private const int CompactPreviewItemCount = CompactPreviewRows * CompactPreviewColumns;
     private const double CompactCornerRadiusDip = 9.5;
     private const double ExpandedCornerRadiusDip = 36;
-    private const double TransitionResponseSeconds = .30;
+    private const double ExpandTransitionResponseSeconds = .27;
+    private const double CollapseTransitionResponseSeconds = .22;
     private const double StationTransitionResponseSeconds = .24;
     private const int ReducedMotionDurationMs = 120;
     private const int LongPressMs = 350;
@@ -48,6 +49,7 @@ public sealed partial class MainWindow : Window
     private const double CompactListIconSizeDip = 20;
     private const double CompactListFontSizeDip = 14;
     private static readonly long OleMouseMoveMinimumTicks = Math.Max(1, Stopwatch.Frequency / 120);
+    private static readonly ScrollingScrollOptions InstantScrollOptions = new(ScrollingAnimationMode.Disabled, ScrollingSnapPointsMode.Ignore);
 
     private readonly AppHost _host;
     private StorageService _storage;
@@ -70,6 +72,10 @@ public sealed partial class MainWindow : Window
     private readonly SolidColorBrush _collapsePressedBrush = new(Colors.Transparent);
     private readonly SolidColorBrush _folderFallbackBrush = new(ColorHelper.FromArgb(255, 106, 210, 255));
     private readonly SolidColorBrush _fileFallbackBrush = new(ColorHelper.FromArgb(255, 236, 239, 245));
+    private readonly SolidColorBrush _organizerTextBrush = new(Colors.White);
+    private readonly SolidColorBrush _dockEmptyAddBrush = new(Colors.White);
+    private readonly SolidColorBrush _warningBadgeBgBrush = new(ColorHelper.FromArgb(184, 29, 35, 43));
+    private readonly SolidColorBrush _warningIconFgBrush = new(ColorHelper.FromArgb(255, 255, 200, 87));
     private readonly BitmapImage _noteIcon = new(new Uri("ms-appx:///Assets/Note.png"))
     {
         DecodePixelWidth = 128
@@ -132,6 +138,14 @@ public sealed partial class MainWindow : Window
     private CollapseTransitionGeometry? _collapseTransitionGeometry;
     private int _lastTransitionWindowLeft = int.MinValue;
     private int _lastTransitionWindowTop = int.MinValue;
+    private double _lastExpandedClipRadius = -1;
+    private XamlRoot? _subscribedXamlRoot;
+    private readonly PointerEventHandler _expandedPointerPressedHandler;
+    private readonly PointerEventHandler _expandedPointerMovedHandler;
+    private readonly PointerEventHandler _expandedPointerReleasedHandler;
+    private readonly PointerEventHandler _expandedPointerCanceledHandler;
+    private readonly PointerEventHandler _expandedPointerCaptureLostHandler;
+    private readonly PointerEventHandler _expandedPointerWheelChangedHandler;
 
     private uint _pressedPointerId;
     private Point _pressPointDip;
@@ -142,10 +156,14 @@ public sealed partial class MainWindow : Window
     private bool _pressActive;
     private bool _widgetDragging;
     private bool _widgetDragTopmost;
+    private bool _groupDragHasPeers;
     private bool _draggingExpanded;
     private bool _nativeMouseCapture;
     private bool _dragRenderingSubscribed;
     private bool _dragClockBoosted;
+    private bool _itemDragClockBoosted;
+    private IDisposable? _smoothScrollClockBoost;
+    private IDisposable? _canvasResizeClockBoost;
     private DisplayInfo? _dragDisplay;
     private WindowAlignmentInsets? _dragAlignmentInsets;
     private WindowAlignmentState _windowAlignmentState;
@@ -175,7 +193,6 @@ public sealed partial class MainWindow : Window
     private static bool _canvasResizeProbeRunning => false;
     private static bool _itemReorderProbeRunning => false;
 #endif
-    private bool _canvasResizeLeftButtonDown;
     private bool _shellContextMenuOpen;
     private bool _contextMenuActivated;
     private bool _contextMenuCounted;
@@ -226,6 +243,7 @@ public sealed partial class MainWindow : Window
     private bool _gapTransitionCompleting;
     private TaskCompletionSource? _gapTransitionSettled;
     private readonly RealizedItemRegistry<Border> _realizedItemHosts = new();
+    private readonly Dictionary<Border, ItemHostParts> _itemHostParts = new(ReferenceEqualityComparer.Instance);
     private readonly HashSet<string> _itemDragIdentityWarnings = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<Border, ItemMotionState> _itemMotionStates = new(ReferenceEqualityComparer.Instance);
     private int _itemElementsPrepared;
@@ -235,8 +253,33 @@ public sealed partial class MainWindow : Window
     private double _positionedCompactWidthDip;
     private double _positionedCompactHeightDip;
 
+    private sealed class ItemHostParts(
+        Grid iconContainer,
+        StackPanel itemContent,
+        FontIcon fallbackIcon,
+        Image itemImage,
+        OrganizerPreviewControl organizerPreview,
+        Grid nameContainer,
+        Grid nameShadowHost,
+        TextBlock nameText)
+    {
+        internal readonly Grid IconContainer = iconContainer;
+        internal readonly StackPanel ItemContent = itemContent;
+        internal readonly FontIcon FallbackIcon = fallbackIcon;
+        internal readonly Image ItemImage = itemImage;
+        internal readonly OrganizerPreviewControl OrganizerPreview = organizerPreview;
+        internal readonly Grid NameContainer = nameContainer;
+        internal readonly Grid NameShadowHost = nameShadowHost;
+        internal readonly TextBlock NameText = nameText;
+        internal SpriteVisual? NameShadowVisual;
+        internal DropShadow? NameDropShadow;
+        internal CompositionBrush? NameAlphaMask;
+        internal SizeChangedEventHandler? NameSizeChangedHandler;
+    }
+
     private sealed class ItemMotionState
     {
+        internal Visual? Visual;
         internal Vector3 Translation;
         internal Vector3 TranslationTarget;
         internal Vector3 TranslationVelocity;
@@ -282,21 +325,22 @@ public sealed partial class MainWindow : Window
         _expandedSurface = new ThemeSurface(ExpandedSurfaceHost, IsDock ? ExpandedPanel : null);
         _compactEdgeSurface = new ThemeEdgeSurface(CompactEdgeOverlay, CompactThumbnailHost);
         _expandedEdgeSurface = new ThemeEdgeSurface(ExpandedEdgeOverlay, IsDock ? ExpandedPanel : null);
-        CompactThumbnailHost.SizeChanged += (_, _) => UpdateSurfaceClips();
-        ExpandedPanel.SizeChanged += (_, _) => UpdateSurfaceClips();
-        WindowRoot.SizeChanged += (_, _) => UpdateSurfaceClips();
-        WindowRoot.Loaded += (_, _) =>
-        {
-            WindowRoot.XamlRoot.Changed += (_, _) => UpdateSurfaceClips();
-            ApplyCompactVisualStyle();
-            UpdateSurfaceClips();
-        };
-        ExpandedView.AddHandler(UIElement.PointerPressedEvent, new PointerEventHandler(ExpandedView_PointerPressed), handledEventsToo: true);
-        ExpandedView.AddHandler(UIElement.PointerMovedEvent, new PointerEventHandler(ExpandedView_PointerMoved), handledEventsToo: true);
-        ExpandedView.AddHandler(UIElement.PointerReleasedEvent, new PointerEventHandler(ExpandedView_PointerReleased), handledEventsToo: true);
-        ExpandedView.AddHandler(UIElement.PointerCanceledEvent, new PointerEventHandler(ExpandedView_PointerCanceled), handledEventsToo: true);
-        ExpandedView.AddHandler(UIElement.PointerCaptureLostEvent, new PointerEventHandler(ExpandedView_PointerCaptureLost), handledEventsToo: true);
-        ExpandedView.AddHandler(UIElement.PointerWheelChangedEvent, new PointerEventHandler(ExpandedView_PointerWheelChanged), handledEventsToo: true);
+        CompactThumbnailHost.SizeChanged += SurfaceHost_SizeChanged;
+        ExpandedPanel.SizeChanged += SurfaceHost_SizeChanged;
+        WindowRoot.SizeChanged += SurfaceHost_SizeChanged;
+        WindowRoot.Loaded += WindowRoot_Loaded;
+        _expandedPointerPressedHandler = new PointerEventHandler(ExpandedView_PointerPressed);
+        _expandedPointerMovedHandler = new PointerEventHandler(ExpandedView_PointerMoved);
+        _expandedPointerReleasedHandler = new PointerEventHandler(ExpandedView_PointerReleased);
+        _expandedPointerCanceledHandler = new PointerEventHandler(ExpandedView_PointerCanceled);
+        _expandedPointerCaptureLostHandler = new PointerEventHandler(ExpandedView_PointerCaptureLost);
+        _expandedPointerWheelChangedHandler = new PointerEventHandler(ExpandedView_PointerWheelChanged);
+        ExpandedView.AddHandler(UIElement.PointerPressedEvent, _expandedPointerPressedHandler, handledEventsToo: true);
+        ExpandedView.AddHandler(UIElement.PointerMovedEvent, _expandedPointerMovedHandler, handledEventsToo: true);
+        ExpandedView.AddHandler(UIElement.PointerReleasedEvent, _expandedPointerReleasedHandler, handledEventsToo: true);
+        ExpandedView.AddHandler(UIElement.PointerCanceledEvent, _expandedPointerCanceledHandler, handledEventsToo: true);
+        ExpandedView.AddHandler(UIElement.PointerCaptureLostEvent, _expandedPointerCaptureLostHandler, handledEventsToo: true);
+        ExpandedView.AddHandler(UIElement.PointerWheelChangedEvent, _expandedPointerWheelChangedHandler, handledEventsToo: true);
         WindowRoot.PointerEntered += WindowRoot_PointerEntered;
         WindowRoot.PointerExited += WindowRoot_PointerExited;
         Title = "TuckPane";
@@ -320,12 +364,12 @@ public sealed partial class MainWindow : Window
         _interactionSaveTimer = DispatcherQueue.CreateTimer();
         _interactionSaveTimer.Interval = TimeSpan.FromMilliseconds(350);
         _interactionSaveTimer.IsRepeating = false;
-        _interactionSaveTimer.Tick += async (_, _) => await SaveStateAsync();
+        _interactionSaveTimer.Tick += InteractionSaveTimer_Tick;
 
         _canvasResizeInputTimer = DispatcherQueue.CreateTimer();
         _canvasResizeInputTimer.Interval = TimeSpan.FromMilliseconds(16);
         _canvasResizeInputTimer.IsRepeating = true;
-        _canvasResizeInputTimer.Tick += (_, _) => PollCanvasResizeInput();
+        _canvasResizeInputTimer.Tick += CanvasResizeInputTimer_Tick;
 
         _itemTouchHoldTimer = DispatcherQueue.CreateTimer();
         _itemTouchHoldTimer.Interval = TimeSpan.FromMilliseconds(LongPressMs);
@@ -337,6 +381,29 @@ public sealed partial class MainWindow : Window
         Closed += MainWindow_Closed;
         InitializeHoverWave();
     }
+
+    private void SurfaceHost_SizeChanged(object sender, SizeChangedEventArgs e) => UpdateSurfaceClips();
+
+    private void WindowRoot_Loaded(object sender, RoutedEventArgs e)
+    {
+        if (_subscribedXamlRoot is not null)
+            _subscribedXamlRoot.Changed -= XamlRoot_Changed;
+        _subscribedXamlRoot = WindowRoot.XamlRoot;
+        if (_subscribedXamlRoot is not null)
+            _subscribedXamlRoot.Changed += XamlRoot_Changed;
+        ApplyCompactVisualStyle();
+        UpdateSurfaceClips();
+    }
+
+    private void XamlRoot_Changed(XamlRoot sender, XamlRootChangedEventArgs args) => UpdateSurfaceClips();
+
+    private async void InteractionSaveTimer_Tick(Microsoft.UI.Dispatching.DispatcherQueueTimer sender, object args)
+    {
+        if (!_closing) await SaveStateAsync();
+    }
+
+    private void CanvasResizeInputTimer_Tick(Microsoft.UI.Dispatching.DispatcherQueueTimer sender, object args) =>
+        PollCanvasResizeInput();
 
     public void ApplyLanguage()
     {
@@ -807,6 +874,8 @@ public sealed partial class MainWindow : Window
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(ExpandedNameEditor, AppStrings.Get("ContextRename"));
         ExpandedNameText.FontSize = 42 * _host.State.GlobalSettings.ResolveExpandedNameScale(_definition.PlacementMode);
         ApplyOrganizerNameVisibility();
+        SyncCompactNameShadow();
+        SyncExpandedNameShadow();
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(ExpandedNameText, _definition.Name);
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(CompactTile, _definition.Name);
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetAutomationId(CompactTile, $"OrganizerCompact-{_definition.Id:N}");
@@ -816,6 +885,7 @@ public sealed partial class MainWindow : Window
     {
         bool storageExists = _storage.Exists;
         CompactWarningBadge.Visibility = storageExists ? Visibility.Collapsed : Visibility.Visible;
+        CompactEmptyGlyph.Visibility = _items.Count == 0 && storageExists ? Visibility.Visible : Visibility.Collapsed;
         string compactHelp = storageExists ? _definition.Name : AppStrings.Get("MissingStorage");
         ToolTipService.SetToolTip(CompactTile, storageExists && _definition.HideName ? null : compactHelp);
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetHelpText(CompactTile, storageExists ? string.Empty : compactHelp);
@@ -837,6 +907,7 @@ public sealed partial class MainWindow : Window
         }
         if (version != _compactPreviewVersion || _closing) return;
 
+        CompactEmptyGlyph.Visibility = preview.Count == 0 && _storage.Exists ? Visibility.Visible : Visibility.Collapsed;
         Image[] images = [CompactPreviewImage0, CompactPreviewImage1, CompactPreviewImage2, CompactPreviewImage3];
         OrganizerPreviewControl[] organizerPreviews =
             [CompactOrganizerPreview0, CompactOrganizerPreview1, CompactOrganizerPreview2, CompactOrganizerPreview3];
@@ -866,11 +937,10 @@ public sealed partial class MainWindow : Window
         {
             if (!TryGetRealizedItemHost(index, out Border host) || host.DataContext is not WidgetItem item ||
                 IsDocumentItem(item) || item.Kind == WidgetItemKind.Organizer) continue;
-            if (FindItemPart<Image>(host, "ItemImage") is Image image &&
-                FindItemPart<FontIcon>(host, "ItemFallbackIcon") is FontIcon fallback)
+            if (GetOrResolveItemHostParts(host) is { } parts)
             {
-                image.ClearValue(Image.SourceProperty);
-                _ = LoadIconAsync(image, item.FullPath, fallback, refresh: true, dockPresentation: IsDock);
+                parts.ItemImage.ClearValue(Image.SourceProperty);
+                _ = LoadIconAsync(parts.ItemImage, item.FullPath, parts.FallbackIcon, refresh: true, dockPresentation: IsDock);
             }
         }
     }
@@ -878,9 +948,10 @@ public sealed partial class MainWindow : Window
     private void UpdateCompactPreviewItemScale()
     {
         Grid grid = CompactPreviewGrid;
-        grid.Margin = new Thickness(Math.Max(2, 3 * _appliedCompactScale));
-        grid.ColumnSpacing = Math.Max(1, _appliedCompactScale);
-        grid.RowSpacing = Math.Max(1, _appliedCompactScale);
+        grid.Margin = new Thickness(Math.Max(2.5, 4.4 * _appliedCompactScale));
+        grid.ColumnSpacing = Math.Max(1.2, 1.8 * _appliedCompactScale);
+        grid.RowSpacing = Math.Max(1.2, 1.8 * _appliedCompactScale);
+        CompactEmptyGlyph.FontSize = Math.Max(12, Math.Round(16 * _appliedCompactScale));
         double iconSize = CalculateCompactPreviewIconSize(
             grid,
             Math.Max(1, grid.RowDefinitions.Count),
@@ -1031,12 +1102,14 @@ public sealed partial class MainWindow : Window
             else CancelItemReorder();
         }
         _itemMotionStates.Remove(host);
+        DisposeItemHostParts(host);
         host.Translation = Vector3.Zero;
         host.Scale = Vector3.One;
         host.Opacity = 1;
         host.Shadow = null;
         host.Background = _transparentItemBrush;
-        host.BorderThickness = new Thickness(0);
+        host.BorderBrush = ItemTransparentBorderBrush;
+        host.BorderThickness = new Thickness(1);
         ResetItemContentTransform(host);
         Canvas.SetZIndex(host, 0);
     }
@@ -1114,13 +1187,15 @@ public sealed partial class MainWindow : Window
         Size viewport = GetItemsViewportSize();
         SizePreparedElement(host, viewport.Width, viewport.Height);
 
-        if (FindItemPart<Grid>(host, "ItemIconContainer") is Grid iconContainer &&
-            FindItemPart<StackPanel>(host, "ItemContent") is StackPanel itemContent &&
-            FindItemPart<FontIcon>(host, "ItemFallbackIcon") is FontIcon fallback &&
-            FindItemPart<Image>(host, "ItemImage") is Image image &&
-            FindItemPart<OrganizerPreviewControl>(host, "OrganizerPreview") is OrganizerPreviewControl organizerPreview &&
-            FindItemPart<TextBlock>(host, "ItemNameText") is TextBlock name)
+        if (GetOrResolveItemHostParts(host) is { } parts)
         {
+            Grid iconContainer = parts.IconContainer;
+            StackPanel itemContent = parts.ItemContent;
+            FontIcon fallback = parts.FallbackIcon;
+            Image image = parts.ItemImage;
+            OrganizerPreviewControl organizerPreview = parts.OrganizerPreview;
+            TextBlock name = parts.NameText;
+
             bool compactList = IsCompactList;
             double contentScale = ContentScale;
             double compactListScale = _definition.CompactListItemScale * contentScale;
@@ -1164,8 +1239,13 @@ public sealed partial class MainWindow : Window
             name.HorizontalAlignment = compactList ? HorizontalAlignment.Stretch : HorizontalAlignment.Center;
             name.VerticalAlignment = VerticalAlignment.Center;
             name.TextAlignment = compactList ? TextAlignment.Left : TextAlignment.Center;
-            name.Foreground = CreateOrganizerTextBrush();
+            name.Foreground = _organizerTextBrush;
             name.Visibility = IsDock ? Visibility.Collapsed : Visibility.Visible;
+            parts.NameContainer.HorizontalAlignment = compactList ? HorizontalAlignment.Stretch : HorizontalAlignment.Center;
+            parts.NameContainer.Visibility = IsDock ? Visibility.Collapsed : Visibility.Visible;
+            parts.NameShadowHost.HorizontalAlignment = compactList ? HorizontalAlignment.Left : HorizontalAlignment.Center;
+            parts.NameShadowHost.VerticalAlignment = VerticalAlignment.Center;
+            SyncItemNameShadow(parts, DesktopTypographyService.IsHighContrast());
             bool showOrganizerPreview = organizerItem && !compactList;
             organizerPreview.Visibility = showOrganizerPreview ? Visibility.Visible : Visibility.Collapsed;
             image.Visibility = showOrganizerPreview ? Visibility.Collapsed : Visibility.Visible;
@@ -1243,8 +1323,10 @@ public sealed partial class MainWindow : Window
             Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(host, item.Name);
             host.ClearValue(Microsoft.UI.Xaml.Automation.AutomationProperties.AutomationIdProperty);
         }
-        if (FindItemPart<FontIcon>(host, "ItemFallbackIcon") is FontIcon fallback)
+        if (GetOrResolveItemHostParts(host) is { } parts)
         {
+            FontIcon fallback = parts.FallbackIcon;
+            Image image = parts.ItemImage;
             fallback.Glyph = item.Kind switch
             {
                 WidgetItemKind.Folder => "\uE8B7",
@@ -1252,9 +1334,6 @@ public sealed partial class MainWindow : Window
                 _ => "\uE7C3"
             };
             fallback.Foreground = item.Kind == WidgetItemKind.Folder ? _folderFallbackBrush : _fileFallbackBrush;
-        }
-        if (FindItemPart<Image>(host, "ItemImage") is Image image)
-        {
             string iconKey = IsDocumentItem(item) ? item.RelativeName : item.FullPath;
             if (!string.Equals(image.Tag as string, iconKey, StringComparison.OrdinalIgnoreCase))
             {
@@ -1262,20 +1341,135 @@ public sealed partial class MainWindow : Window
                 image.ClearValue(Image.SourceProperty);
             }
             if (IsDocumentItem(item)) image.Source = GetDocumentIcon(item);
-            else if (FindItemPart<FontIcon>(host, "ItemFallbackIcon") is FontIcon itemFallback)
-                _ = LoadIconAsync(image, item.FullPath, itemFallback, dockPresentation: IsDock);
-            if (FindItemPart<FontIcon>(host, "ItemFallbackIcon") is FontIcon stateFallback)
-            {
-                bool iconLoadPending = _pendingIconLoads.TryGetValue(image, out string? pendingPath) &&
-                    pendingPath.Equals(iconKey, StringComparison.OrdinalIgnoreCase);
-                stateFallback.Visibility = OrganizerInteractionMath.ShouldShowItemFallback(
-                    image.Source is not null,
-                    iconLoadPending,
-                    organizerPreviewVisible: false)
-                    ? Visibility.Visible
-                    : Visibility.Collapsed;
-            }
+            else _ = LoadIconAsync(image, item.FullPath, fallback, dockPresentation: IsDock);
+            bool iconLoadPending = _pendingIconLoads.TryGetValue(image, out string? pendingPath) &&
+                pendingPath.Equals(iconKey, StringComparison.OrdinalIgnoreCase);
+            fallback.Visibility = OrganizerInteractionMath.ShouldShowItemFallback(
+                image.Source is not null,
+                iconLoadPending,
+                organizerPreviewVisible: false)
+                ? Visibility.Visible
+                : Visibility.Collapsed;
+            SyncItemNameShadow(parts, DesktopTypographyService.IsHighContrast());
         }
+    }
+
+    private ItemHostParts? GetOrResolveItemHostParts(Border host)
+    {
+        if (_itemHostParts.TryGetValue(host, out ItemHostParts? cached))
+            return cached;
+        if (FindItemPart<Grid>(host, "ItemIconContainer") is not Grid iconContainer ||
+            FindItemPart<StackPanel>(host, "ItemContent") is not StackPanel itemContent ||
+            FindItemPart<FontIcon>(host, "ItemFallbackIcon") is not FontIcon fallback ||
+            FindItemPart<Image>(host, "ItemImage") is not Image image ||
+            FindItemPart<OrganizerPreviewControl>(host, "OrganizerPreview") is not OrganizerPreviewControl organizerPreview ||
+            FindItemPart<Grid>(host, "ItemNameContainer") is not Grid nameContainer ||
+            FindItemPart<Grid>(host, "ItemNameShadowHost") is not Grid nameShadowHost ||
+            FindItemPart<TextBlock>(host, "ItemNameText") is not TextBlock nameText)
+        {
+            return null;
+        }
+        var parts = new ItemHostParts(
+            iconContainer, itemContent, fallback, image, organizerPreview, nameContainer, nameShadowHost, nameText);
+        parts.NameSizeChangedHandler = (_, _) =>
+        {
+            if (!_closing) SyncItemNameShadow(parts, DesktopTypographyService.IsHighContrast());
+        };
+        nameText.SizeChanged += parts.NameSizeChangedHandler;
+        _itemHostParts[host] = parts;
+        return parts;
+    }
+
+    private void SyncItemNameShadow(ItemHostParts parts, bool highContrast)
+    {
+        if (_closing || !WindowRoot.IsLoaded) return;
+        bool visible = !IsDock &&
+                       !highContrast &&
+                       parts.NameText.Visibility == Visibility.Visible &&
+                       !string.IsNullOrEmpty(parts.NameText.Text);
+        if (!visible)
+        {
+            if (parts.NameShadowVisual is not null)
+                parts.NameShadowVisual.IsVisible = false;
+            return;
+        }
+
+        double width = parts.NameText.ActualWidth > 0 ? parts.NameText.ActualWidth : parts.NameText.DesiredSize.Width;
+        double height = parts.NameText.ActualHeight > 0 ? parts.NameText.ActualHeight : parts.NameText.DesiredSize.Height;
+        if (width <= 1 || height <= 1)
+        {
+            if (parts.NameShadowVisual is not null)
+                parts.NameShadowVisual.IsVisible = false;
+            return;
+        }
+
+        if (parts.NameShadowVisual is null)
+        {
+            Visual hostVisual = ElementCompositionPreview.GetElementVisual(parts.NameShadowHost);
+            Compositor compositor = hostVisual.Compositor;
+            parts.NameDropShadow = compositor.CreateDropShadow();
+            parts.NameDropShadow.Color = ColorHelper.FromArgb(204, 0, 0, 0);
+            parts.NameDropShadow.BlurRadius = 3.4f;
+            parts.NameDropShadow.Offset = new Vector3(0f, 0.8f, 0f);
+            parts.NameShadowVisual = compositor.CreateSpriteVisual();
+            parts.NameShadowVisual.Shadow = parts.NameDropShadow;
+            ElementCompositionPreview.SetElementChildVisual(parts.NameShadowHost, parts.NameShadowVisual);
+        }
+
+        Vector2 size = new((float)width, (float)height);
+        parts.NameShadowHost.Width = size.X;
+        parts.NameShadowHost.Height = size.Y;
+        parts.NameShadowVisual.Size = size;
+
+        CompositionBrush mask = parts.NameText.GetAlphaMask();
+        CompositionBrush? previousMask = parts.NameAlphaMask;
+        parts.NameAlphaMask = mask;
+        parts.NameDropShadow!.Mask = mask;
+        if (previousMask is not null && !ReferenceEquals(previousMask, mask))
+            previousMask.Dispose();
+        parts.NameShadowVisual.IsVisible = true;
+    }
+
+    private void UpdateAllRealizedItemNameShadows(bool highContrast)
+    {
+        foreach (ItemHostParts parts in _itemHostParts.Values)
+            SyncItemNameShadow(parts, highContrast);
+    }
+
+    private void DisposeItemHostParts(Border host)
+    {
+        if (!_itemHostParts.Remove(host, out ItemHostParts? parts)) return;
+        DisposeItemHostPartsCore(parts);
+    }
+
+    private void DisposeAllItemNameShadows()
+    {
+        foreach (ItemHostParts parts in _itemHostParts.Values)
+            DisposeItemHostPartsCore(parts);
+        _itemHostParts.Clear();
+    }
+
+    private static void DisposeItemHostPartsCore(ItemHostParts parts)
+    {
+        if (parts.NameSizeChangedHandler is not null)
+        {
+            parts.NameText.SizeChanged -= parts.NameSizeChangedHandler;
+            parts.NameSizeChangedHandler = null;
+        }
+        if (parts.NameShadowVisual is not null)
+        {
+            ElementCompositionPreview.SetElementChildVisual(parts.NameShadowHost, null);
+            parts.NameShadowVisual.Dispose();
+            parts.NameShadowVisual = null;
+        }
+        if (parts.NameDropShadow is not null)
+        {
+            parts.NameDropShadow.Mask = null;
+            parts.NameDropShadow.Dispose();
+            parts.NameDropShadow = null;
+        }
+        parts.NameAlphaMask?.Dispose();
+        parts.NameAlphaMask = null;
     }
 
     private static T? FindItemPart<T>(DependencyObject root, string name) where T : FrameworkElement
@@ -1292,14 +1486,39 @@ public sealed partial class MainWindow : Window
 
     private void SetItemInteractionVisual(Border host, bool pressed)
     {
-        host.Background = IsDock || IsCompactList ? _transparentItemBrush : pressed ? _pressedItemBrush : _hoveredItemBrush;
+        bool selected = host.Tag is string name && _itemSelection.Contains(name);
+        if (IsDock || IsCompactList)
+        {
+            host.Background = _transparentItemBrush;
+            host.BorderBrush = selected && !IsDock ? ItemSelectedBorderBrush : ItemTransparentBorderBrush;
+        }
+        else if (selected)
+        {
+            host.Background = pressed ? ItemSelectedPressedBgBrush : ItemSelectedHoverBgBrush;
+            host.BorderBrush = ItemSelectedBorderBrush;
+        }
+        else
+        {
+            host.Background = pressed ? _pressedItemBrush : _hoveredItemBrush;
+            host.BorderBrush = ItemHoverBorderBrush;
+        }
         SetHoverPressed(host, pressed);
         if (IsCompactList) RefreshCompactRowHighlight();
     }
 
     private void ResetItemInteractionVisual(Border host)
     {
-        host.Background = _transparentItemBrush;
+        bool selected = host.Tag is string name && _itemSelection.Contains(name);
+        if (selected && !IsDock)
+        {
+            host.Background = ItemSelectedBgBrush;
+            host.BorderBrush = ItemSelectedBorderBrush;
+        }
+        else
+        {
+            host.Background = _transparentItemBrush;
+            host.BorderBrush = ItemTransparentBorderBrush;
+        }
         SetHoverPressed(host, pressed: false);
         if (IsCompactList) RefreshCompactRowHighlight();
     }
@@ -1349,10 +1568,14 @@ public sealed partial class MainWindow : Window
 
     private async Task<BitmapImage?> GetIconThrottledAsync(string path, bool refresh = false, bool dockPresentation = false)
     {
+        if (_closing) return null;
         BitmapImage? bitmap = null;
-        await _iconLoadGate.WaitAsync();
+        bool entered = false;
         try
         {
+            await _iconLoadGate.WaitAsync(_windowLifetime.Token);
+            entered = true;
+            if (_closing) return null;
             try
             {
                 // IconCacheService keeps BitmapImage creation on the current
@@ -1367,9 +1590,15 @@ public sealed partial class MainWindow : Window
                 AppLogger.Error($"加载图标失败：{path}", ex);
             }
         }
+        catch (OperationCanceledException) when (_closing) { }
+        catch (ObjectDisposedException) when (_closing) { }
         finally
         {
-            _iconLoadGate.Release();
+            if (entered)
+            {
+                try { _iconLoadGate.Release(); }
+                catch (ObjectDisposedException) { }
+            }
         }
         return bitmap;
     }
@@ -1455,7 +1684,7 @@ public sealed partial class MainWindow : Window
             CompositionTarget.Rendering += DragRendering;
             _dragRenderingSubscribed = true;
         }
-        if (_nativeMouseCapture && !_dragClockBoosted && NativeMethods.TrySetCompositorClockBoost(true))
+        if (_nativeMouseCapture && !_dragClockBoosted && CompositorClockBoost.TryAcquire())
         {
             _dragClockBoosted = true;
         }
@@ -1470,7 +1699,7 @@ public sealed partial class MainWindow : Window
         }
         if (_dragClockBoosted)
         {
-            _ = NativeMethods.TrySetCompositorClockBoost(false);
+            CompositorClockBoost.Release();
             _dragClockBoosted = false;
         }
     }
@@ -1888,8 +2117,7 @@ public sealed partial class MainWindow : Window
         }
         else
         {
-            ItemsScrollView.ScrollTo(0, max,
-                new ScrollingScrollOptions(ScrollingAnimationMode.Disabled, ScrollingSnapPointsMode.Ignore));
+            ItemsScrollView.ScrollTo(0, max, InstantScrollOptions);
         }
     }
 
@@ -1920,8 +2148,7 @@ public sealed partial class MainWindow : Window
             else
                 _gridScrollState = _gridScrollState with { CurrentOffset = _gridScrollState.TargetOffset, Velocity = 0 };
             double offset = IsCompactList ? _compactListScrollState.CurrentOffset : _gridScrollState.CurrentOffset;
-            ItemsScrollView.ScrollTo(0, offset,
-                new ScrollingScrollOptions(ScrollingAnimationMode.Disabled, ScrollingSnapPointsMode.Ignore));
+            ItemsScrollView.ScrollTo(0, offset, InstantScrollOptions);
             return;
         }
         _smoothScrollLastFrame = Stopwatch.GetTimestamp();
@@ -1929,6 +2156,7 @@ public sealed partial class MainWindow : Window
         {
             CompositionTarget.Rendering += SmoothScrollRendering;
             _smoothScrollRenderingSubscribed = true;
+            _smoothScrollClockBoost ??= CompositorClockBoost.Acquire();
         }
     }
 
@@ -1951,7 +2179,7 @@ public sealed partial class MainWindow : Window
         long now = Stopwatch.GetTimestamp();
         double seconds = Math.Clamp(
             Stopwatch.GetElapsedTime(_smoothScrollLastFrame, now).TotalSeconds,
-            1d / 240,
+            1d / 480,
             1d / 20);
         _smoothScrollLastFrame = now;
         double max = Math.Max(0, ItemsScrollView.ScrollableHeight);
@@ -1966,8 +2194,7 @@ public sealed partial class MainWindow : Window
         else
             _gridScrollState = OrganizerScrollMath.Step(_gridScrollState, seconds, max, reduceMotion);
         SmoothScrollState state = IsCompactList ? _compactListScrollState : _gridScrollState;
-        ItemsScrollView.ScrollTo(0, state.CurrentOffset,
-            new ScrollingScrollOptions(ScrollingAnimationMode.Disabled, ScrollingSnapPointsMode.Ignore));
+        ItemsScrollView.ScrollTo(0, state.CurrentOffset, InstantScrollOptions);
         if (Math.Abs(state.CurrentOffset - state.TargetOffset) < .01 && Math.Abs(state.Velocity) < .01)
             StopSmoothScrollRendering();
     }
@@ -1979,6 +2206,8 @@ public sealed partial class MainWindow : Window
             CompositionTarget.Rendering -= SmoothScrollRendering;
             _smoothScrollRenderingSubscribed = false;
         }
+        _smoothScrollClockBoost?.Dispose();
+        _smoothScrollClockBoost = null;
         _smoothScrollLastFrame = 0;
     }
 
@@ -2060,15 +2289,33 @@ public sealed partial class MainWindow : Window
     private void MainWindow_Closed(object sender, WindowEventArgs args)
     {
         _host.EndOrganizerDragHover(this);
+        Activated -= MainWindow_Activated;
         Activated -= OrganizerTitleWindow_Activated;
-        _compactClicks.Reset();
-        DisposeHoverWave();
-        try
+        CompactThumbnailHost.SizeChanged -= SurfaceHost_SizeChanged;
+        ExpandedPanel.SizeChanged -= SurfaceHost_SizeChanged;
+        WindowRoot.SizeChanged -= SurfaceHost_SizeChanged;
+        WindowRoot.Loaded -= WindowRoot_Loaded;
+        if (_subscribedXamlRoot is not null)
         {
-            _compactBackdrop.DetachAndClose();
-            _expandedBackdrop.DetachAndClose();
+            _subscribedXamlRoot.Changed -= XamlRoot_Changed;
+            _subscribedXamlRoot = null;
         }
-        catch (Exception ex) { AppLogger.Error("Organizer backdrop close failed.", ex); }
+        ExpandedView.RemoveHandler(UIElement.PointerPressedEvent, _expandedPointerPressedHandler);
+        ExpandedView.RemoveHandler(UIElement.PointerMovedEvent, _expandedPointerMovedHandler);
+        ExpandedView.RemoveHandler(UIElement.PointerReleasedEvent, _expandedPointerReleasedHandler);
+        ExpandedView.RemoveHandler(UIElement.PointerCanceledEvent, _expandedPointerCanceledHandler);
+        ExpandedView.RemoveHandler(UIElement.PointerCaptureLostEvent, _expandedPointerCaptureLostHandler);
+        ExpandedView.RemoveHandler(UIElement.PointerWheelChangedEvent, _expandedPointerWheelChangedHandler);
+        WindowRoot.PointerEntered -= WindowRoot_PointerEntered;
+        WindowRoot.PointerExited -= WindowRoot_PointerExited;
+        _compactClicks.Reset();
+        EndItemMarquee();
+        DisposeHoverWave();
+        DisposeDockRunningVisuals();
+        try { _compactBackdrop.DetachAndClose(); }
+        catch (Exception ex) { AppLogger.Error("Compact organizer backdrop close failed.", ex); }
+        try { _expandedBackdrop.DetachAndClose(); }
+        catch (Exception ex) { AppLogger.Error("Expanded organizer backdrop close failed.", ex); }
         _animationTrace?.Finish("window-closed");
         _closing = true;
         _host.RefreshDockRunningSubscription();
@@ -2081,6 +2328,8 @@ public sealed partial class MainWindow : Window
         _pressActive = false;
         _nativeMouseCapture = false;
         _canvasResize = null;
+        _canvasResizeClockBoost?.Dispose();
+        _canvasResizeClockBoost = null;
         _animating = false;
         _host.NotifyDockOpenStateChanged();
         _stationReady = false;
@@ -2088,17 +2337,27 @@ public sealed partial class MainWindow : Window
         if (_itemReorderSession is not null) CancelItemReorder(runPendingRefresh: false);
         ShutdownItemDragBoundaryHook();
         StopNativeItemMotionRendering(snapToTargets: true);
+        if (_itemDragClockBoosted)
+        {
+            CompositorClockBoost.Release();
+            _itemDragClockBoosted = false;
+        }
         _desktopCoordinator.Stop();
         _catalogController.Stop();
         _externalDragCoordinator.CancelShellPreparation();
         _resourceScope.DisposeAll(ex => AppLogger.Error("窗口附加资源释放失败。", ex));
         ReleaseStartupCloak();
         _interactionSaveTimer.Stop();
+        _interactionSaveTimer.Tick -= InteractionSaveTimer_Tick;
         _canvasResizeInputTimer.Stop();
+        _canvasResizeInputTimer.Tick -= CanvasResizeInputTimer_Tick;
         StopSmoothScrollRendering();
         _externalHoverTimer.Stop();
+        _externalHoverTimer.Tick -= ExternalHoverTimer_Tick;
         _longPressTimer.Stop();
+        _longPressTimer.Tick -= LongPressTimer_Tick;
         _itemTouchHoldTimer.Stop();
+        _itemTouchHoldTimer.Tick -= ItemTouchHoldTimer_Tick;
         StopCanvasResizeRendering();
         StopDragClock();
         CancellationTokenSource? closingTransition = _transitionCancellation;
@@ -2106,12 +2365,19 @@ public sealed partial class MainWindow : Window
         closingTransition?.Cancel();
         closingTransition?.Dispose();
         _compactClip?.Dispose();
+        _compactClip = null;
         _expandedClip?.Dispose();
+        _expandedClip = null;
+        _stationTransitionClip?.Dispose();
+        _stationTransitionClip = null;
         _compactSurface.Dispose();
         _expandedSurface.Dispose();
         _compactEdgeSurface.Dispose();
         _expandedEdgeSurface.Dispose();
         DisposeCompactVisualResources();
+        DisposeAllItemNameShadows();
+        _iconLoadGate.Dispose();
+        _itemDragBoundaryHookReady.Dispose();
         _windowAlignmentGuide?.Dispose();
         _windowAlignmentGuide = null;
         _outsideClickHook?.Dispose();
@@ -2374,7 +2640,13 @@ public sealed partial class MainWindow : Window
         }
         ResetHoverWave();
         if (_appWindow is null) return;
-        if (!visible) StopCanvasResizeForHide();
+        if (!visible)
+        {
+            StopCanvasResizeForHide();
+            _canvasResizeInputTimer.Stop();
+            _canvasResizeClockBoost?.Dispose();
+            _canvasResizeClockBoost = null;
+        }
         if (IsContained)
         {
             if (visible) _appWindow.Hide();
@@ -2488,8 +2760,10 @@ public sealed partial class MainWindow : Window
     {
         _host.EndOrganizerDragHover(this);
         _compactClicks.Reset();
-        _compactBackdrop.DetachAndClose();
-        _expandedBackdrop.DetachAndClose();
+        try { _compactBackdrop.DetachAndClose(); }
+        catch (Exception ex) { AppLogger.Error("Compact organizer backdrop close failed.", ex); }
+        try { _expandedBackdrop.DetachAndClose(); }
+        catch (Exception ex) { AppLogger.Error("Expanded organizer backdrop close failed.", ex); }
         _closing = true;
         ++_transitionRequestVersion;
         _host.CloseExpansionModeCoordinator(OrganizerId);
@@ -2548,6 +2822,7 @@ public sealed partial class MainWindow : Window
             CompactView.Visibility = Visibility.Collapsed;
             ExpandedView.Visibility = Visibility.Visible;
             ExpandedView.Opacity = 1;
+            ResetExpandedTransitionOpacities();
             GetExpandedCompositionVisual().Scale = Vector3.One;
             ConfigureItemsLayout();
             UpdateSurfaceClips();
@@ -2583,50 +2858,42 @@ public sealed partial class MainWindow : Window
         _compactEdgeSurface.SetEnabled(_host.State.GlobalSettings.EdgeGlowEnabled);
         _expandedEdgeSurface.SetEnabled(_host.State.GlobalSettings.EdgeGlowEnabled);
         var foregroundColor = ThemePalette.ForegroundColor(theme);
-        var foreground = new SolidColorBrush(foregroundColor);
-        DockEmptyAddIcon.Foreground = foreground;
-        SolidColorBrush organizerText = CreateOrganizerTextBrush();
-        CompactNameText.Foreground = organizerText;
-        ExpandedNameText.Foreground = organizerText;
+        _dockEmptyAddBrush.Color = foregroundColor;
+        DockEmptyAddIcon.Foreground = _dockEmptyAddBrush;
+        _organizerTextBrush.Color = ThemePalette.ResolveOrganizerTextColor(
+            _host.State.GlobalSettings.OrganizerTextColor,
+            theme);
+        CompactNameText.Foreground = _organizerTextBrush;
+        ExpandedNameText.Foreground = _organizerTextBrush;
         _hoveredItemBrush.Color = ColorHelper.FromArgb(22, foregroundColor.R, foregroundColor.G, foregroundColor.B);
         _pressedItemBrush.Color = ColorHelper.FromArgb(38, foregroundColor.R, foregroundColor.G, foregroundColor.B);
         _collapseHoverBrush.Color = ColorHelper.FromArgb(26, foregroundColor.R, foregroundColor.G, foregroundColor.B);
         _collapsePressedBrush.Color = ColorHelper.FromArgb(46, foregroundColor.R, foregroundColor.G, foregroundColor.B);
         bool highContrast = DesktopTypographyService.IsHighContrast();
-        CompactWarningBadge.Background = new SolidColorBrush(highContrast
+        _warningBadgeBgBrush.Color = highContrast
             ? _uiSettings.GetColorValue(Windows.UI.ViewManagement.UIColorType.Accent)
-            : ColorHelper.FromArgb(184, 29, 35, 43));
-        CompactWarningIcon.Foreground = new SolidColorBrush(highContrast
+            : ColorHelper.FromArgb(184, 29, 35, 43);
+        _warningIconFgBrush.Color = highContrast
             ? _uiSettings.GetColorValue(Windows.UI.ViewManagement.UIColorType.Background)
-            : ColorHelper.FromArgb(255, 255, 200, 87));
-        CollapseDash.Background = foreground;
+            : ColorHelper.FromArgb(255, 255, 200, 87);
+        CompactWarningBadge.Background = _warningBadgeBgBrush;
+        CompactWarningIcon.Foreground = _warningIconFgBrush;
+        CollapseDash.Background = _dockEmptyAddBrush;
         RefreshCollapseIndicator();
         CollapseButtonSurface.Background = CollapseButton.IsPointerOver ? _collapseHoverBrush : _transparentItemBrush;
         UpdateRealizedItems();
-        VisitTextBlocks(WindowRoot);
         ApplyCompactVisualStyle();
     }
 
-    private SolidColorBrush CreateOrganizerTextBrush()
+    private void Host_ThemeChanged(object? sender, EventArgs e)
     {
-        ThemeValues theme = _host.State.GlobalSettings.GetTheme(OrganizerKinds.ThemeFor(_definition.PlacementMode));
-        return new(ThemePalette.ResolveOrganizerTextColor(
-            _host.State.GlobalSettings.OrganizerTextColor,
-            theme));
-    }
-
-    private void VisitTextBlocks(DependencyObject root)
-    {
-        int count = VisualTreeHelper.GetChildrenCount(root);
-        for (int index = 0; index < count; index++)
+        if (_host.LastChangedThemeTarget is ThemeTarget target &&
+            OrganizerKinds.ThemeFor(_definition.PlacementMode) != target)
         {
-            DependencyObject child = VisualTreeHelper.GetChild(root, index);
-            if (child is TextBlock text && text.Name == "ItemNameText") text.Foreground = CreateOrganizerTextBrush();
-            VisitTextBlocks(child);
+            return;
         }
+        ApplyTheme();
     }
-
-    private void Host_ThemeChanged(object? sender, EventArgs e) => ApplyTheme();
 
     internal void MoveToPositionedPlacement(NativeMethods.RECT bounds, double runtimeScale)
     {
@@ -2722,7 +2989,7 @@ public sealed partial class MainWindow : Window
         double scale = runtimeScale ?? (_definition.PlacementMode == OrganizerPlacementMode.Positioned
             ? _appliedCompactScale
             : _definition.CompactScale);
-        double compactNameScale = _host.State.GlobalSettings.ResolveCompactNameScale(_definition.PlacementMode);
+        double previousScale = _appliedCompactScale;
         _appliedCompactScale = scale;
         CompactView.Width = GetCompactWidthDip();
         CompactView.Height = GetCompactHeightDip();
@@ -2732,9 +2999,7 @@ public sealed partial class MainWindow : Window
         UpdateCompactPreviewItemScale();
         CompactView.RowDefinitions[0].Height = new GridLength(39 * scale);
         CompactView.RowDefinitions[1].Height = new GridLength(positioned ? 4 : Math.Clamp(4 * scale, 3, 6));
-        CompactView.RowDefinitions[2].Height = new GridLength(positioned
-            ? Math.Max(1, CompactView.Height - 39 * scale - 4)
-            : Math.Max(32, 23 * scale * compactNameScale));
+        CompactView.RowDefinitions[2].Height = new GridLength(1, GridUnitType.Star);
 
         if (_hwnd != IntPtr.Zero)
         {
@@ -2750,7 +3015,7 @@ public sealed partial class MainWindow : Window
             int width = DipToPx(GetCompactWidthDip(), display.Scale);
             int height = DipToPx(GetCompactHeightDip(), display.Scale);
             int iconCenterX = _compactBounds.Left + _compactBounds.Width / 2;
-            int iconCenterY = _compactBounds.Top + DipToPx(19.5 * _appliedCompactScale, display.Scale);
+            int iconCenterY = _compactBounds.Top + DipToPx(19.5 * previousScale, display.Scale);
             _compactBounds.Left = iconCenterX - width / 2;
             _compactBounds.Top = iconCenterY - DipToPx(19.5 * scale, display.Scale);
             _compactBounds.Right = _compactBounds.Left + width;
@@ -2845,10 +3110,11 @@ public sealed partial class MainWindow : Window
                 double fit = Math.Min(1, Math.Min(
                     work.Width / display.Scale / (manualWidth * canvas),
                     availablePanelHeightDip / (manualHeight * canvas)));
+                double contentScale = OrganizerContentScale.Normalize(_definition.IconContentScale);
                 maximumItem = DisplayPlacementService.CalculateMaximumItemScaleForExpandedSize(
                     _definition.Layout,
-                    manualWidth * canvas / OrganizerContentScale.Normalize(_definition.IconContentScale),
-                    manualHeight * canvas / OrganizerContentScale.Normalize(_definition.IconContentScale));
+                    manualWidth * canvas * fit / contentScale,
+                    manualHeight * canvas * fit / contentScale);
             }
             else
             {
@@ -2900,7 +3166,23 @@ public sealed partial class MainWindow : Window
 
     private void UpdateCompactThumbnailMetrics()
     {
-        CompactThumbnailHost.Width = CompactThumbnailHost.Height = 39 * _appliedCompactScale;
+        double tileSize = 39 * _appliedCompactScale;
+        CompactThumbnailHost.Width = tileSize;
+        bool folderStyle = CompactVisualStyles.ShowsFolderSilhouette(
+            CompactVisualStyles.Normalize(_host.State.GlobalSettings.CompactVisualStyle));
+        if (folderStyle)
+        {
+            double tabOverlapOffset = Math.Max(4, Math.Round(tileSize * 0.11));
+            CompactThumbnailHost.Height = Math.Max(20, tileSize - tabOverlapOffset);
+            CompactThumbnailHost.VerticalAlignment = VerticalAlignment.Bottom;
+            CompactShadowHost.VerticalAlignment = VerticalAlignment.Bottom;
+        }
+        else
+        {
+            CompactThumbnailHost.Height = tileSize;
+            CompactThumbnailHost.VerticalAlignment = VerticalAlignment.Center;
+            CompactShadowHost.VerticalAlignment = VerticalAlignment.Center;
+        }
     }
 
     private void UpdateSurfaceClips()
@@ -2931,6 +3213,7 @@ public sealed partial class MainWindow : Window
             _expandedSurface.SetCornerRadius(expandedRadius);
             _expandedEdgeSurface.SetCornerRadius(expandedRadius);
         }
+        _lastExpandedClipRadius = expandedRadius;
         _compactSurface.SetCornerRadius(compactRadius);
         _compactEdgeSurface.SetCornerRadius(compactRadius);
         UpdateCompactShadowGeometry(compactRadius);
@@ -2959,15 +3242,19 @@ public sealed partial class MainWindow : Window
     {
         if (_expandedClip is null) UpdateSurfaceClips();
         if (_expandedClip is null) return;
-        _animationTrace?.Metrics.RecordWork(AnimationTraceWork.AnimatedCorner);
+        double clamped = Math.Clamp(progress, 0, 1);
         double radius = CompactCornerRadiusDip * _appliedCompactScale +
-            (ExpandedCornerRadiusDip - CompactCornerRadiusDip * _appliedCompactScale) * progress;
+            (ExpandedCornerRadiusDip - CompactCornerRadiusDip * _appliedCompactScale) * clamped;
         double snappedRadius = SnapDip(radius);
+        if (Math.Abs(snappedRadius - _lastExpandedClipRadius) < 0.001) return;
+        _lastExpandedClipRadius = snappedRadius;
+        _animationTrace?.Metrics.RecordWork(AnimationTraceWork.AnimatedCorner);
         SetClipRadius(_expandedClip, snappedRadius);
         ExpandedSurfaceHost.CornerRadius = new CornerRadius(snappedRadius);
         _expandedSurface.SetCornerRadius(snappedRadius);
         _expandedEdgeSurface.SetCornerRadius(snappedRadius);
-        UpdateExpandedLiquidSheenGeometry(snappedRadius);
+        if (!_animating)
+            UpdateExpandedLiquidSheenGeometry(snappedRadius);
     }
 
     private void ApplyPixelAlignedClip(RectangleClip clip, FrameworkElement element, double radius)

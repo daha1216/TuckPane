@@ -65,8 +65,10 @@ public sealed partial class MainWindow
             ? HoverLayoutMath.Transform(item.RowBounds, item.BaseBounds, item.RenderScale, item.Translation, true)
             : item.RowBounds;
         row = row.Intersect(_hoverViewportBounds);
-        _compactHighlight.Width = row.Width;
-        _compactHighlight.Height = row.Height;
+        if (double.IsNaN(_compactHighlight.Width) || Math.Abs(_compactHighlight.Width - row.Width) > 0.25)
+            _compactHighlight.Width = row.Width;
+        if (double.IsNaN(_compactHighlight.Height) || Math.Abs(_compactHighlight.Height - row.Height) > 0.25)
+            _compactHighlight.Height = row.Height;
         _compactHighlight.Translation = new Vector3((float)_hoverViewportOrigin.X + row.X,
             (float)_hoverViewportOrigin.Y + row.Y, 0);
         _compactHighlight.CornerRadius = host.CornerRadius;

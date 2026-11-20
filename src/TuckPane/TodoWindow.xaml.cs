@@ -27,6 +27,7 @@ public sealed partial class TodoWindow : Window, IPortableDocumentWindow
     private readonly SemaphoreSlim _saveGate = new(1, 1);
     private readonly TodoComposer _composer = new();
     private readonly PortableDocumentWindowChrome _windowChrome;
+    private readonly PointerEventHandler _pointerWheelHandler;
     private string _externalPath;
     private bool _syncingTaskCheckBox;
     private bool _isDraggingTask;
@@ -65,14 +66,14 @@ public sealed partial class TodoWindow : Window, IPortableDocumentWindow
 
         TaskList.ItemsSource = _rows;
         UpdateComposerMetrics();
-        WindowRoot.AddHandler(UIElement.PointerWheelChangedEvent,
-            new PointerEventHandler(WindowRoot_PointerWheelChanged), handledEventsToo: true);
+        _pointerWheelHandler = new PointerEventHandler(WindowRoot_PointerWheelChanged);
+        WindowRoot.AddHandler(UIElement.PointerWheelChangedEvent, _pointerWheelHandler, handledEventsToo: true);
         WindowRoot.ActualThemeChanged += WindowRoot_ActualThemeChanged;
 
         _saveTimer = DispatcherQueue.CreateTimer();
         _saveTimer.Interval = TimeSpan.FromMilliseconds(350);
         _saveTimer.IsRepeating = false;
-        _saveTimer.Tick += async (_, _) => await FlushAsync();
+        _saveTimer.Tick += SaveTimer_Tick;
 
         _completionTimer = DispatcherQueue.CreateTimer();
         _completionTimer.Interval = TimeSpan.FromMilliseconds(50);
@@ -214,12 +215,20 @@ public sealed partial class TodoWindow : Window, IPortableDocumentWindow
         _saveGate.Release();
     }
 
+    private async void SaveTimer_Tick(Microsoft.UI.Dispatching.DispatcherQueueTimer sender, object args)
+    {
+        try { _ = await FlushAsync(); }
+        catch (Exception ex) { AppLogger.Error($"定时保存待办失败：{_externalPath}", ex); }
+    }
+
     private async Task<bool> FlushCoreAsync()
     {
         try
         {
             _document.Tasks = _rows.Select(row => row.Task).ToList();
-            await _store.SaveTodoAsync(_externalPath, _document);
+            string path = _externalPath;
+            PortableTodoDocument snapshot = CloneDocumentSnapshot(_document);
+            await Task.Run(() => _store.SaveTodoAsync(path, snapshot));
             return true;
         }
         catch (Exception ex)
@@ -229,6 +238,31 @@ public sealed partial class TodoWindow : Window, IPortableDocumentWindow
             return false;
         }
     }
+
+    private static PortableTodoDocument CloneDocumentSnapshot(PortableTodoDocument source) => new()
+    {
+        Format = source.Format,
+        Version = source.Version,
+        Theme = source.Theme,
+        FontSize = source.FontSize,
+        Placement = source.Placement is { } placement
+            ? new PortableNotePlacement
+            {
+                MonitorDevice = placement.MonitorDevice,
+                XDip = placement.XDip,
+                YDip = placement.YDip,
+                WidthDip = placement.WidthDip,
+                HeightDip = placement.HeightDip
+            }
+            : null,
+        Tasks = source.Tasks.Select(task => new PortableTodoTask
+        {
+            Id = task.Id,
+            Text = task.Text,
+            Done = task.Done,
+            CompletedAtUtc = task.CompletedAtUtc
+        }).ToList()
+    };
 
     private void ScheduleSave()
     {
@@ -567,9 +601,15 @@ public sealed partial class TodoWindow : Window, IPortableDocumentWindow
 
     private void TodoWindow_Closed(object sender, WindowEventArgs args)
     {
+        Closed -= TodoWindow_Closed;
+        WindowRoot.RemoveHandler(UIElement.PointerWheelChangedEvent, _pointerWheelHandler);
         WindowRoot.ActualThemeChanged -= WindowRoot_ActualThemeChanged;
+        HeaderBar.ColorButton.Click -= ColorButton_Click;
+        HeaderBar.OptionToggleButton.Click -= SeparatorsButton_Click;
         _saveTimer.Stop();
+        _saveTimer.Tick -= SaveTimer_Tick;
         _completionTimer.Stop();
+        _completionTimer.Tick -= CompletionTimer_Tick;
         _windowChrome.Dispose();
     }
 

@@ -305,6 +305,16 @@ internal static class ShellDragService
                     Y = Math.Clamp((int)Math.Round(grabRatioY * DragImageSize), 0, DragImageSize - 1)
                 };
                 dragImageInitialized = TryInitializeDragImage(data.Pointer, bitmap, grabOffset);
+                if (dragImageInitialized)
+                {
+                    // IDragSourceHelper::InitializeFromBitmap transfers HBITMAP ownership to IDataObject on S_OK.
+                    bitmap = IntPtr.Zero;
+                }
+                else if (bitmap != IntPtr.Zero)
+                {
+                    _ = NativeMethods.DeleteObject(bitmap);
+                    bitmap = IntPtr.Zero;
+                }
             }
             catch (Exception ex)
             {
@@ -646,6 +656,16 @@ internal static class ShellDragService
                     Y = Math.Clamp((int)Math.Round(grabRatioY * DragImageSize), 0, DragImageSize - 1)
                 };
                 dragImageInitialized = TryInitializeDragImage(data.Pointer, bitmap, grabOffset);
+                if (dragImageInitialized)
+                {
+                    // IDragSourceHelper::InitializeFromBitmap transfers HBITMAP ownership to IDataObject on S_OK.
+                    bitmap = IntPtr.Zero;
+                }
+                else if (bitmap != IntPtr.Zero)
+                {
+                    _ = NativeMethods.DeleteObject(bitmap);
+                    bitmap = IntPtr.Zero;
+                }
                 cancellationToken.ThrowIfCancellationRequested();
             }
             catch (OperationCanceledException)
@@ -711,7 +731,7 @@ internal static class ShellDragService
         internal string Path { get; }
         internal ShellDataObject Data { get; }
         internal TimeSpan PreparationDuration { get; }
-        internal bool HasCustomDragImage => _bitmap != IntPtr.Zero && DragImageInitialized;
+        internal bool HasCustomDragImage => DragImageInitialized;
         internal bool DragImageInitialized { get; }
         internal TimeSpan? FirstFeedbackDelay { get; set; }
         internal int CallbackCount { get; set; }

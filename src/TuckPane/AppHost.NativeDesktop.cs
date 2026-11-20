@@ -10,6 +10,7 @@ public sealed partial class AppHost
     private readonly HashSet<Guid> _selectedOrganizerIds = [];
     private HashSet<Guid>? _marqueeBaselineSelection;
     private Guid? _groupDragLeadId;
+    private IReadOnlyList<DisplayInfo>? _groupDragDisplays;
     private readonly Dictionary<Guid, (NativeMethods.RECT InitialBounds, WindowAlignmentInsets Insets, DisplayInfo Display)> _groupDragPeers = [];
 
     internal int MultiSelectedOrganizerCount => _selectedOrganizerIds.Count;
@@ -32,6 +33,7 @@ public sealed partial class AppHost
         _desktopMarqueeHook = null;
         _selectedOrganizerIds.Clear();
         _groupDragPeers.Clear();
+        _groupDragDisplays = null;
         _groupDragLeadId = null;
     }
 
@@ -108,6 +110,20 @@ public sealed partial class AppHost
         RefreshAllMultiSelectionVisuals();
     }
 
+    internal void RemoveDeletedOrganizerFromSelection(Guid id)
+    {
+        bool removed = _selectedOrganizerIds.Remove(id);
+        _marqueeBaselineSelection?.Remove(id);
+        _groupDragPeers.Remove(id);
+        if (_groupDragLeadId == id)
+        {
+            _groupDragLeadId = null;
+            _groupDragDisplays = null;
+        }
+        if (removed)
+            RefreshAllMultiSelectionVisuals();
+    }
+
     private void HandleDesktopEmptyClick()
     {
         _marqueeBaselineSelection = null;
@@ -176,6 +192,7 @@ public sealed partial class AppHost
     internal void BeginMultiSelectedGroupDrag(MainWindow lead)
     {
         _groupDragPeers.Clear();
+        _groupDragDisplays = null;
         _groupDragLeadId = null;
 
         if (!_selectedOrganizerIds.Contains(lead.OrganizerId))
@@ -186,6 +203,7 @@ public sealed partial class AppHost
         if (_selectedOrganizerIds.Count <= 1 || lead.IsExpanded) return;
 
         _groupDragLeadId = lead.OrganizerId;
+        _groupDragDisplays = DisplayPlacementService.GetDisplays();
         foreach (Guid id in _selectedOrganizerIds)
         {
             if (id == lead.OrganizerId) continue;
@@ -194,7 +212,8 @@ public sealed partial class AppHost
 
             NativeMethods.RECT bounds = peer.GetCurrentCompactBounds();
             WindowAlignmentInsets insets = peer.GetCurrentCompactAlignmentInsets();
-            DisplayInfo display = DisplayPlacementService.ForBounds(bounds);
+            DisplayInfo display = ResolveCachedDisplay(bounds, _groupDragDisplays)
+                ?? DisplayPlacementService.ForBounds(bounds);
             _groupDragPeers[id] = (bounds, insets, display);
             peer.PrepareForGroupPeerDrag(topmost: true);
         }
@@ -204,6 +223,7 @@ public sealed partial class AppHost
     {
         if (_groupDragLeadId != lead.OrganizerId || _groupDragPeers.Count == 0) return;
 
+        IReadOnlyList<DisplayInfo>? cachedDisplays = _groupDragDisplays;
         foreach ((Guid peerId, var snapshot) in _groupDragPeers)
         {
             if (!_windows.TryGetValue(peerId, out MainWindow? peer)) continue;
@@ -214,7 +234,9 @@ public sealed partial class AppHost
                 Right = snapshot.InitialBounds.Right + deltaX,
                 Bottom = snapshot.InitialBounds.Bottom + deltaY
             };
-            DisplayInfo targetDisplay = DisplayPlacementService.ForBounds(desired);
+            DisplayInfo targetDisplay = ContainsCenter(snapshot.Display.Monitor, desired)
+                ? snapshot.Display
+                : ResolveCachedDisplay(desired, cachedDisplays) ?? snapshot.Display;
             NativeMethods.RECT nextBounds = MarqueeSelectionMath.ComputeGroupPeerBounds(
                 snapshot.InitialBounds,
                 deltaX,
@@ -225,17 +247,55 @@ public sealed partial class AppHost
         }
     }
 
+    private static bool ContainsCenter(NativeMethods.RECT monitor, NativeMethods.RECT rect)
+    {
+        int centerX = rect.Left + rect.Width / 2;
+        int centerY = rect.Top + rect.Height / 2;
+        return centerX >= monitor.Left && centerX < monitor.Right &&
+               centerY >= monitor.Top && centerY < monitor.Bottom;
+    }
+
+    private static DisplayInfo? ResolveCachedDisplay(NativeMethods.RECT rect, IReadOnlyList<DisplayInfo>? displays)
+    {
+        if (displays is null || displays.Count == 0) return null;
+        if (displays.Count == 1) return displays[0];
+        for (int i = 0; i < displays.Count; i++)
+        {
+            if (ContainsCenter(displays[i].Monitor, rect))
+                return displays[i];
+        }
+        int centerX = rect.Left + rect.Width / 2;
+        int centerY = rect.Top + rect.Height / 2;
+        DisplayInfo nearest = displays[0];
+        long bestDistance = long.MaxValue;
+        for (int i = 0; i < displays.Count; i++)
+        {
+            NativeMethods.RECT mon = displays[i].Monitor;
+            long dx = centerX < mon.Left ? mon.Left - centerX : centerX >= mon.Right ? centerX - (mon.Right - 1) : 0;
+            long dy = centerY < mon.Top ? mon.Top - centerY : centerY >= mon.Bottom ? centerY - (mon.Bottom - 1) : 0;
+            long dist = dx * dx + dy * dy;
+            if (dist < bestDistance)
+            {
+                bestDistance = dist;
+                nearest = displays[i];
+            }
+        }
+        return nearest;
+    }
+
     internal async Task CommitMultiSelectedGroupDragAsync(MainWindow lead)
     {
         if (_groupDragLeadId != lead.OrganizerId || _groupDragPeers.Count == 0)
         {
             _groupDragPeers.Clear();
+            _groupDragDisplays = null;
             _groupDragLeadId = null;
             return;
         }
 
         Guid[] peerIds = _groupDragPeers.Keys.ToArray();
         _groupDragPeers.Clear();
+        _groupDragDisplays = null;
         _groupDragLeadId = null;
 
         bool snapToGrid = State.GlobalSettings.SnapFloatingToDesktopGrid;
@@ -265,6 +325,7 @@ public sealed partial class AppHost
             peer.FinishGroupPeerDrag(commitPosition: false);
         }
         _groupDragPeers.Clear();
+        _groupDragDisplays = null;
         _groupDragLeadId = null;
     }
 
@@ -364,7 +425,7 @@ public sealed partial class AppHost
         if (!_windows.TryGetValue(organizerId, out MainWindow? window))
             return (0, 0, 0);
 
-        string[] selectedPaths = await Task.Run(DesktopSelectionService.ReadSelectedDesktopPaths);
+        string[] selectedPaths = await RunOnStaThreadAsync(DesktopSelectionService.ReadSelectedDesktopPaths);
         if (selectedPaths.Length == 0)
             return (0, 0, 0);
 
@@ -391,7 +452,7 @@ public sealed partial class AppHost
         IReadOnlyList<TransferOutcome> outcomes = await TransferQueue.RunAsync(
             token => window.Storage.ImportBatchAsync(safePaths, progress: null, token));
 
-        int moved = outcomes.Count(o => o.Status is TransferStatus.Moved or TransferStatus.Copied);
+        int moved = outcomes.Count(o => o.Status is TransferStatus.Moved or TransferStatus.Copied or TransferStatus.CopiedSourceRetained);
         int shortcuts = outcomes.Count(o => o.Status == TransferStatus.ShortcutCreated);
         int failed = outcomes.Count(o => o.Status == TransferStatus.Failed);
 
@@ -399,5 +460,22 @@ public sealed partial class AppHost
             await window.RefreshCatalogAsync(notifyUnsupported: false);
 
         return (moved, shortcuts, failed);
+    }
+
+    private static Task<T> RunOnStaThreadAsync<T>(Func<T> action)
+    {
+        var tcs = new TaskCompletionSource<T>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var thread = new Thread(() =>
+        {
+            try { tcs.SetResult(action()); }
+            catch (Exception ex) { tcs.SetException(ex); }
+        })
+        {
+            IsBackground = true,
+            Name = "TuckPane.DesktopSelectionSta"
+        };
+        thread.SetApartmentState(ApartmentState.STA);
+        thread.Start();
+        return tcs.Task;
     }
 }

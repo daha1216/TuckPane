@@ -38,6 +38,8 @@ internal sealed class DockTipWindow : Window, IDisposable
     private string? _measuredText;
     private double _measuredWidth, _measuredScale, _measuredTextScale;
     private (int Width, int Height) _clientSize;
+    private int _lastTipX = int.MinValue;
+    private int _lastTipY = int.MinValue;
     private Presentation? _request;
     private bool _presenting, _disposed;
     private readonly record struct Presentation(string Text, HoverRect Icon, NativeMethods.RECT Work, bool Horizontal, double Scale);
@@ -166,12 +168,18 @@ internal sealed class DockTipWindow : Window, IDisposable
             // Placement describes the client body's origin. SetWindowPos describes the outer HWND.
             var origin = new NativeMethods.POINT();
             if (!NativeMethods.GetWindowRect(Hwnd, out var window) || !NativeMethods.ClientToScreen(Hwnd, ref origin)) return;
-            NativeMethods.SetWindowPos(Hwnd, NativeMethods.HWND_TOP,
-                (int)Math.Round(placement.Bounds.X * scale) - (origin.X - window.Left),
-                (int)Math.Round(placement.Bounds.Y * scale) - (origin.Y - window.Top), 0, 0,
-                NativeMethods.SWP_NOSIZE | NativeMethods.SWP_NOACTIVATE |
-                NativeMethods.SWP_NOOWNERZORDER | NativeMethods.SWP_SHOWWINDOW);
-            IsOpen = true;
+            int targetX = (int)Math.Round(placement.Bounds.X * scale) - (origin.X - window.Left);
+            int targetY = (int)Math.Round(placement.Bounds.Y * scale) - (origin.Y - window.Top);
+            if (!IsOpen || targetX != _lastTipX || targetY != _lastTipY)
+            {
+                NativeMethods.SetWindowPos(Hwnd, NativeMethods.HWND_TOP,
+                    targetX, targetY, 0, 0,
+                    NativeMethods.SWP_NOSIZE | NativeMethods.SWP_NOACTIVATE |
+                    NativeMethods.SWP_NOOWNERZORDER | NativeMethods.SWP_SHOWWINDOW);
+                _lastTipX = targetX;
+                _lastTipY = targetY;
+                IsOpen = true;
+            }
         }
         finally { _presenting = false; }
     }
@@ -179,6 +187,8 @@ internal sealed class DockTipWindow : Window, IDisposable
     internal void HideTip()
     {
         _request = null;
+        _lastTipX = int.MinValue;
+        _lastTipY = int.MinValue;
         if (!IsOpen || _disposed) return;
         AppWindow.Hide();
         IsOpen = false;

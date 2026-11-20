@@ -197,6 +197,8 @@
             <Style x:Key="ManageRow" TargetType="Border" BasedOn="{StaticResource Row}"/>
             <Style TargetType="Border" x:Key="SettingsGroup">
                 <Setter Property="Background" Value="{StaticResource ConsoleCardSurfaceBrush}"/>
+                <Setter Property="BorderBrush" Value="#12000000"/>
+                <Setter Property="BorderThickness" Value="1"/>
                 <Setter Property="CornerRadius" Value="12"/>
                 <Setter Property="Padding" Value="0,4"/>
                 <Setter Property="HorizontalAlignment" Value="Stretch"/>
@@ -242,14 +244,36 @@
                         <TextBlock x:Name="ConsoleTitleText" FontSize="13" FontWeight="SemiBold" Tag="loc:AppTitle" Text="TuckPane" TextWrapping="Wrap" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
                     </StackPanel>
                 </Grid>
-                <Button x:Name="ConsoleMinimizeButton" Grid.Column="1" Width="46" Height="48" Padding="0" Background="Transparent" BorderThickness="0" Click="ConsoleMinimizeButton_Click" CornerRadius="0" HorizontalContentAlignment="Center" PointerCanceled="ConsoleMinimizeButton_PointerReleased" PointerEntered="ConsoleMinimizeButton_PointerEntered" PointerExited="ConsoleMinimizeButton_PointerExited" PointerPressed="ConsoleMinimizeButton_PointerPressed" PointerReleased="ConsoleMinimizeButton_PointerReleased" VerticalContentAlignment="Center">
-                    <FontIcon FontSize="10" Glyph=""/>
+                <Button x:Name="ConsoleMinimizeButton" Grid.Column="1" Width="46" Height="48" Padding="0" Background="Transparent" BorderThickness="0" Click="ConsoleMinimizeButton_Click" CornerRadius="0" HorizontalContentAlignment="Stretch" PointerCanceled="ConsoleMinimizeButton_PointerReleased" PointerEntered="ConsoleMinimizeButton_PointerEntered" PointerExited="ConsoleMinimizeButton_PointerExited" PointerPressed="ConsoleMinimizeButton_PointerPressed" PointerReleased="ConsoleMinimizeButton_PointerReleased" VerticalContentAlignment="Stretch">
+                    <Button.Resources>
+                        <SolidColorBrush x:Key="ButtonBackgroundPointerOver" Color="Transparent"/>
+                        <SolidColorBrush x:Key="ButtonBackgroundPressed" Color="Transparent"/>
+                        <SolidColorBrush x:Key="ButtonBorderBrushPointerOver" Color="Transparent"/>
+                        <SolidColorBrush x:Key="ButtonBorderBrushPressed" Color="Transparent"/>
+                    </Button.Resources>
+                    <Border x:Name="ConsoleMinimizeBg" Background="Transparent">
+                        <Border.BackgroundTransition>
+                            <BrushTransition Duration="0:0:0.12"/>
+                        </Border.BackgroundTransition>
+                        <FontIcon FontSize="10" Glyph="&#xE921;" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                    </Border>
                 </Button>
-                <Button x:Name="ConsoleCloseButton" Grid.Column="2" Width="46" Height="48" Padding="0" Background="Transparent" BorderThickness="0" Click="ConsoleCloseButton_Click" CornerRadius="0" HorizontalContentAlignment="Center" PointerCanceled="ConsoleCloseButton_PointerReleased" PointerEntered="ConsoleCloseButton_PointerEntered" PointerExited="ConsoleCloseButton_PointerExited" PointerPressed="ConsoleCloseButton_PointerPressed" PointerReleased="ConsoleCloseButton_PointerReleased" VerticalContentAlignment="Center">
-                    <FontIcon FontSize="12" Glyph=""/>
+                <Button x:Name="ConsoleCloseButton" Grid.Column="2" Width="46" Height="48" Padding="0" Background="Transparent" BorderThickness="0" Click="ConsoleCloseButton_Click" CornerRadius="0" HorizontalContentAlignment="Stretch" PointerCanceled="ConsoleCloseButton_PointerReleased" PointerEntered="ConsoleCloseButton_PointerEntered" PointerExited="ConsoleCloseButton_PointerExited" PointerPressed="ConsoleCloseButton_PointerPressed" PointerReleased="ConsoleCloseButton_PointerReleased" VerticalContentAlignment="Stretch">
+                    <Button.Resources>
+                        <SolidColorBrush x:Key="ButtonBackgroundPointerOver" Color="Transparent"/>
+                        <SolidColorBrush x:Key="ButtonBackgroundPressed" Color="Transparent"/>
+                        <SolidColorBrush x:Key="ButtonBorderBrushPointerOver" Color="Transparent"/>
+                        <SolidColorBrush x:Key="ButtonBorderBrushPressed" Color="Transparent"/>
+                    </Button.Resources>
+                    <Border x:Name="ConsoleCloseBg" Background="Transparent">
+                        <Border.BackgroundTransition>
+                            <BrushTransition Duration="0:0:0.12"/>
+                        </Border.BackgroundTransition>
+                        <FontIcon FontSize="12" Glyph="&#xE8BB;" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                    </Border>
                 </Button>
             </Grid>
-            <NavigationView x:Name="RootNavigation" Grid.Row="1" AlwaysShowHeader="False" Background="Transparent" IsBackButtonVisible="Collapsed" IsPaneOpen="True" IsPaneToggleButtonVisible="False" IsSettingsVisible="False" OpenPaneLength="148" PaneDisplayMode="Left" SelectionChanged="RootNavigation_SelectionChanged">
+            <NavigationView x:Name="RootNavigation" Grid.Row="1" AlwaysShowHeader="False" Background="Transparent" IsBackButtonVisible="Collapsed" IsPaneOpen="True" IsPaneToggleButtonVisible="False" IsSettingsVisible="False" OpenPaneLength="172" PaneDisplayMode="Left" SelectionChanged="RootNavigation_SelectionChanged">
                 <NavigationView.MenuItems>
                     <NavigationViewItem x:Name="SystemNavItem" Height="44" Content="系统" Tag="system">
                         <NavigationViewItem.Icon>
@@ -299,7 +323,7 @@
                 <Grid x:Name="SettingsContentRoot" Padding="18,6,18,18" Background="{StaticResource ConsolePageSurfaceBrush}">
                     <InfoBar x:Name="ConsoleInfoBar" Canvas.ZIndex="5" VerticalAlignment="Top" IsClosable="True" IsOpen="False"/>
                     <ScrollViewer x:Name="UpdatePage" Margin="0,22,0,0" Visibility="Collapsed" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
-                        <StackPanel Spacing="20" MaxWidth="620" HorizontalAlignment="Left" Width="{Binding ViewportWidth, ElementName=UpdatePage}">
+                        <StackPanel Spacing="20" MaxWidth="620" HorizontalAlignment="Stretch">
                             <TextBlock Tag="loc:NavUpdate" Text="更新" FontSize="28" FontWeight="SemiBold" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
                             <Border Style="{StaticResource SettingsGroup}" Loaded="SettingsGroup_Loaded" Padding="18">
                                 <StackPanel Spacing="12">
@@ -324,7 +348,7 @@
                         </StackPanel>
                     </ScrollViewer>
                     <ScrollViewer x:Name="SystemPage" Margin="0,22,0,0" Background="Transparent" VerticalScrollBarVisibility="Auto" Visibility="Collapsed" HorizontalScrollBarVisibility="Disabled">
-                        <StackPanel HorizontalAlignment="Left" Spacing="20" MaxWidth="620" Width="{Binding ViewportWidth, ElementName=SystemPage}">
+                        <StackPanel HorizontalAlignment="Stretch" Spacing="20" MaxWidth="620">
                             <TextBlock FontSize="28" FontWeight="SemiBold" Tag="loc:SystemTitle" Text="系统" TextWrapping="Wrap" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
                             <Border Style="{StaticResource SettingsGroup}" Loaded="SettingsGroup_Loaded">
                                 <Border Style="{StaticResource GeneralRow}" BorderThickness="0">
@@ -481,7 +505,7 @@
                         </StackPanel>
                     </ScrollViewer>
                     <ScrollViewer x:Name="DisplayPage" Margin="0,22,0,0" Background="Transparent" VerticalScrollBarVisibility="Auto" Visibility="Collapsed" HorizontalScrollBarVisibility="Disabled">
-                        <StackPanel HorizontalAlignment="Left" Spacing="20" MaxWidth="620" Width="{Binding ViewportWidth, ElementName=DisplayPage}">
+                        <StackPanel HorizontalAlignment="Stretch" Spacing="20" MaxWidth="620">
                             <TextBlock FontSize="28" FontWeight="SemiBold" Tag="loc:DisplaySettingsTitle" Text="显示" TextWrapping="Wrap" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
                             <Border Style="{StaticResource SettingsGroup}" Loaded="SettingsGroup_Loaded">
                                 <StackPanel Spacing="0">
@@ -522,9 +546,9 @@
                                     <Border Style="{StaticResource GeneralRow}">
                                         <Grid ColumnSpacing="10">
                                             <Grid.ColumnDefinitions>
-                                                <ColumnDefinition Width="150"/>
+                                                <ColumnDefinition Width="148"/>
                                                 <ColumnDefinition Width="*"/>
-                                                <ColumnDefinition Width="48"/>
+                                                <ColumnDefinition Width="56"/>
                                             </Grid.ColumnDefinitions>
                                             <TextBlock VerticalAlignment="Center" FontSize="14" Tag="loc:CompactNameScaleTitle" Text="收起名称大小" TextWrapping="Wrap" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
                                             <controls:ConsoleSlider x:Name="CompactNameScaleSlider" Grid.Column="1" Style="{StaticResource Pct}" Minimum=".6" Maximum="1" Value="1" AutomationProperties.AutomationId="CompactNameScaleSlider" ValueChanged="NameScaleSlider_ValueChanged"/>
@@ -534,9 +558,9 @@
                                     <Border Style="{StaticResource GeneralRow}" BorderThickness="0">
                                         <Grid ColumnSpacing="10">
                                             <Grid.ColumnDefinitions>
-                                                <ColumnDefinition Width="150"/>
+                                                <ColumnDefinition Width="148"/>
                                                 <ColumnDefinition Width="*"/>
-                                                <ColumnDefinition Width="48"/>
+                                                <ColumnDefinition Width="56"/>
                                             </Grid.ColumnDefinitions>
                                             <TextBlock VerticalAlignment="Center" FontSize="14" Tag="loc:ExpandedNameScaleTitle" Text="展开后名称大小" TextWrapping="Wrap" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
                                             <controls:ConsoleSlider x:Name="ExpandedNameScaleSlider" Grid.Column="1" Style="{StaticResource Pct}" Minimum=".6" Maximum="1" Value="1" AutomationProperties.AutomationId="ExpandedNameScaleSlider" ValueChanged="NameScaleSlider_ValueChanged"/>
@@ -563,9 +587,9 @@
                                                 <ToggleSwitch x:Name="UniformFloatingCompactScaleToggle" Grid.Column="1" VerticalAlignment="Center" AutomationProperties.AutomationId="UniformFloatingCompactScaleToggle" Toggled="UniformCompactScaleToggle_Toggled"/>
                                                 <Grid Grid.Row="1" Grid.ColumnSpan="2" ColumnSpacing="10">
                                                     <Grid.ColumnDefinitions>
-                                                        <ColumnDefinition Width="92"/>
+                                                        <ColumnDefinition Width="148"/>
                                                         <ColumnDefinition Width="*"/>
-                                                        <ColumnDefinition Width="48"/>
+                                                        <ColumnDefinition Width="56"/>
                                                     </Grid.ColumnDefinitions>
                                                     <TextBlock VerticalAlignment="Center" Tag="loc:CompactScaleLabel" Text="入口整体" TextWrapping="Wrap" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
                                                     <controls:ConsoleSlider x:Name="UniformFloatingCompactScaleSlider" Grid.Column="1" Style="{StaticResource Pct}" Minimum="1.2" Maximum="3" Value="1.56" AutomationProperties.AutomationId="UniformFloatingCompactScaleSlider" ValueChanged="UniformCompactScaleSlider_ValueChanged"/>
@@ -587,9 +611,9 @@
                                                 <ToggleSwitch x:Name="UniformPositionedCompactScaleToggle" Grid.Column="1" VerticalAlignment="Center" AutomationProperties.AutomationId="UniformPositionedCompactScaleToggle" Toggled="UniformCompactScaleToggle_Toggled"/>
                                                 <Grid Grid.Row="1" Grid.ColumnSpan="2" ColumnSpacing="10">
                                                     <Grid.ColumnDefinitions>
-                                                        <ColumnDefinition Width="92"/>
+                                                        <ColumnDefinition Width="148"/>
                                                         <ColumnDefinition Width="*"/>
-                                                        <ColumnDefinition Width="48"/>
+                                                        <ColumnDefinition Width="56"/>
                                                     </Grid.ColumnDefinitions>
                                                     <TextBlock VerticalAlignment="Center" Tag="loc:CompactScaleLabel" Text="入口整体" TextWrapping="Wrap" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
                                                     <controls:ConsoleSlider x:Name="UniformPositionedCompactScaleSlider" Grid.Column="1" Style="{StaticResource Pct}" Minimum="1.2" Maximum="1.8" Value="1.56" AutomationProperties.AutomationId="UniformPositionedCompactScaleSlider" ValueChanged="UniformCompactScaleSlider_ValueChanged"/>
@@ -678,7 +702,7 @@
                         </StackPanel>
                     </ScrollViewer>
                     <ScrollViewer x:Name="MenuPage" Margin="0,22,0,0" Background="Transparent" VerticalScrollBarVisibility="Auto" Visibility="Collapsed" HorizontalScrollBarVisibility="Disabled">
-                        <StackPanel HorizontalAlignment="Left" Spacing="20" MaxWidth="620" Width="{Binding ViewportWidth, ElementName=MenuPage}">
+                        <StackPanel HorizontalAlignment="Stretch" Spacing="20" MaxWidth="620">
                             <TextBlock FontSize="28" FontWeight="SemiBold" Tag="loc:OrganizerMenuSettingsTitle" Text="右键菜单" TextWrapping="Wrap" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
                             <Border Style="{StaticResource SettingsGroup}" x:Name="OrganizerMenuGroup" Loaded="SettingsGroup_Loaded">
                                 <StackPanel x:Name="OrganizerMenuOptions" Spacing="0"/>
@@ -702,9 +726,9 @@
                                             </Grid>
                                             <Grid ColumnSpacing="12">
                                                 <Grid.ColumnDefinitions>
-                                                    <ColumnDefinition Width="Auto"/>
+                                                    <ColumnDefinition Width="148"/>
                                                     <ColumnDefinition Width="*"/>
-                                                    <ColumnDefinition Width="48"/>
+                                                    <ColumnDefinition Width="56"/>
                                                 </Grid.ColumnDefinitions>
                                                 <TextBlock VerticalAlignment="Center" Tag="loc:HoverMagnificationScaleLabel" Text="放大倍率" TextWrapping="Wrap" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
                                                 <controls:ConsoleSlider x:Name="CompactHoverMagnificationSlider" Grid.Column="1" Style="{StaticResource Pct}" Minimum="1" Maximum="1.25" Value="1.25" AutomationProperties.AutomationId="CompactHoverMagnificationSlider" ValueChanged="HoverMagnificationSlider_ValueChanged"/>
@@ -724,9 +748,9 @@
                                             </Grid>
                                             <Grid ColumnSpacing="12">
                                                 <Grid.ColumnDefinitions>
-                                                    <ColumnDefinition Width="Auto"/>
+                                                    <ColumnDefinition Width="148"/>
                                                     <ColumnDefinition Width="*"/>
-                                                    <ColumnDefinition Width="48"/>
+                                                    <ColumnDefinition Width="56"/>
                                                 </Grid.ColumnDefinitions>
                                                 <TextBlock VerticalAlignment="Center" Tag="loc:HoverMagnificationScaleLabel" Text="放大倍率" TextWrapping="Wrap" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
                                                 <controls:ConsoleSlider x:Name="DockHoverMagnificationSlider" Grid.Column="1" Style="{StaticResource Pct}" Minimum="1" Maximum="1.25" Value="1.25" AutomationProperties.AutomationId="DockHoverMagnificationSlider" ValueChanged="HoverMagnificationSlider_ValueChanged"/>
@@ -806,9 +830,9 @@
                                             <ToggleSwitch x:Name="ExpandOnHoverToggle" Grid.Column="1" VerticalAlignment="Center" AutomationProperties.AutomationId="ExpandOnHoverToggle" Toggled="ExpandOnHoverToggle_Toggled"/>
                                             <Grid Grid.Row="1" Grid.ColumnSpan="2" ColumnSpacing="10">
                                                 <Grid.ColumnDefinitions>
-                                                    <ColumnDefinition Width="92"/>
+                                                    <ColumnDefinition Width="148"/>
                                                     <ColumnDefinition Width="*"/>
-                                                    <ColumnDefinition Width="62"/>
+                                                    <ColumnDefinition Width="56"/>
                                                 </Grid.ColumnDefinitions>
                                                 <TextBlock VerticalAlignment="Center" Tag="loc:HoverExpandDelayLabel" Text="展开判定时间" TextWrapping="Wrap" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
                                                 <controls:ConsoleSlider x:Name="HoverExpandDelaySlider" Grid.Column="1" Minimum="100" Maximum="2000" StepFrequency="50" AutomationProperties.AutomationId="HoverExpandDelaySlider" ValueChanged="HoverDelaySlider_ValueChanged"/>
@@ -830,9 +854,9 @@
                                             <ToggleSwitch x:Name="CollapseOnPointerLeaveToggle" Grid.Column="1" VerticalAlignment="Center" AutomationProperties.AutomationId="CollapseOnPointerLeaveToggle" Toggled="CollapseOnPointerLeaveToggle_Toggled"/>
                                             <Grid Grid.Row="1" Grid.ColumnSpan="2" ColumnSpacing="10">
                                                 <Grid.ColumnDefinitions>
-                                                    <ColumnDefinition Width="92"/>
+                                                    <ColumnDefinition Width="148"/>
                                                     <ColumnDefinition Width="*"/>
-                                                    <ColumnDefinition Width="62"/>
+                                                    <ColumnDefinition Width="56"/>
                                                 </Grid.ColumnDefinitions>
                                                 <TextBlock VerticalAlignment="Center" Tag="loc:PointerLeaveCollapseDelayLabel" Text="收缩判定时间" TextWrapping="Wrap" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
                                                 <controls:ConsoleSlider x:Name="PointerLeaveCollapseDelaySlider" Grid.Column="1" Minimum="100" Maximum="2000" StepFrequency="50" AutomationProperties.AutomationId="PointerLeaveCollapseDelaySlider" ValueChanged="HoverDelaySlider_ValueChanged"/>
@@ -843,9 +867,9 @@
                                     <Border Style="{StaticResource GeneralRow}" BorderThickness="0">
                                         <Grid ColumnSpacing="12">
                                             <Grid.ColumnDefinitions>
-                                                <ColumnDefinition Width="180"/>
+                                                <ColumnDefinition Width="148"/>
                                                 <ColumnDefinition Width="*"/>
-                                                <ColumnDefinition Width="62"/>
+                                                <ColumnDefinition Width="56"/>
                                             </Grid.ColumnDefinitions>
                                             <TextBlock VerticalAlignment="Center" FontSize="14" Tag="loc:StationActivationDistanceTitle" Text="中转站触发距离" TextWrapping="Wrap" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
                                             <controls:ConsoleSlider x:Name="StationActivationDistanceSlider" Grid.Column="1" Minimum="4" Maximum="48" StepFrequency="4" AutomationProperties.AutomationId="StationActivationDistanceSlider" ValueChanged="HoverDelaySlider_ValueChanged"/>
@@ -859,9 +883,9 @@
                                     <Border Style="{StaticResource GeneralRow}" BorderThickness="0">
                                         <Grid ColumnSpacing="12">
                                             <Grid.ColumnDefinitions>
-                                                <ColumnDefinition Width="180"/>
+                                                <ColumnDefinition Width="148"/>
                                                 <ColumnDefinition Width="*"/>
-                                                <ColumnDefinition Width="62"/>
+                                                <ColumnDefinition Width="56"/>
                                             </Grid.ColumnDefinitions>
                                             <TextBlock VerticalAlignment="Center" FontSize="14" Tag="loc:StationHoverExpandDelayTitle" Text="中转站展开等待时间" TextWrapping="Wrap" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
                                             <controls:ConsoleSlider x:Name="StationHoverExpandDelaySlider" Grid.Column="1" Minimum="0" Maximum="500" StepFrequency="20" AutomationProperties.AutomationId="StationHoverExpandDelaySlider" ValueChanged="HoverDelaySlider_ValueChanged"/>
@@ -875,9 +899,9 @@
                                     <Border Style="{StaticResource GeneralRow}">
                                         <Grid ColumnSpacing="12">
                                             <Grid.ColumnDefinitions>
-                                                <ColumnDefinition Width="180"/>
+                                                <ColumnDefinition Width="148"/>
                                                 <ColumnDefinition Width="*"/>
-                                                <ColumnDefinition Width="62"/>
+                                                <ColumnDefinition Width="56"/>
                                             </Grid.ColumnDefinitions>
                                             <TextBlock VerticalAlignment="Center" FontSize="14" Tag="loc:StationPointerLeaveCollapseDelayTitle" Text="中转站收缩时间" TextWrapping="Wrap" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
                                             <controls:ConsoleSlider x:Name="StationPointerLeaveCollapseDelaySlider" Grid.Column="1" Minimum="100" Maximum="2000" StepFrequency="50" AutomationProperties.AutomationId="StationPointerLeaveCollapseDelaySlider" ValueChanged="HoverDelaySlider_ValueChanged"/>
@@ -949,7 +973,7 @@
                         </StackPanel>
                     </ScrollViewer>
                     <ScrollViewer x:Name="ThemePage" Margin="0,22,0,0" Background="Transparent" VerticalScrollBarVisibility="Auto" Visibility="Collapsed" HorizontalScrollBarVisibility="Disabled">
-                        <StackPanel MaxWidth="620" HorizontalAlignment="Left" Spacing="20" Width="{Binding ViewportWidth, ElementName=ThemePage}">
+                        <StackPanel MaxWidth="620" HorizontalAlignment="Stretch" Spacing="20">
                             <TextBlock FontSize="28" FontWeight="SemiBold" Tag="loc:ThemeTitle" Text="主题" TextWrapping="Wrap" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
                             <Border Style="{StaticResource SettingsGroup}" Padding="16" Loaded="SettingsGroup_Loaded">
                                 <StackPanel Spacing="12">
@@ -972,28 +996,28 @@
                                     <TextBlock FontSize="14" FontWeight="SemiBold" Tag="loc:ThemeColorLabel" Text="颜色" TextWrapping="Wrap" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
                                     <StackPanel Orientation="Horizontal" Spacing="8">
                                         <StackPanel x:Name="ColorSwatchesPanel" Orientation="Horizontal" Spacing="6">
-                                            <ToggleButton Width="36" Height="36" Padding="0" Tag="#E2E5E9" Click="ThemeColorSwatch_Click">
+                                            <ToggleButton Width="36" Height="36" Padding="0" CornerRadius="18" Tag="#E2E5E9" Click="ThemeColorSwatch_Click">
                                                 <Border Width="24" Height="24" Background="#FFE2E5E9" CornerRadius="12"/>
                                             </ToggleButton>
-                                            <ToggleButton Width="36" Height="36" Padding="0" Tag="#F5F6F8" Click="ThemeColorSwatch_Click">
+                                            <ToggleButton Width="36" Height="36" Padding="0" CornerRadius="18" Tag="#F5F6F8" Click="ThemeColorSwatch_Click">
                                                 <Border Width="24" Height="24" Background="#FFF5F6F8" CornerRadius="12"/>
                                             </ToggleButton>
-                                            <ToggleButton Width="36" Height="36" Padding="0" Tag="#2F2D2D" Click="ThemeColorSwatch_Click">
+                                            <ToggleButton Width="36" Height="36" Padding="0" CornerRadius="18" Tag="#2F2D2D" Click="ThemeColorSwatch_Click">
                                                 <Border Width="24" Height="24" Background="#FF2F2D2D" CornerRadius="12"/>
                                             </ToggleButton>
-                                            <ToggleButton Width="36" Height="36" Padding="0" Tag="#BFD7EA" Click="ThemeColorSwatch_Click">
+                                            <ToggleButton Width="36" Height="36" Padding="0" CornerRadius="18" Tag="#BFD7EA" Click="ThemeColorSwatch_Click">
                                                 <Border Width="24" Height="24" Background="#FFBFD7EA" CornerRadius="12"/>
                                             </ToggleButton>
-                                            <ToggleButton Width="36" Height="36" Padding="0" Tag="#C9DFC5" Click="ThemeColorSwatch_Click">
+                                            <ToggleButton Width="36" Height="36" Padding="0" CornerRadius="18" Tag="#C9DFC5" Click="ThemeColorSwatch_Click">
                                                 <Border Width="24" Height="24" Background="#FFC9DFC5" CornerRadius="12"/>
                                             </ToggleButton>
-                                            <ToggleButton Width="36" Height="36" Padding="0" Tag="#D3C7E6" Click="ThemeColorSwatch_Click">
+                                            <ToggleButton Width="36" Height="36" Padding="0" CornerRadius="18" Tag="#D3C7E6" Click="ThemeColorSwatch_Click">
                                                 <Border Width="24" Height="24" Background="#FFD3C7E6" CornerRadius="12"/>
                                             </ToggleButton>
-                                            <ToggleButton Width="36" Height="36" Padding="0" Tag="#E8D9A7" Click="ThemeColorSwatch_Click">
+                                            <ToggleButton Width="36" Height="36" Padding="0" CornerRadius="18" Tag="#E8D9A7" Click="ThemeColorSwatch_Click">
                                                 <Border Width="24" Height="24" Background="#FFE8D9A7" CornerRadius="12"/>
                                             </ToggleButton>
-                                            <ToggleButton Width="36" Height="36" Padding="0" Tag="#E7C7CF" Click="ThemeColorSwatch_Click">
+                                            <ToggleButton Width="36" Height="36" Padding="0" CornerRadius="18" Tag="#E7C7CF" Click="ThemeColorSwatch_Click">
                                                 <Border Width="24" Height="24" Background="#FFE7C7CF" CornerRadius="12"/>
                                             </ToggleButton>
                                         </StackPanel>
@@ -1023,10 +1047,10 @@
                                     </StackPanel>
                                     <StackPanel x:Name="ThemeTransparencyRow">
                                         <TextBlock FontSize="14" FontWeight="SemiBold" Tag="loc:ThemeTransparencyLabel" Text="背景不透明度" TextWrapping="Wrap" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
-                                        <Grid Width="460" HorizontalAlignment="Left" ColumnSpacing="12">
+                                        <Grid HorizontalAlignment="Stretch" ColumnSpacing="12">
                                             <Grid.ColumnDefinitions>
                                                 <ColumnDefinition Width="*"/>
-                                                <ColumnDefinition Width="52"/>
+                                                <ColumnDefinition Width="56"/>
                                             </Grid.ColumnDefinitions>
                                             <controls:ConsoleSlider x:Name="ThemeTransparencySlider" Minimum="0" Maximum="1" StepFrequency=".01" Value=".35" ValueChanged="ThemeTransparencySlider_ValueChanged"/>
                                             <TextBlock x:Name="ThemeTransparencyValue" Grid.Column="1" VerticalAlignment="Center" TextAlignment="Right" Text="35%" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
@@ -1034,10 +1058,10 @@
                                     </StackPanel>
                                     <StackPanel x:Name="ThemeBlurStrengthRow">
                                         <TextBlock FontSize="14" FontWeight="SemiBold" Tag="loc:ThemeBlurStrengthLabel" Text="模糊强度" TextWrapping="Wrap" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
-                                        <Grid Width="460" HorizontalAlignment="Left" ColumnSpacing="12">
+                                        <Grid HorizontalAlignment="Stretch" ColumnSpacing="12">
                                             <Grid.ColumnDefinitions>
                                                 <ColumnDefinition Width="*"/>
-                                                <ColumnDefinition Width="52"/>
+                                                <ColumnDefinition Width="56"/>
                                             </Grid.ColumnDefinitions>
                                             <controls:ConsoleSlider x:Name="ThemeBlurStrengthSlider" Minimum="0" Maximum="2" StepFrequency=".05" Value="1" ValueChanged="ThemeBlurStrengthSlider_ValueChanged"/>
                                             <TextBlock x:Name="ThemeBlurStrengthValue" Grid.Column="1" VerticalAlignment="Center" TextAlignment="Right" Text="100%" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
@@ -1060,7 +1084,7 @@
                                 <ColumnDefinition Width="190"/>
                                 <ColumnDefinition Width="*"/>
                             </Grid.ColumnDefinitions>
-                            <Border Background="{StaticResource ConsoleCardSurfaceBrush}" CornerRadius="12">
+                            <Border Background="{StaticResource ConsoleCardSurfaceBrush}" BorderBrush="#12000000" BorderThickness="1" CornerRadius="12">
                                 <Grid>
                                     <Grid.RowDefinitions><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
                                     <ListView x:Name="ManageList" Margin="4" SelectionChanged="ManageList_SelectionChanged">
@@ -1081,7 +1105,9 @@
                                         <TextBlock Tag="loc:ManageCategoryEmpty" Text="此类别还没有窗口" TextWrapping="Wrap" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
 
                                     </StackPanel>
-                                    <Button x:Name="ManageAddButton" Grid.Row="1" Margin="8" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" Content="+" FontSize="22" Click="BeginCreationButton_Click"/>
+                                    <Button x:Name="ManageAddButton" Grid.Row="1" Margin="8" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" Click="BeginCreationButton_Click">
+                                        <FontIcon FontSize="15" Glyph="&#xE710;"/>
+                                    </Button>
                                 </Grid>
                             </Border>
                             <Border x:Name="ManageDetailCard" Grid.Column="1" Padding="0" Background="Transparent" CornerRadius="12">
@@ -1092,7 +1118,19 @@
                                             <local:OrganizerSettingsForm x:Name="ManageForm" IsCreationMode="False"/>
                                             <StackPanel Margin="0,6" Orientation="Horizontal" Spacing="8">
                                                 <Button x:Name="RecreateStorageButton" Click="RecreateStorageButton_Click" Content="重建目录" Tag="loc:RecreateStorage" Visibility="Collapsed"/>
-                                                <Button x:Name="DeleteOrganizerButton" Click="DeleteOrganizerButton_Click" Content="删除收纳窗" Tag="loc:DeleteOrganizer"/>
+                                                <Button x:Name="DeleteOrganizerButton" Click="DeleteOrganizerButton_Click" Content="删除收纳窗" Tag="loc:DeleteOrganizer" Background="{StaticResource ConsoleCardSurfaceBrush}" Foreground="#FFC42B1C" BorderBrush="#40C42B1C" BorderThickness="1">
+                                                    <Button.Resources>
+                                                        <SolidColorBrush x:Key="ButtonBackground" Color="#FFFFFF"/>
+                                                        <SolidColorBrush x:Key="ButtonBackgroundPointerOver" Color="#14C42B1C"/>
+                                                        <SolidColorBrush x:Key="ButtonBackgroundPressed" Color="#24C42B1C"/>
+                                                        <SolidColorBrush x:Key="ButtonForeground" Color="#C42B1C"/>
+                                                        <SolidColorBrush x:Key="ButtonForegroundPointerOver" Color="#B02316"/>
+                                                        <SolidColorBrush x:Key="ButtonForegroundPressed" Color="#991D12"/>
+                                                        <SolidColorBrush x:Key="ButtonBorderBrush" Color="#40C42B1C"/>
+                                                        <SolidColorBrush x:Key="ButtonBorderBrushPointerOver" Color="#70C42B1C"/>
+                                                        <SolidColorBrush x:Key="ButtonBorderBrushPressed" Color="#90C42B1C"/>
+                                                    </Button.Resources>
+                                                </Button>
                                             </StackPanel>
                                         </StackPanel>
                                     </ScrollViewer>
@@ -1103,7 +1141,21 @@
                                     <StackPanel x:Name="AddSettingsColumn" HorizontalAlignment="Stretch" Spacing="20">
                                         <local:OrganizerSettingsForm x:Name="AddForm" IsCreationMode="True"/>
                                         <StackPanel Margin="0,6" Spacing="6">
-                                            <Button x:Name="CreateOrganizerButton" HorizontalAlignment="Left" MinWidth="100" Click="CreateOrganizerButton_Click" Content="创建" Tag="loc:Create" Style="{StaticResource NeutralActionButtonStyle}"/>
+                                            <Button x:Name="CreateOrganizerButton" HorizontalAlignment="Left" MinWidth="100" Click="CreateOrganizerButton_Click" Content="创建" Tag="loc:Create" Background="{StaticResource ConsoleSelectionAccentBrush}" Foreground="#FFFFFF" BorderThickness="0">
+                                                <Button.Resources>
+                                                    <SolidColorBrush x:Key="ButtonBackground" Color="#007AFF"/>
+                                                    <SolidColorBrush x:Key="ButtonBackgroundPointerOver" Color="#006EE6"/>
+                                                    <SolidColorBrush x:Key="ButtonBackgroundPressed" Color="#0062CC"/>
+                                                    <SolidColorBrush x:Key="ButtonBackgroundDisabled" Color="#D1D1D6"/>
+                                                    <SolidColorBrush x:Key="ButtonForeground" Color="#FFFFFF"/>
+                                                    <SolidColorBrush x:Key="ButtonForegroundPointerOver" Color="#FFFFFF"/>
+                                                    <SolidColorBrush x:Key="ButtonForegroundPressed" Color="#FFFFFF"/>
+                                                    <SolidColorBrush x:Key="ButtonForegroundDisabled" Color="#FFFFFF"/>
+                                                    <SolidColorBrush x:Key="ButtonBorderBrush" Color="Transparent"/>
+                                                    <SolidColorBrush x:Key="ButtonBorderBrushPointerOver" Color="Transparent"/>
+                                                    <SolidColorBrush x:Key="ButtonBorderBrushPressed" Color="Transparent"/>
+                                                </Button.Resources>
+                                            </Button>
                                             <TextBlock x:Name="CreateLimitText" TextWrapping="Wrap" Visibility="Collapsed" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
                                         </StackPanel>
                                     </StackPanel>

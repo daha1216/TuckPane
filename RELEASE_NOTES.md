@@ -1,19 +1,18 @@
 ## 4.3.1
 
-本版聚焦 **极致丝滑性能抢救、Windows 11 原生桌面字体对齐与屏幕边缘防裁切、以及超越 Apple iOS 26 的液态玻璃光学与动效重构**，全面解决 `4.3.0` 实机反馈的卡顿掉帧、紧凑标签字体违和/边缘裁切及浅色壁纸下毛玻璃发灰问题（完全保持 `SchemaVersion = 16` 配置向后兼容，应用内更新只检查本 fork）。
+本版完成全库 **工业级/商业级深度审计与三线并行重构（63 个源文件升级 + 清理僵尸代码）**，聚焦 **超越 Apple iOS 26/27 ProMotion 的满血 120–240Hz 流畅度、Windows 11 原生桌面字体对齐与纯白壁纸高对比度清晰度、全链路稳定性加固，以及设置窗与全局搜索的旗舰级观感重塑**（完全保持 `SchemaVersion = 16` 配置向后兼容，应用内更新只检查本 fork）。
 
-- **P0 流畅度彻底根治（>98% 主 UI 线程 CPU 下降，120–240Hz ProMotion 级丝滑）**：
-  - **独立高优先级原生消息泵线程运行鼠标钩子**：将 `DesktopMarqueeHookService` 与 `OutsideClickHook` 的 `WH_MOUSE_LL` 钩子从 WinUI 3 主 UI 线程彻底剥离至独立 `ThreadPriority.AboveNormal` 原生 `GetMessage` 线程，并增加非桌面框选态 ~15ns 极速短路路径；彻底消除设置界面（`ConsoleWindow`）滚动、切换、拖滑块与展开/收起动效卡顿。
-  - **关停隐藏态 DWM Acrylic 实时模糊**：原生桌面融合模式隐藏背景时将 `CompactSurfaceHost.Visibility` 置为 `Collapsed`（替代仅改 `Opacity = 0`），彻底关停不可见的实时 GPU 模糊管线。
-  - **120Hz 零分配自由网格拖拽引擎**：移除拖拽宿主每帧全图重绘的 `ThemeShadow`，改为轻量液态高亮描边；用拖拽期预建 `O(1)` 字典查表取代 `StepIosFluidItemSprings` 内每帧 `O(N²)` `IndexOfItem` 扫描与 `HashSet` 分配；将所有微震与惯性倾斜迁移至 GPU `Composition Visual.RotationAngleInDegrees`；池化复用网格引导格，并将所有选区/悬停/拖拽 `SolidColorBrush` 静态预分配。
-- **Windows 11 原生桌面字体与双层 GPU 高斯文字阴影**：
-  - 新增 `DesktopTypographyService`，通过 `SystemParametersInfoForDpi(SPI_GETICONMETRICS, 96 DPI)` 读取系统真实桌面图标字体（中文 Windows 11 为 `Microsoft YaHei UI`、`12 DIP`、`Normal`）并缓存高对比度状态；彻底取代随入口缩放膨胀至 20px 的巨型粗体标题，同步统一展开窗项目标签字体。
-  - 废除硬边双影克隆，改由 `CompactNameText.GetAlphaMask()` 驱动**双层 GPU 高斯 `DropShadow`**（外层柔光晕 `BlurRadius = 5.6` + 内层紧凑核心 `BlurRadius = 2.1`，精准复刻 Windows 资源管理器 `DrawShadowText`），在纯白壁纸、纯黑壁纸与高反差线条壁纸上均清晰锐利、零空心双影。
-  - 新增 `UpdateCompactLabelSafeWidth()` 屏幕边缘对称防裁切算法：贴边悬浮窗自动按显示器边界余量收紧安全行宽并优雅换行/省略，彻底根除靠右贴边时文字被屏幕边缘切半的缺陷。
-- **超越 Apple iOS 26 液态玻璃光学层 & 原生桌面融合重构**：
-  - **iOS 26 液态玻璃（收起态 + 展开态全套升级）**：采用 24.4% Apple 连续超椭圆曲率（`CompactCornerRadiusDip = 9.5`）、双层光学边缘（外层 `#24000000` 轮廓线在纯白壁纸上立现通透轮廓 + 内层 `#D4FFFFFF` 液态折射高光边）、斜向焦散折射光泽、悬浮环境 GPU 阴影、实时追踪光标的 GPU `CompositionRadialGradientBrush` 流动高光斑，以及原生 DWM 合成器线程 `SpringVector3NaturalMotionAnimation` 悬停抬升与按压回弹物理动效；展开窗面板同步加入角半径随动变形的液态光学边缘。
-  - **原生桌面融合（Windows 11）**：升级为晶透一体图标胶囊 + 轻盈环境阴影 + 真实 Windows 11 桌面字体与双层高斯阴影，与左侧系统桌面图标浑然一体，告别四个小图标悬空漂浮的突兀感。
-- **验证**：Release x64 0 警告 0 错误构建；全套无头 `TuckPane.LogicChecks` **62/62**（含新增 `--liquid-glass-perf`）、`UpdateChecks` **4/4**、Node 便签 **3/3** 全部通过；Windows 11 隔离沙箱实测 6 个真实右贴边收纳窗在 250 次高频鼠标移动下独立钩子线程 `0.00ms`、主 UI 线程仅 `15.62ms`（较 `4.3.0` 下降 >98%），三种风格全量零报错。
+- **P0 满血 120–240Hz 丝滑引擎（彻底根治卡顿、掉帧与高刷腰斩）**：
+  - **独立常驻高优先级原生消息泵线程**：`DesktopMarqueeHookService` 与 `OutsideClickHook` 的 `WH_MOUSE_LL` 钩子完全移出 WinUI 3 主 UI 线程，运行于独立 `ThreadPriority.AboveNormal` 原生消息线程（采用引用计数 `HookSession` 消除超时崩溃与钩子泄漏，非桌面拖拽态 ~15ns 极速短路）；`OutsideClickHook` 保持热线程常驻，`Start/Stop` 零毫秒无阻塞切换。
+  - **展开/收起满血 VSync 同步弹簧（帧率直接翻倍）**：`RunVisualTransitionAsync` 从每帧 `await WaitForNextRenderAsync` 异步续体（会导致 120Hz→60Hz、240Hz→120Hz 腰斩）重构为**单订阅同步 `CompositionTarget.Rendering` + 解析欠阻尼 iOS 弹簧（`ItemMotionMath.StepScalarSpring`）+ 分阶段液态形变**；同区展开期间保持 HWND 静止消除每帧 `SetWindowPos` 撕裂；引入全局引用计数 `CompositorClockBoost`（覆盖展开/收起、平滑滚动、悬停波、拖拽、缩放到设置窗切页），确保 Windows 11 DRR/VRR 屏幕锁定满血高刷。
+  - **着色器零重编译 & 设置窗（`ConsoleWindow`）240Hz 丝滑重构**：`ThemeBackdrop` 缓存可动画化 `CompositionEffectFactory` 并通过 `CompositionPropertySet` 就地更新 `Blur.BlurAmount` / `TintOpacity.Opacity` / `TintColor.Color`（拖动滑块零 D2D 着色器重编译、零 Win2D COM 泄漏）；新增目标隔离主题广播（`LastChangedThemeTarget`）与滑块 VSync 合帧；设置窗切页用原生 DWM 合成器 GPU 弹簧取代 `Task.Delay(16)` 循环，移除 Windows 11 全窗 `Soft` 软裁剪离屏缓冲与 `{Binding ViewportWidth}` 布局反馈，并将注册表/目录存在性检查全面离屏异步化。
+  - **零 UI 阻塞异步持久化与零分配交互**：`StateStore.SaveAsync` 保留原子 `WriteThrough + Flush(true)` 持久性的同时全面移入 `Task.Run` 离屏落盘；`IconCacheService` 将缩略图/Shell 提取与 PNG 编码全面离屏异步化并修复共享 `IImageList` `FinalReleaseComObject` 并发破坏；关停隐藏态 DWM Acrylic 实时模糊；自由网格拖拽移除每帧 `ThemeShadow`、采用 `O(1)` 字典索引、GPU `RotationAngleInDegrees`、GPU `.Translation` 磁吸占位框与池化引导格；消除 `FindItemPart` 递归遍历与空闲 62.5Hz 缩放轮询，Dock 弹跳改单次包络 `HRGN` 零逐帧 `SetWindowRgn`。
+- **超越 Apple iOS 26/27 液态玻璃光学层 & 纯白/纯黑双壁纸清晰排版**：
+  - **Windows 11 原生桌面字体 + 全场景 GPU 高斯文字阴影**：`DesktopTypographyService` 读取 `SPI_GETICONMETRICS` 真实系统桌面字体（中文为 `Microsoft YaHei UI`、`12 DIP`、`Normal`），搭配 `CompactNameText.GetAlphaMask()` **双层 GPU 高斯 `DropShadow`** 与屏幕边缘对称防裁切算法（`UpdateCompactLabelSafeWidth`）；同步为展开窗大标题（`ExpandedNameShadowHost`）与每一项文件标签（`ItemNameShadowHost`）接入池化 GPU 高斯投影，彻底根治纯白壁纸下白字对比度不足问题。
+  - **iOS 26/27 液态玻璃与原生桌面胶囊精修**：24.4% 连续超椭圆曲率（`CompactCornerRadiusDip = 9.5`）、双层光学边缘、圆角遮罩环境阴影（彻底消除直角阴影耳）、实时光标追踪 GPU 径向高光（带 160ms GPU 隐式渐显光晕）、缓存复用的 DWM 弹簧动画、`FluentFolder` 零顶边裁切一体化弹簧，以及空收纳窗优雅引导图标；展开态选中项悬停不再抹除选区底色且消除 1px 边框抖动。
+  - **Raycast 级全局搜索与瑞士网格设置界面**：`OrganizerSearchWindow` 升级 `DesktopAcrylicBackdrop` + 原生 `DWMWCP_ROUND` 圆角阴影、自适应系统深浅色、真实 26×26 缓存 Shell 图标、命中关键字高亮、`kbd` 键帽栏与 150ms GPU 弹入动效；`ConsoleWindow` 统一对齐滑块列宽、圆形 16×16 滑块手柄、圆形主题色环与卡片层级，并优化便签/待办标题栏与字体一致性。
+- **全库工业级可靠性加固**：修复 `NoteStore` 临时文件清理异常导致 `SemaphoreSlim` 永久死锁、批量复制路径 100% 崩溃（`CopyPathsToClipboard`）、`TodoWindow` 实时对象图序列化竞态、多屏热插拔空显示器崩溃、含小数点文件夹名（如 `MyProject.Core` / `v2.1.0` / `.git`）被误截断、`OwnedDialogWindow` 异常冻结父窗、`--startup` 托盘退出空 `XamlRoot` 崩溃、`ApplyExpansionModeAsync` 异步死循环、`ShellDragService` `HBITMAP` 双重释放、`IShellLinkW` `LPWStr` 封送、托盘 `WM_NULL`、OneDrive/AppExecLink 目录复制兼容、自由网格重命名保留 `ItemSlots` 及多选拖出前刷盘便携文档等 20+ 项深层隐患。
+- **验证**：Release x64 **0 警告 0 错误**构建；4 工程 `--locked-mode` 零新增依赖；全套无头 `TuckPane.LogicChecks` **63/63**（含新增 `--liquid-glass-perf` 与 `--commercial-grade-audit`）、`UpdateChecks` **4/4**、便携启动器 **6/6**、Node 便签 **3/3** 全部通过；Windows 11 隔离沙箱实机验证 6 贴边窗三种风格、展开态 GPU 阴影与全局搜索零报错，250 次高频鼠标移动下独立钩子线程 `0.00ms`、主 UI 线程仅 `15.62ms`（较 `4.3.0` 下降 >98%）。
 
 ## 4.3.0
 

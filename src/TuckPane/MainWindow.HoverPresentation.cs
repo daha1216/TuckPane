@@ -25,9 +25,18 @@ public sealed partial class MainWindow
     private Microsoft.UI.Xaml.Input.Pointer? _itemCapturedPointer;
     private readonly DockLayoutCommit _dockLayoutCommit = new();
     private long _hoverGeometryVersion;
+    private int _presentedHoverProxyCount;
     private bool UseHoverPresentation => IsDock || IsCompactList;
     private bool HorizontalHover => IsDock && _definition.DockOrientation == Models.DockOrientation.Horizontal;
-    private bool HasHoverPresentation => _hoverItems.Values.Any(item => item.Presented);
+    private bool HasHoverPresentation => _presentedHoverProxyCount > 0;
+
+    private void SetHoverProxyPresented(HoverItemVisual item, bool presented)
+    {
+        if (item.Presented == presented) return;
+        item.Presented = presented;
+        if (presented) _presentedHoverProxyCount++;
+        else _presentedHoverProxyCount = Math.Max(0, _presentedHoverProxyCount - 1);
+    }
 
     private void BeginHoverLayoutChange()
     {
@@ -81,7 +90,10 @@ public sealed partial class MainWindow
             case Grid grid:
                 var gridCopy = new Grid();
                 foreach (FrameworkElement child in grid.Children.OfType<FrameworkElement>())
+                {
+                    if (child.Name == "ItemNameShadowHost") continue;
                     gridCopy.Children.Add(CloneHoverContent(child, item));
+                }
                 copy = gridCopy;
                 break;
             case Image image:
@@ -145,34 +157,54 @@ public sealed partial class MainWindow
         var proxy = new Border
         {
             Child = content, Width = item.BaseBounds.Width, Height = item.BaseBounds.Height,
-            Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent),
+            Background = _transparentItemBrush,
             DataContext = host.DataContext, Tag = host.Tag, Clip = item.Clip,
             Opacity = 0, IsHitTestVisible = false
         };
         // Prepare and measure once before replacing the original. Subsequent hover
         // enter/leave frames keep this same tree, including the resting frame.
-        proxy.SizeChanged += (_, _) =>
+        SizeChangedEventHandler onSizeChanged = (_, _) =>
         {
             if (_hoverItems.TryGetValue(host, out var current) && ReferenceEquals(current, item))
                 InvalidateHoverGeometry();
         };
         if (!IsDock) ToolTipService.SetToolTip(proxy, ToolTipService.GetToolTip(host));
-        proxy.PointerPressed += (_, e) => ForwardHoverPress(host, item, e);
-        proxy.PointerMoved += (_, e) => Item_PointerMoved(host, e);
-        proxy.PointerReleased += (_, e) => Item_PointerReleased(host, e);
-        proxy.PointerCanceled += (_, e) => Item_PointerCanceled(host, e);
-        proxy.PointerCaptureLost += (_, e) =>
+        PointerEventHandler onPointerPressed = (_, e) => ForwardHoverPress(host, item, e);
+        PointerEventHandler onPointerMoved = (_, e) => Item_PointerMoved(host, e);
+        PointerEventHandler onPointerReleased = (_, e) => Item_PointerReleased(host, e);
+        PointerEventHandler onPointerCanceled = (_, e) => Item_PointerCanceled(host, e);
+        PointerEventHandler onPointerCaptureLost = (_, e) =>
         {
             if (ReferenceEquals(_itemPointerCaptureOwner, proxy)) Item_PointerCaptureLost(host, e);
         };
-        proxy.PointerWheelChanged += ExpandedView_PointerWheelChanged;
-        proxy.DoubleTapped += (_, e) => ItemHost_DoubleTapped(host, e);
-        proxy.ContextRequested += (_, e) =>
+        DoubleTappedEventHandler onDoubleTapped = (_, e) => ItemHost_DoubleTapped(host, e);
+        TypedEventHandler<UIElement, ContextRequestedEventArgs> onContextRequested = (_, e) =>
         {
             if (e.Handled || !_hoverItems.ContainsKey(host)) return;
             if (e.TryGetPosition(ItemsScrollView, out Point point) && HoverItemAtViewportPoint(point) != host) return;
             ResetHoverWave();
             Item_ContextRequested(host, e);
+        };
+        proxy.SizeChanged += onSizeChanged;
+        proxy.PointerPressed += onPointerPressed;
+        proxy.PointerMoved += onPointerMoved;
+        proxy.PointerReleased += onPointerReleased;
+        proxy.PointerCanceled += onPointerCanceled;
+        proxy.PointerCaptureLost += onPointerCaptureLost;
+        proxy.PointerWheelChanged += ExpandedView_PointerWheelChanged;
+        proxy.DoubleTapped += onDoubleTapped;
+        proxy.ContextRequested += onContextRequested;
+        item.DetachProxyHandlers = () =>
+        {
+            proxy.SizeChanged -= onSizeChanged;
+            proxy.PointerPressed -= onPointerPressed;
+            proxy.PointerMoved -= onPointerMoved;
+            proxy.PointerReleased -= onPointerReleased;
+            proxy.PointerCanceled -= onPointerCanceled;
+            proxy.PointerCaptureLost -= onPointerCaptureLost;
+            proxy.PointerWheelChanged -= ExpandedView_PointerWheelChanged;
+            proxy.DoubleTapped -= onDoubleTapped;
+            proxy.ContextRequested -= onContextRequested;
         };
         item.Proxy = proxy;
         ApplyItemBounce(item);
@@ -196,19 +228,76 @@ public sealed partial class MainWindow
     private void RemoveHoverProxy(HoverItemVisual item)
     {
         HideHoverProxy(item);
-        if (item.Proxy is not null) _hoverPresentationLayer?.Children.Remove(item.Proxy);
+        item.DetachProxyHandlers?.Invoke();
+        item.DetachProxyHandlers = null;
+        if (item.Proxy is { } proxy)
+        {
+            proxy.ClearValue(UIElement.OpacityProperty);
+            ToolTipService.SetToolTip(proxy, null);
+            if (proxy.Child is FrameworkElement child)
+                ClearHoverContentBindings(child);
+            proxy.Child = null;
+            proxy.DataContext = null;
+            proxy.Tag = null;
+            proxy.Clip = null;
+            _hoverPresentationLayer?.Children.Remove(proxy);
+        }
         item.Proxy = null;
         item.ProxyIcon = null;
     }
 
-    private static void HideHoverProxy(HoverItemVisual item)
+    private static void ClearHoverContentBindings(FrameworkElement element)
+    {
+        element.ClearValue(FrameworkElement.WidthProperty);
+        element.ClearValue(FrameworkElement.HeightProperty);
+        element.ClearValue(FrameworkElement.MarginProperty);
+        element.ClearValue(FrameworkElement.HorizontalAlignmentProperty);
+        element.ClearValue(FrameworkElement.VerticalAlignmentProperty);
+        element.ClearValue(UIElement.VisibilityProperty);
+        switch (element)
+        {
+            case OrganizerPreviewControl preview:
+                for (int i = 0; i < preview.Images.Count; i++)
+                    preview.Images[i].ClearValue(Image.SourceProperty);
+                preview.EmptyStateIcon.ClearValue(UIElement.VisibilityProperty);
+                preview.EmptyStateIcon.ClearValue(FontIcon.FontSizeProperty);
+                break;
+            case StackPanel stack:
+                stack.ClearValue(StackPanel.OrientationProperty);
+                stack.ClearValue(StackPanel.SpacingProperty);
+                foreach (FrameworkElement child in stack.Children.OfType<FrameworkElement>())
+                    ClearHoverContentBindings(child);
+                break;
+            case Grid grid:
+                foreach (FrameworkElement child in grid.Children.OfType<FrameworkElement>())
+                    ClearHoverContentBindings(child);
+                break;
+            case Image image:
+                image.ClearValue(Image.SourceProperty);
+                break;
+            case FontIcon icon:
+                icon.ClearValue(FontIcon.FontSizeProperty);
+                icon.ClearValue(FontIcon.GlyphProperty);
+                icon.ClearValue(FontIcon.ForegroundProperty);
+                break;
+            case TextBlock text:
+                text.ClearValue(TextBlock.TextProperty);
+                text.ClearValue(TextBlock.ForegroundProperty);
+                text.ClearValue(TextBlock.FontSizeProperty);
+                text.ClearValue(TextBlock.MaxWidthProperty);
+                text.ClearValue(TextBlock.TextAlignmentProperty);
+                break;
+        }
+    }
+
+    private void HideHoverProxy(HoverItemVisual item)
     {
         if (item.Proxy is { } proxy)
         {
             proxy.Opacity = 0;
             proxy.IsHitTestVisible = false;
         }
-        item.Presented = false;
+        SetHoverProxyPresented(item, false);
         item.Content.Opacity = 1;
         item.VisibleBounds = default;
         item.Translation = Vector2.Zero;
@@ -320,11 +409,15 @@ public sealed partial class MainWindow
         if (HorizontalHover)
         {
             Point origin = ItemsScrollView.TransformToVisual(WindowRoot).TransformPoint(new Point());
+            float overflowTopDip = -(float)(_dockOverflowPixels / scale);
             foreach (HoverItemVisual item in _hoverItems.Values)
             {
                 if (!item.Bounce.IsActive) continue;
-                HoverRect icon = GetRenderedDockIcon(item, includeBounce: true);
-                var pixels = WindowRegionPixels(icon, new Vector2((float)origin.X, (float)origin.Y));
+                // Union static envelope up through the Dock bounce gutter so ONE SetWindowRgn covers the entire bounce!
+                HoverRect baseIcon = GetRenderedDockIcon(item, includeBounce: false);
+                float envelopeTop = Math.Min(baseIcon.Y, overflowTopDip);
+                HoverRect envelope = new(baseIcon.X, envelopeTop, baseIcon.Width, Math.Max(baseIcon.Height, baseIcon.Bottom - envelopeTop));
+                var pixels = WindowRegionPixels(envelope, new Vector2((float)origin.X, (float)origin.Y));
                 bounceRects.Add(pixels);
                 key += $"/{pixels.Left},{pixels.Top},{pixels.Right},{pixels.Bottom}";
             }

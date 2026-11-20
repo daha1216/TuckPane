@@ -14,6 +14,8 @@ public sealed partial class AppHost
     private bool _peekActive;
     private bool _peekRevealedHiddenWindows;
     private string? _lastTopologyKey;
+    private int _topologyChangeVersion;
+    private readonly SemaphoreSlim _topologyChangeGate = new(1, 1);
 
     internal bool IsPeekActive => _peekActive;
     internal LayoutSnapshotService LayoutSnapshots => _layoutSnapshots;
@@ -81,78 +83,73 @@ public sealed partial class AppHost
         });
     }
 
-    public async Task<string?> SetQuickHideHotkeyAsync(QuickHideHotkeyPreset preset)
+    public Task<string?> SetQuickHideHotkeyAsync(QuickHideHotkeyPreset preset) =>
+        SetHotkeyCoreAsync(
+            GlobalHotkeyDefinitions.QuickHideHotkeyId,
+            GlobalHotkeyDefinitions.Normalize(preset),
+            static s => s.QuickHideHotkey,
+            static (s, v) => s.QuickHideHotkey = v,
+            static s => (GlobalHotkeyDefinitions.Resolve(s.SearchHotkey), GlobalHotkeyDefinitions.Resolve(s.PeekHotkey)),
+            GlobalHotkeyDefinitions.Resolve);
+
+    public Task<string?> SetSearchHotkeyAsync(SearchHotkeyPreset preset) =>
+        SetHotkeyCoreAsync(
+            GlobalHotkeyDefinitions.SearchHotkeyId,
+            GlobalHotkeyDefinitions.Normalize(preset),
+            static s => s.SearchHotkey,
+            static (s, v) => s.SearchHotkey = v,
+            static s => (GlobalHotkeyDefinitions.Resolve(s.QuickHideHotkey), GlobalHotkeyDefinitions.Resolve(s.PeekHotkey)),
+            GlobalHotkeyDefinitions.Resolve);
+
+    public Task<string?> SetPeekHotkeyAsync(PeekHotkeyPreset preset) =>
+        SetHotkeyCoreAsync(
+            GlobalHotkeyDefinitions.PeekHotkeyId,
+            GlobalHotkeyDefinitions.Normalize(preset),
+            static s => s.PeekHotkey,
+            static (s, v) => s.PeekHotkey = v,
+            static s => (GlobalHotkeyDefinitions.Resolve(s.QuickHideHotkey), GlobalHotkeyDefinitions.Resolve(s.SearchHotkey)),
+            GlobalHotkeyDefinitions.Resolve);
+
+    private async Task<string?> SetHotkeyCoreAsync<TPreset>(
+        int hotkeyId,
+        TPreset normalizedPreset,
+        Func<GlobalSettings, TPreset> read,
+        Action<GlobalSettings, TPreset> write,
+        Func<GlobalSettings, (HotkeyBinding? First, HotkeyBinding? Second)> readOthers,
+        Func<TPreset, HotkeyBinding?> resolve)
     {
-        preset = GlobalHotkeyDefinitions.Normalize(preset);
-        HotkeyBinding? candidate = GlobalHotkeyDefinitions.Resolve(preset);
-        HotkeyBinding? search = GlobalHotkeyDefinitions.Resolve(State.GlobalSettings.SearchHotkey);
-        HotkeyBinding? peek = GlobalHotkeyDefinitions.Resolve(State.GlobalSettings.PeekHotkey);
-        if (GlobalHotkeyDefinitions.ConflictsWithAny(candidate, search, peek))
-            return AppStrings.Get("HotkeyDuplicateError");
-
-        if (_hotkeys is not null && !_hotkeys.TrySetHotkey(GlobalHotkeyDefinitions.QuickHideHotkeyId, candidate))
-            return AppStrings.Get("HotkeyConflictError");
-
+        await _globalSettingsGate.WaitAsync();
         try
         {
-            await MutateGlobalSettingAsync(s => s.QuickHideHotkey, (s, v) => s.QuickHideHotkey = v, preset);
-            return null;
+            GlobalSettings settings = State.GlobalSettings;
+            TPreset previous = read(settings);
+            HotkeyBinding? candidate = resolve(normalizedPreset);
+            (HotkeyBinding? other1, HotkeyBinding? other2) = readOthers(settings);
+            if (GlobalHotkeyDefinitions.ConflictsWithAny(candidate, other1, other2))
+                return AppStrings.Get("HotkeyDuplicateError");
+
+            if (_hotkeys is not null && !_hotkeys.TrySetHotkey(hotkeyId, candidate))
+                return AppStrings.Get("HotkeyConflictError");
+
+            if (EqualityComparer<TPreset>.Default.Equals(previous, normalizedPreset))
+                return null;
+
+            write(settings, normalizedPreset);
+            try
+            {
+                await SaveStateAsync();
+                return null;
+            }
+            catch
+            {
+                write(settings, previous);
+                _hotkeys?.TrySetHotkey(hotkeyId, resolve(previous));
+                throw;
+            }
         }
-        catch
+        finally
         {
-            _hotkeys?.TrySetHotkey(GlobalHotkeyDefinitions.QuickHideHotkeyId,
-                GlobalHotkeyDefinitions.Resolve(State.GlobalSettings.QuickHideHotkey));
-            throw;
-        }
-    }
-
-    public async Task<string?> SetSearchHotkeyAsync(SearchHotkeyPreset preset)
-    {
-        preset = GlobalHotkeyDefinitions.Normalize(preset);
-        HotkeyBinding? candidate = GlobalHotkeyDefinitions.Resolve(preset);
-        HotkeyBinding? quickHide = GlobalHotkeyDefinitions.Resolve(State.GlobalSettings.QuickHideHotkey);
-        HotkeyBinding? peek = GlobalHotkeyDefinitions.Resolve(State.GlobalSettings.PeekHotkey);
-        if (GlobalHotkeyDefinitions.ConflictsWithAny(candidate, quickHide, peek))
-            return AppStrings.Get("HotkeyDuplicateError");
-
-        if (_hotkeys is not null && !_hotkeys.TrySetHotkey(GlobalHotkeyDefinitions.SearchHotkeyId, candidate))
-            return AppStrings.Get("HotkeyConflictError");
-
-        try
-        {
-            await MutateGlobalSettingAsync(s => s.SearchHotkey, (s, v) => s.SearchHotkey = v, preset);
-            return null;
-        }
-        catch
-        {
-            _hotkeys?.TrySetHotkey(GlobalHotkeyDefinitions.SearchHotkeyId,
-                GlobalHotkeyDefinitions.Resolve(State.GlobalSettings.SearchHotkey));
-            throw;
-        }
-    }
-
-    public async Task<string?> SetPeekHotkeyAsync(PeekHotkeyPreset preset)
-    {
-        preset = GlobalHotkeyDefinitions.Normalize(preset);
-        HotkeyBinding? candidate = GlobalHotkeyDefinitions.Resolve(preset);
-        HotkeyBinding? quickHide = GlobalHotkeyDefinitions.Resolve(State.GlobalSettings.QuickHideHotkey);
-        HotkeyBinding? search = GlobalHotkeyDefinitions.Resolve(State.GlobalSettings.SearchHotkey);
-        if (GlobalHotkeyDefinitions.ConflictsWithAny(candidate, quickHide, search))
-            return AppStrings.Get("HotkeyDuplicateError");
-
-        if (_hotkeys is not null && !_hotkeys.TrySetHotkey(GlobalHotkeyDefinitions.PeekHotkeyId, candidate))
-            return AppStrings.Get("HotkeyConflictError");
-
-        try
-        {
-            await MutateGlobalSettingAsync(s => s.PeekHotkey, (s, v) => s.PeekHotkey = v, preset);
-            return null;
-        }
-        catch
-        {
-            _hotkeys?.TrySetHotkey(GlobalHotkeyDefinitions.PeekHotkeyId,
-                GlobalHotkeyDefinitions.Resolve(State.GlobalSettings.PeekHotkey));
-            throw;
+            _globalSettingsGate.Release();
         }
     }
 
@@ -339,18 +336,53 @@ public sealed partial class AppHost
 
     internal async Task NotifyDisplayTopologyChangedAsync()
     {
-        if (!State.GlobalSettings.AutoApplyTopologySnapshots) return;
-        IReadOnlyList<DisplayInfo> displays = DisplayPlacementService.GetDisplays();
-        (string key, _) = LayoutSnapshotMath.BuildTopologyFingerprint(displays);
-        if (string.Equals(key, _lastTopologyKey, StringComparison.OrdinalIgnoreCase)) return;
-        _lastTopologyKey = key;
+        if (_disposed || IsPreparingUpdate || !State.GlobalSettings.AutoApplyTopologySnapshots) return;
 
-        LayoutSnapshot? matching = await _layoutSnapshots.FindAutoSnapshotAsync(displays);
-        if (matching is null) return;
-        if (LayoutSnapshotMath.ApplySnapshot(matching, State.Organizers) > 0)
+        int version = Interlocked.Increment(ref _topologyChangeVersion);
+        await Task.Delay(250);
+        if (_disposed || IsPreparingUpdate || !State.GlobalSettings.AutoApplyTopologySnapshots) return;
+        if (version != Volatile.Read(ref _topologyChangeVersion)) return;
+
+        bool gateAcquired = false;
+        try
         {
-            foreach (MainWindow window in _windows.Values)
-                window.ReconcileDisplayChange();
+            await _topologyChangeGate.WaitAsync();
+            gateAcquired = true;
+            if (_disposed || IsPreparingUpdate || !State.GlobalSettings.AutoApplyTopologySnapshots) return;
+            if (version != Volatile.Read(ref _topologyChangeVersion)) return;
+
+            IReadOnlyList<DisplayInfo> displays = DisplayPlacementService.GetDisplays();
+            if (displays.Count == 0) return;
+            (string key, _) = LayoutSnapshotMath.BuildTopologyFingerprint(displays);
+            if (string.Equals(key, _lastTopologyKey, StringComparison.OrdinalIgnoreCase)) return;
+
+            LayoutSnapshot? matching = await _layoutSnapshots.FindAutoSnapshotAsync(displays);
+            if (_disposed || version != Volatile.Read(ref _topologyChangeVersion)) return;
+
+            _lastTopologyKey = key;
+            if (matching is null) return;
+            if (LayoutSnapshotMath.ApplySnapshot(matching, State.Organizers) > 0)
+            {
+                await SaveStateAsync();
+                foreach (MainWindow window in _windows.Values)
+                    window.ReconcileDisplayChange();
+            }
+        }
+        catch (ObjectDisposedException)
+        {
+            // AppHost disposed while topology change was debouncing or waiting.
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Error("响应显示器拓扑变化恢复布局快照失败。", ex);
+        }
+        finally
+        {
+            if (gateAcquired)
+            {
+                try { _topologyChangeGate.Release(); }
+                catch (ObjectDisposedException) { }
+            }
         }
     }
 

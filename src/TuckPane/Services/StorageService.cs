@@ -341,8 +341,20 @@ public sealed class StorageService
     {
         string source = Path.GetFullPath(sourcePath).TrimEnd(Path.DirectorySeparatorChar);
         bool isDirectory = Directory.Exists(source);
-        string destination = GetUniquePath(Path.Combine(_itemsRoot, Path.GetFileName(source)), isDirectory);
-        return await MovePathAsync(source, destination, progress, cancellationToken);
+        string requestedDestination = Path.Combine(_itemsRoot, Path.GetFileName(source));
+        for (int attempt = 0; attempt < 128; attempt++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            string destination = GetUniquePath(requestedDestination, isDirectory);
+            TransferOutcome outcome = await MovePathAsync(source, destination, progress, cancellationToken);
+            if (outcome.Status != TransferStatus.Failed ||
+                (!File.Exists(destination) && !Directory.Exists(destination)))
+            {
+                return outcome;
+            }
+            AppLogger.Info($"目标名称被并发占用，重新编号：{destination}");
+        }
+        return new(source, null, TransferStatus.Failed, "目标目录冲突过于频繁，源项目已保留。");
     }
 
     private async Task<TransferOutcome> CopyOneAsync(
@@ -352,9 +364,9 @@ public sealed class StorageService
     {
         string source = Path.GetFullPath(sourcePath).TrimEnd(Path.DirectorySeparatorChar);
         bool isDirectory = Directory.Exists(source);
-        string destination = GetUniquePath(Path.Combine(_itemsRoot, Path.GetFileName(source)), isDirectory);
-        string staging = Path.Combine(_itemsRoot, $".glassfolder-staging-{Guid.NewGuid():N}");
         string itemName = Path.GetFileName(source);
+        string requestedDestination = Path.Combine(_itemsRoot, itemName);
+        string staging = Path.Combine(_itemsRoot, $".glassfolder-staging-{Guid.NewGuid():N}");
         try
         {
             long totalBytes = isDirectory ? BuildManifest(source, cancellationToken).TotalBytes : new FileInfo(source).Length;
@@ -368,15 +380,29 @@ public sealed class StorageService
             {
                 await CopyDirectoryAsync(source, staging, report, cancellationToken);
                 VerifyEquivalent(source, staging, cancellationToken);
-                Directory.Move(staging, destination);
             }
             else
             {
                 await CopyFileAsync(source, staging, report, cancellationToken);
                 if (new FileInfo(source).Length != new FileInfo(staging).Length) throw new IOException(AppStrings.Get("CopySizeMismatch"));
-                File.Move(staging, destination);
             }
-            return new(source, destination, TransferStatus.Copied, AppStrings.Get("Copied"));
+
+            for (int attempt = 0; attempt < 128; attempt++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                string destination = GetUniquePath(requestedDestination, isDirectory);
+                try
+                {
+                    if (isDirectory) Directory.Move(staging, destination);
+                    else File.Move(staging, destination);
+                    return new(source, destination, TransferStatus.Copied, AppStrings.Get("Copied"));
+                }
+                catch (IOException) when (File.Exists(destination) || Directory.Exists(destination))
+                {
+                    AppLogger.Info($"复制目标名称被并发占用，重新编号：{destination}");
+                }
+            }
+            throw new IOException("目标目录冲突过于频繁，未能完成复制。");
         }
         catch (OperationCanceledException)
         {
@@ -512,9 +538,11 @@ public sealed class StorageService
         }
     }
 
-    private static string GetDisplayName(string relativeName, WidgetItemKind kind, bool showExtensions)
+    internal static string GetDisplayName(string relativeName, WidgetItemKind kind, bool showExtensions)
     {
-        if (kind is WidgetItemKind.Folder or WidgetItemKind.Shortcut or WidgetItemKind.InternetShortcut or WidgetItemKind.PortableNote or WidgetItemKind.PortableTodo)
+        if (kind == WidgetItemKind.Folder)
+            return relativeName;
+        if (kind is WidgetItemKind.Shortcut or WidgetItemKind.InternetShortcut or WidgetItemKind.PortableNote or WidgetItemKind.PortableTodo)
             return Path.GetFileNameWithoutExtension(relativeName);
         return showExtensions ? relativeName : Path.GetFileNameWithoutExtension(relativeName);
     }
@@ -588,7 +616,9 @@ public sealed class StorageService
         foreach (string file in Directory.EnumerateFiles(source, "*", SearchOption.AllDirectories))
         {
             cancellationToken.ThrowIfCancellationRequested();
-            if ((File.GetAttributes(file) & FileAttributes.ReparsePoint) != 0) throw new IOException(AppStrings.Format("UnsupportedReparsePathFormat", file));
+            if ((File.GetAttributes(file) & FileAttributes.ReparsePoint) != 0 &&
+                !ShellFileOperationService.IsSafeCloudOrAppAliasReparsePoint(file))
+                throw new IOException(AppStrings.Format("UnsupportedReparsePathFormat", file));
             string target = Path.Combine(destination, Path.GetRelativePath(source, file));
             Directory.CreateDirectory(Path.GetDirectoryName(target)!);
             await CopyFileAsync(file, target, reportBytes, cancellationToken);
@@ -599,16 +629,19 @@ public sealed class StorageService
     {
         const int BufferSize = 1024 * 1024;
         byte[] buffer = new byte[BufferSize];
-        await using var input = new FileStream(source, FileMode.Open, FileAccess.Read, FileShare.Read, BufferSize, FileOptions.Asynchronous | FileOptions.SequentialScan);
-        await using var output = new FileStream(destination, FileMode.CreateNew, FileAccess.Write, FileShare.None, BufferSize, FileOptions.Asynchronous | FileOptions.SequentialScan);
-        int read;
-        while ((read = await input.ReadAsync(buffer.AsMemory(0, buffer.Length), cancellationToken)) > 0)
+        DateTime sourceLastWriteUtc = File.GetLastWriteTimeUtc(source);
+        await using (var input = new FileStream(source, FileMode.Open, FileAccess.Read, FileShare.Read, BufferSize, FileOptions.Asynchronous | FileOptions.SequentialScan))
+        await using (var output = new FileStream(destination, FileMode.CreateNew, FileAccess.Write, FileShare.None, BufferSize, FileOptions.Asynchronous | FileOptions.SequentialScan))
         {
-            await output.WriteAsync(buffer.AsMemory(0, read), cancellationToken);
-            reportBytes(read);
+            int read;
+            while ((read = await input.ReadAsync(buffer.AsMemory(0, buffer.Length), cancellationToken)) > 0)
+            {
+                await output.WriteAsync(buffer.AsMemory(0, read), cancellationToken);
+                reportBytes(read);
+            }
+            await output.FlushAsync(cancellationToken);
         }
-        await output.FlushAsync(cancellationToken);
-        File.SetLastWriteTimeUtc(destination, File.GetLastWriteTimeUtc(source));
+        File.SetLastWriteTimeUtc(destination, sourceLastWriteUtc);
     }
 
     private static void VerifyEquivalent(string source, string destination, CancellationToken cancellationToken)
@@ -635,7 +668,9 @@ public sealed class StorageService
         foreach (string file in Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories))
         {
             cancellationToken.ThrowIfCancellationRequested();
-            if ((File.GetAttributes(file) & FileAttributes.ReparsePoint) != 0) throw new IOException(AppStrings.Format("UnsupportedReparsePathFormat", file));
+            if ((File.GetAttributes(file) & FileAttributes.ReparsePoint) != 0 &&
+                !ShellFileOperationService.IsSafeCloudOrAppAliasReparsePoint(file))
+                throw new IOException(AppStrings.Format("UnsupportedReparsePathFormat", file));
             long length = new FileInfo(file).Length;
             totalBytes += length;
             entries.Add($"F|{Path.GetRelativePath(root, file)}|{length}");

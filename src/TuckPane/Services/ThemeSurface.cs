@@ -19,7 +19,7 @@ internal sealed class ThemeSurface : IDisposable
     private readonly ContainerVisual _root;
     private readonly SpriteVisual _highlightVisual;
     private readonly RectangleClip _highlightClip;
-    private CompositionBrush? _highlightBrush;
+    private CompositionLinearGradientBrush? _highlightBrush;
     private XamlRoot? _xamlRoot;
     private double _cornerRadius;
     private bool _disposed;
@@ -49,23 +49,32 @@ internal sealed class ThemeSurface : IDisposable
     {
         if (_disposed) return;
 
-        CompositionBrush? nextHighlight = null;
         try
         {
             ThemeCompositionPlan plan = ThemePalette.BuildCompositionPlan(theme, useEffects);
-            if (plan.HighlightOpacity > .0001f)
-                nextHighlight = CreateHighlightBrush(ThemePalette.GlassHighlightStops, plan.HighlightOpacity);
+            float opacity = Math.Clamp(plan.HighlightOpacity, 0f, 1f);
+            if (opacity > .0001f)
+            {
+                _highlightBrush ??= CreateHighlightBrush(ThemePalette.GlassHighlightStops, 1f);
+                if (!ReferenceEquals(_highlightVisual.Brush, _highlightBrush))
+                    _highlightVisual.Brush = _highlightBrush;
+                _highlightVisual.Opacity = opacity;
+            }
+            else
+            {
+                _highlightVisual.Opacity = 0f;
+                if (_highlightVisual.Brush is not null)
+                    _highlightVisual.Brush = null;
+            }
         }
         catch (Exception ex)
         {
             AppLogger.Error("玻璃内部高光不可用；主题将保留无高光背景。", ex);
-            nextHighlight?.Dispose();
-            nextHighlight = null;
+            _highlightVisual.Opacity = 0f;
+            _highlightVisual.Brush = null;
+            _highlightBrush?.Dispose();
+            _highlightBrush = null;
         }
-
-        _highlightVisual.Brush = nextHighlight;
-        _highlightBrush?.Dispose();
-        _highlightBrush = nextHighlight;
     }
 
     internal void SetCornerRadius(double radius)
