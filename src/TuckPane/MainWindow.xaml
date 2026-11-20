@@ -126,6 +126,8 @@
                     <MenuFlyoutItem x:Name="SortBySizeMenuItem" Click="SortBySizeMenuItem_Click" Tag="ContextSortSize" Text="按大小" />
                 </MenuFlyoutSubItem>
                 <MenuFlyoutItem x:Name="TidyEdgeStackMenuItem" Tag="ContextTidyEdgeStack" Click="TidyEdgeStackMenuItem_Click" Text="整齐贴边排列" />
+                <MenuFlyoutItem x:Name="AlignToDesktopGridMenuItem" Tag="ContextAlignToDesktopGrid" Click="AlignToDesktopGridMenuItem_Click" Text="对齐桌面图标网格" />
+                <MenuFlyoutItem x:Name="ImportDesktopSelectionMenuItem" Tag="ContextImportDesktopSelection" Click="ImportDesktopSelectionMenuItem_Click" Text="收入桌面已选项目" />
             </MenuFlyout>
         </Grid.Resources>
 
@@ -141,6 +143,15 @@
                 <RowDefinition Height="4" />
                 <RowDefinition Height="23" />
             </Grid.RowDefinitions>
+            <Border
+                x:Name="CompactNativeSelectionPlate"
+                Grid.RowSpan="3"
+                Margin="-4,-4,-4,-2"
+                CornerRadius="8"
+                BorderThickness="1"
+                Background="Transparent"
+                BorderBrush="Transparent"
+                IsHitTestVisible="False" />
             <Grid
                 x:Name="CompactTile"
                 Grid.Row="0"
@@ -148,11 +159,26 @@
                 Height="39"
                 HorizontalAlignment="Center"
                 Background="Transparent"
+                PointerEntered="CompactTile_PointerEntered"
+                PointerExited="CompactTile_PointerExited"
                 PointerCanceled="CompactTile_PointerCanceled"
                 PointerCaptureLost="CompactTile_PointerCaptureLost"
                 PointerMoved="CompactTile_PointerMoved"
                 PointerPressed="CompactTile_PointerPressed"
                 PointerReleased="CompactTile_PointerReleased">
+                <Border
+                    x:Name="CompactFolderTab"
+                    Width="17"
+                    Height="6"
+                    Margin="2,-3,0,0"
+                    HorizontalAlignment="Left"
+                    VerticalAlignment="Top"
+                    CornerRadius="3,3,0,0"
+                    Background="#7AFFFFFF"
+                    BorderThickness="1,1,1,0"
+                    BorderBrush="#66FFFFFF"
+                    IsHitTestVisible="False"
+                    Visibility="Collapsed" />
                 <Grid
                     x:Name="CompactThumbnailHost"
                     Width="39"
@@ -160,6 +186,14 @@
                     HorizontalAlignment="Center"
                     VerticalAlignment="Center">
                     <SystemBackdropElement x:Name="CompactSurfaceHost" IsHitTestVisible="False" />
+                    <Border
+                        x:Name="CompactFolderPocket"
+                        CornerRadius="8"
+                        BorderThickness="1"
+                        BorderBrush="#55FFFFFF"
+                        Background="#1EFFFFFF"
+                        IsHitTestVisible="False"
+                        Visibility="Collapsed" />
                     <Grid x:Name="CompactIconPresenter">
                         <Grid x:Name="CompactPreviewGrid" IsHitTestVisible="False">
                             <Grid.ColumnDefinitions>
@@ -211,20 +245,51 @@
                         Glyph="&#xE814;" />
                 </Border>
             </Grid>
-            <TextBlock
-                x:Name="CompactNameText"
-                Grid.Row="2"
-                MaxWidth="72"
-                HorizontalAlignment="Center"
-                VerticalAlignment="Top"
-                FontFamily="Segoe UI Variable Display"
-                FontSize="13"
-                FontWeight="SemiBold"
-                Foreground="White"
-                IsTextSelectionEnabled="False"
-                Text="文件夹"
-                TextAlignment="Center"
-                TextTrimming="CharacterEllipsis" />
+            <Grid Grid.Row="2" HorizontalAlignment="Center" VerticalAlignment="Top">
+                <TextBlock
+                    x:Name="CompactNameShadow1"
+                    MaxWidth="72"
+                    Margin="0,1,0,0"
+                    HorizontalAlignment="Center"
+                    VerticalAlignment="Top"
+                    FontFamily="Segoe UI Variable Display"
+                    FontSize="13"
+                    FontWeight="SemiBold"
+                    Foreground="#D8000000"
+                    IsHitTestVisible="False"
+                    IsTextSelectionEnabled="False"
+                    Text="文件夹"
+                    TextAlignment="Center"
+                    TextTrimming="CharacterEllipsis" />
+                <TextBlock
+                    x:Name="CompactNameShadow2"
+                    MaxWidth="72"
+                    Margin="1,1.2,0,0"
+                    HorizontalAlignment="Center"
+                    VerticalAlignment="Top"
+                    FontFamily="Segoe UI Variable Display"
+                    FontSize="13"
+                    FontWeight="SemiBold"
+                    Foreground="#8C000000"
+                    IsHitTestVisible="False"
+                    IsTextSelectionEnabled="False"
+                    Text="文件夹"
+                    TextAlignment="Center"
+                    TextTrimming="CharacterEllipsis" />
+                <TextBlock
+                    x:Name="CompactNameText"
+                    MaxWidth="72"
+                    HorizontalAlignment="Center"
+                    VerticalAlignment="Top"
+                    FontFamily="Segoe UI Variable Display"
+                    FontSize="13"
+                    FontWeight="SemiBold"
+                    Foreground="White"
+                    IsTextSelectionEnabled="False"
+                    Text="文件夹"
+                    TextAlignment="Center"
+                    TextTrimming="CharacterEllipsis" />
+            </Grid>
         </Grid>
 
         <Grid
@@ -282,6 +347,37 @@
             <Grid x:Name="ExpandedPanel" Grid.Row="1">
                 <SystemBackdropElement x:Name="ExpandedSurfaceHost" IsHitTestVisible="False" />
                 <Grid x:Name="ExpandedContentLayer" Background="Transparent">
+                <Border
+                    x:Name="SelectionCountBadge"
+                    Canvas.ZIndex="4"
+                    HorizontalAlignment="Left"
+                    VerticalAlignment="Top"
+                    Margin="14,10,0,0"
+                    Padding="10,3,6,3"
+                    CornerRadius="12"
+                    Background="#CC0067C0"
+                    BorderThickness="1"
+                    BorderBrush="#66FFFFFF"
+                    Visibility="Collapsed">
+                    <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+                        <TextBlock
+                            x:Name="SelectionCountBadgeText"
+                            FontSize="11"
+                            FontWeight="SemiBold"
+                            Foreground="White"
+                            VerticalAlignment="Center" />
+                        <Button
+                            x:Name="SelectionClearButton"
+                            Width="18"
+                            Height="18"
+                            Padding="0"
+                            Background="Transparent"
+                            BorderThickness="0"
+                            Click="SelectionClearButton_Click">
+                            <FontIcon Glyph="&#xE711;" FontSize="9" Foreground="White" />
+                        </Button>
+                    </StackPanel>
+                </Border>
                 <Border
                     x:Name="ExpandedFilterBar"
                     Canvas.ZIndex="3"
@@ -469,6 +565,18 @@
                     AutomationProperties.Name="Add item">
                     <FontIcon x:Name="DockEmptyAddIcon" Glyph="&#xE710;" />
                 </Button>
+                <Canvas
+                    x:Name="MarqueeSelectionCanvas"
+                    Canvas.ZIndex="90"
+                    IsHitTestVisible="False">
+                    <Border
+                        x:Name="MarqueeSelectionRect"
+                        Background="#380078D4"
+                        BorderBrush="#E00078D4"
+                        BorderThickness="1"
+                        CornerRadius="2"
+                        Visibility="Collapsed" />
+                </Canvas>
                 </Grid>
                 <Grid
                     x:Name="ExpandedEdgeOverlay"

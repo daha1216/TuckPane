@@ -82,17 +82,21 @@ internal static class ShellDragService
 
     internal static bool RequiresNativeDrag(WidgetItemKind kind) => Enum.IsDefined(kind);
 
-    internal static void SetCutClipboard(string path) => SetClipboard(path, DropEffectMove);
+    internal static void SetCutClipboard(string path) => SetClipboard([path], DropEffectMove);
 
-    internal static void SetCopyClipboard(string path) => SetClipboard(path, DropEffectCopy);
+    internal static void SetCopyClipboard(string path) => SetClipboard([path], DropEffectCopy);
 
-    private static void SetClipboard(string path, uint preferredEffect)
+    internal static void SetCutClipboard(IReadOnlyList<string> paths) => SetClipboard(paths, DropEffectMove);
+
+    internal static void SetCopyClipboard(IReadOnlyList<string> paths) => SetClipboard(paths, DropEffectCopy);
+
+    private static void SetClipboard(IReadOnlyList<string> paths, uint preferredEffect)
     {
         int oleResult = NativeMethods.OleInitialize(IntPtr.Zero);
         if (oleResult < 0) Marshal.ThrowExceptionForHR(oleResult);
         try
         {
-            using ShellDataObject data = CreateDataObject(path);
+            using ShellDataObject data = CreateDataObject(paths);
             object dataObject = Marshal.GetObjectForIUnknown(data.Pointer);
             try
             {
@@ -408,23 +412,74 @@ internal static class ShellDragService
     internal static IntPtr AcquireDropSourcePointer(IDropSource source) =>
         Marshal.GetComInterfaceForObject<object, IDropSource>(source);
 
-    internal static ShellDataObject CreateDataObject(string path)
+    internal static ShellDataObject CreateDataObject(string path) => CreateDataObject([path]);
+
+    internal static ShellDataObject CreateDataObject(IReadOnlyList<string> paths)
     {
-        if (!File.Exists(path) && !Directory.Exists(path)) throw new FileNotFoundException(AppStrings.Get("ShellDragMissing"), path);
-        int result = NativeMethods.SHCreateItemFromParsingName(path, IntPtr.Zero, ShellItemInterface, out NativeMethods.IShellItem item);
-        Marshal.ThrowExceptionForHR(result);
+        ArgumentNullException.ThrowIfNull(paths);
+        string[] valid = paths
+            .Where(p => !string.IsNullOrWhiteSpace(p))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        if (valid.Length == 0)
+            throw new FileNotFoundException(AppStrings.Get("ShellDragMissing"));
+
+        if (valid.Length == 1)
+        {
+            string singlePath = valid[0];
+            if (!File.Exists(singlePath) && !Directory.Exists(singlePath))
+                throw new FileNotFoundException(AppStrings.Get("ShellDragMissing"), singlePath);
+            int result = NativeMethods.SHCreateItemFromParsingName(singlePath, IntPtr.Zero, ShellItemInterface, out NativeMethods.IShellItem item);
+            Marshal.ThrowExceptionForHR(result);
+            try
+            {
+                Guid handler = DataObjectHandler;
+                Guid iid = DataObjectInterface;
+                result = item.BindToHandler(IntPtr.Zero, ref handler, ref iid, out IntPtr pointer);
+                Marshal.ThrowExceptionForHR(result);
+                return new ShellDataObject(item, pointer);
+            }
+            catch
+            {
+                _ = Marshal.FinalReleaseComObject(item);
+                throw;
+            }
+        }
+
+        var pidls = new List<IntPtr>(valid.Length);
         try
         {
-            Guid handler = DataObjectHandler;
-            Guid iid = DataObjectInterface;
-            result = item.BindToHandler(IntPtr.Zero, ref handler, ref iid, out IntPtr pointer);
-            Marshal.ThrowExceptionForHR(result);
-            return new ShellDataObject(item, pointer);
+            foreach (string path in valid)
+            {
+                if (!File.Exists(path) && !Directory.Exists(path))
+                    throw new FileNotFoundException(AppStrings.Get("ShellDragMissing"), path);
+                int hr = NativeMethods.SHParseDisplayName(path, IntPtr.Zero, out IntPtr pidl, 0, out _);
+                Marshal.ThrowExceptionForHR(hr);
+                pidls.Add(pidl);
+            }
+
+            int createHr = NativeMethods.SHCreateShellItemArrayFromIDLists((uint)pidls.Count, pidls.ToArray(), out NativeMethods.IShellItemArray itemArray);
+            Marshal.ThrowExceptionForHR(createHr);
+            try
+            {
+                Guid handler = DataObjectHandler;
+                Guid iid = DataObjectInterface;
+                int bindHr = itemArray.BindToHandler(IntPtr.Zero, ref handler, ref iid, out IntPtr pointer);
+                Marshal.ThrowExceptionForHR(bindHr);
+                return new ShellDataObject(itemArray, pointer);
+            }
+            catch
+            {
+                _ = Marshal.FinalReleaseComObject(itemArray);
+                throw;
+            }
         }
-        catch
+        finally
         {
-            _ = Marshal.FinalReleaseComObject(item);
-            throw;
+            foreach (IntPtr pidl in pidls)
+            {
+                if (pidl != IntPtr.Zero) NativeMethods.ILFree(pidl);
+            }
         }
     }
 
@@ -525,16 +580,27 @@ internal static class ShellDragService
         }
     }
 
-    internal static async Task<ShellDragSession> PrepareAsync(
+    internal static Task<ShellDragSession> PrepareAsync(
         string path,
+        double grabRatioX = .5,
+        double grabRatioY = .5,
+        bool preferMove = false,
+        CancellationToken cancellationToken = default) =>
+        PrepareAsync([path], grabRatioX, grabRatioY, preferMove, cancellationToken);
+
+    internal static async Task<ShellDragSession> PrepareAsync(
+        IReadOnlyList<string> paths,
         double grabRatioX = .5,
         double grabRatioY = .5,
         bool preferMove = false,
         CancellationToken cancellationToken = default)
     {
+        ArgumentNullException.ThrowIfNull(paths);
+        if (paths.Count == 0) throw new FileNotFoundException(AppStrings.Get("ShellDragMissing"));
+        string primaryPath = paths[0];
         long started = Stopwatch.GetTimestamp();
         cancellationToken.ThrowIfCancellationRequested();
-        ShellDataObject data = CreateDataObject(path);
+        ShellDataObject data = CreateDataObject(paths);
         IntPtr bitmap = IntPtr.Zero;
         bool dragImageInitialized = false;
         try
@@ -550,7 +616,7 @@ internal static class ShellDragService
             try
             {
                 Task<IntPtr> bitmapTask = Task.Run(
-                    () => IconCacheService.CreateDragBitmap(path, DragImageSize));
+                    () => IconCacheService.CreateDragBitmap(primaryPath, DragImageSize));
                 if (cancellationToken.CanBeCanceled)
                 {
                     Task completed = await Task.WhenAny(
@@ -592,7 +658,7 @@ internal static class ShellDragService
             }
 
             cancellationToken.ThrowIfCancellationRequested();
-            return new ShellDragSession(path, data, bitmap, dragImageInitialized, Stopwatch.GetElapsedTime(started));
+            return new ShellDragSession(primaryPath, data, bitmap, dragImageInitialized, Stopwatch.GetElapsedTime(started));
         }
         catch
         {
@@ -604,11 +670,11 @@ internal static class ShellDragService
 
     internal sealed class ShellDataObject : IDisposable
     {
-        private NativeMethods.IShellItem? _item;
+        private object? _ownerComObject;
 
-        internal ShellDataObject(NativeMethods.IShellItem item, IntPtr pointer)
+        internal ShellDataObject(object ownerComObject, IntPtr pointer)
         {
-            _item = item;
+            _ownerComObject = ownerComObject;
             Pointer = pointer;
         }
 
@@ -621,10 +687,10 @@ internal static class ShellDragService
                 _ = Marshal.Release(Pointer);
                 Pointer = IntPtr.Zero;
             }
-            if (_item is not null)
+            if (_ownerComObject is not null)
             {
-                _ = Marshal.FinalReleaseComObject(_item);
-                _item = null;
+                if (Marshal.IsComObject(_ownerComObject)) _ = Marshal.FinalReleaseComObject(_ownerComObject);
+                _ownerComObject = null;
             }
         }
     }

@@ -94,6 +94,7 @@ public sealed partial class MainWindow
     private void ApplyOrganizerNameVisibility()
     {
         CompactNameText.Visibility = _definition.HideName ? Visibility.Collapsed : Visibility.Visible;
+        SyncCompactNameShadow();
         ExpandedNameText.Visibility = _organizerTitleEdit.IsEditing ? Visibility.Collapsed : _definition.HideName || !OrganizerKinds.IsRegular(_definition.PlacementMode)
             ? Visibility.Collapsed : Visibility.Visible;
         // Row heights and bounds are deliberately unchanged when names are hidden.
