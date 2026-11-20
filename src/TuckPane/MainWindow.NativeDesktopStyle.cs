@@ -194,15 +194,17 @@ public sealed partial class MainWindow
     }
 
     /// <summary>
-    /// Computes the symmetric on-screen label width so tiles anchored flush against the left or
-    /// right monitor edge wrap/ellipsis gracefully inside the visible work area and NEVER slice
-    /// characters off at the monitor bezel.
+    /// Computes the on-screen safe label width and minimal edge-avoidance inward shift so tiles
+    /// anchored flush against the left or right monitor bezel keep short names dead-center under
+    /// the tile while longer names stay fully legible without premature ellipsis or bezel clipping.
     /// </summary>
     internal void UpdateCompactLabelSafeWidth()
     {
-        double fullWidth = Math.Max(48, CompactView.Width - 6);
-        double minSafeWidth = Math.Max(48, CompactTile.Width - 2);
+        double viewWidth = Math.Max(48, CompactView.Width);
+        double fullWidth = Math.Max(48, viewWidth - 4);
+        double minSafeWidth = Math.Max(48, CompactTile.Width);
         double safeWidth = fullWidth;
+        double shiftX = 0;
 
         if (_hwnd != IntPtr.Zero &&
             _definition.PlacementMode == OrganizerPlacementMode.Floating &&
@@ -212,21 +214,41 @@ public sealed partial class MainWindow
             double scale = Math.Max(1.0, display.Scale);
             double leftOverhangDip = Math.Max(0, (display.Work.Left - _compactBounds.Left) / scale);
             double rightOverhangDip = Math.Max(0, (_compactBounds.Right - display.Work.Right) / scale);
-            double maxOverhangDip = Math.Max(leftOverhangDip, rightOverhangDip);
-            if (maxOverhangDip > 0.5)
+            double visibleLeft = leftOverhangDip + 2.0;
+            double visibleRight = viewWidth - rightOverhangDip - 2.0;
+            double visibleSpan = visibleRight - visibleLeft;
+            if (visibleSpan > 1.0 && (leftOverhangDip > 0.5 || rightOverhangDip > 0.5))
             {
-                double visibleSymmetricWidth = CompactView.Width - 2.0 * maxOverhangDip - 4.0;
-                safeWidth = Math.Clamp(visibleSymmetricWidth, minSafeWidth, fullWidth);
+                safeWidth = Math.Clamp(visibleSpan, minSafeWidth, fullWidth);
+                double measuredWidth = CompactNameText.ActualWidth > 1
+                    ? CompactNameText.ActualWidth
+                    : CompactNameText.DesiredSize.Width;
+                if (measuredWidth > 1)
+                {
+                    double clampedTextWidth = Math.Min(measuredWidth, safeWidth);
+                    double centerX = viewWidth / 2.0;
+                    double naturalLeft = centerX - clampedTextWidth / 2.0;
+                    double naturalRight = centerX + clampedTextWidth / 2.0;
+                    if (naturalRight > visibleRight)
+                        shiftX = visibleRight - naturalRight;
+                    else if (naturalLeft < visibleLeft)
+                        shiftX = visibleLeft - naturalLeft;
+                }
             }
         }
 
         if (Math.Abs(CompactNameText.MaxWidth - safeWidth) > 0.5)
             CompactNameText.MaxWidth = safeWidth;
+
+        float targetShiftX = (float)Math.Round(shiftX, 1);
+        if (Math.Abs(CompactNameContainer.Translation.X - targetShiftX) > 0.25f)
+            CompactNameContainer.Translation = new Vector3(targetShiftX, 0f, 0f);
     }
 
     internal void SyncCompactNameShadow()
     {
         if (_closing) return;
+        UpdateCompactLabelSafeWidth();
         CompactVisualStyle style = CompactVisualStyles.Normalize(_host.State.GlobalSettings.CompactVisualStyle);
         UpdateCompactNameShadowVisual(style, DesktopTypographyService.IsHighContrast());
     }
@@ -300,19 +322,18 @@ public sealed partial class MainWindow
         if (!WindowRoot.IsLoaded || _closing) return;
 
         // 1. Dual-Layer Hardware Gaussian DropShadow on CompactNameText using GetAlphaMask():
-        //    - Wide ambient aura (BlurRadius 5.6) + tight Windows Explorer DrawShadowText core (BlurRadius 2.1)
-        //    Delivers razor-sharp legibility on pure white wallpaper, black wallpaper, and busy line-art alike!
+        //    - Tight Windows Explorer DrawShadowText core (BlurRadius 1.6, Offset +0.9, full black)
+        //      + crisp contact halo (BlurRadius 3.0) for sharp legibility on pure white wallpaper without gray fog!
         if (_compactNameShadowRoot is null)
         {
             Visual hostVisual = ElementCompositionPreview.GetElementVisual(CompactNameShadowHost);
             Compositor compositor = hostVisual.Compositor;
-            _compactNameAlphaMask?.Dispose();
             _compactNameAlphaMask = CompactNameText.GetAlphaMask();
 
             _compactNameDropShadowAura = compositor.CreateDropShadow();
-            _compactNameDropShadowAura.Color = Color.FromArgb(184, 0, 0, 0);
-            _compactNameDropShadowAura.BlurRadius = 5.6f;
-            _compactNameDropShadowAura.Offset = new Vector3(0f, 1.3f, 0f);
+            _compactNameDropShadowAura.Color = Color.FromArgb(220, 0, 0, 0);
+            _compactNameDropShadowAura.BlurRadius = 2.8f;
+            _compactNameDropShadowAura.Offset = new Vector3(0f, 0.8f, 0f);
             _compactNameDropShadowAura.Mask = _compactNameAlphaMask;
 
             _compactNameShadowAuraVisual = compositor.CreateSpriteVisual();
@@ -320,8 +341,8 @@ public sealed partial class MainWindow
 
             _compactNameDropShadow = compositor.CreateDropShadow();
             _compactNameDropShadow.Color = Color.FromArgb(255, 0, 0, 0);
-            _compactNameDropShadow.BlurRadius = 2.1f;
-            _compactNameDropShadow.Offset = new Vector3(0f, 0.75f, 0f);
+            _compactNameDropShadow.BlurRadius = 1.5f;
+            _compactNameDropShadow.Offset = new Vector3(0f, 1.0f, 0f);
             _compactNameDropShadow.Mask = _compactNameAlphaMask;
 
             _compactNameShadowVisual = compositor.CreateSpriteVisual();
@@ -344,21 +365,20 @@ public sealed partial class MainWindow
         {
             Visual expandedHostVisual = ElementCompositionPreview.GetElementVisual(ExpandedNameShadowHost);
             Compositor compositor = expandedHostVisual.Compositor;
-            _expandedNameAlphaMask?.Dispose();
             _expandedNameAlphaMask = ExpandedNameText.GetAlphaMask();
 
             _expandedNameDropShadowAura = compositor.CreateDropShadow();
-            _expandedNameDropShadowAura.Color = Color.FromArgb(176, 0, 0, 0);
-            _expandedNameDropShadowAura.BlurRadius = 8.5f;
-            _expandedNameDropShadowAura.Offset = new Vector3(0f, 2.2f, 0f);
+            _expandedNameDropShadowAura.Color = Color.FromArgb(184, 0, 0, 0);
+            _expandedNameDropShadowAura.BlurRadius = 6.0f;
+            _expandedNameDropShadowAura.Offset = new Vector3(0f, 1.8f, 0f);
             _expandedNameDropShadowAura.Mask = _expandedNameAlphaMask;
 
             _expandedNameShadowAuraVisual = compositor.CreateSpriteVisual();
             _expandedNameShadowAuraVisual.Shadow = _expandedNameDropShadowAura;
 
             _expandedNameDropShadow = compositor.CreateDropShadow();
-            _expandedNameDropShadow.Color = Color.FromArgb(238, 0, 0, 0);
-            _expandedNameDropShadow.BlurRadius = 3.0f;
+            _expandedNameDropShadow.Color = Color.FromArgb(242, 0, 0, 0);
+            _expandedNameDropShadow.BlurRadius = 2.4f;
             _expandedNameDropShadow.Offset = new Vector3(0f, 1.0f, 0f);
             _expandedNameDropShadow.Mask = _expandedNameAlphaMask;
 
@@ -544,15 +564,14 @@ public sealed partial class MainWindow
         _compactNameShadowAuraVisual.Size = size;
 
         float opacity = (float)Math.Clamp(CompactVisualStyles.LabelShadowOpacity(style, highContrast), 0.0, 1.0);
-        CompositionBrush mask = CompactNameText.GetAlphaMask();
-        CompositionBrush? previousMask = _compactNameAlphaMask;
-        _compactNameAlphaMask = mask;
+        if (_compactNameAlphaMask is null)
+        {
+            _compactNameAlphaMask = CompactNameText.GetAlphaMask();
+            _compactNameDropShadow.Mask = _compactNameAlphaMask;
+            _compactNameDropShadowAura.Mask = _compactNameAlphaMask;
+        }
         _compactNameDropShadow.Opacity = opacity;
-        _compactNameDropShadow.Mask = mask;
-        _compactNameDropShadowAura.Opacity = opacity * 0.92f;
-        _compactNameDropShadowAura.Mask = mask;
-        if (previousMask is not null && !ReferenceEquals(previousMask, mask))
-            previousMask.Dispose();
+        _compactNameDropShadowAura.Opacity = opacity * 0.85f;
         _compactNameShadowRoot.IsVisible = true;
     }
 
@@ -588,44 +607,33 @@ public sealed partial class MainWindow
         _expandedNameShadowVisual.Size = size;
         _expandedNameShadowAuraVisual.Size = size;
 
-        CompositionBrush mask = ExpandedNameText.GetAlphaMask();
-        CompositionBrush? previousMask = _expandedNameAlphaMask;
-        _expandedNameAlphaMask = mask;
-        _expandedNameDropShadow.Mask = mask;
-        _expandedNameDropShadowAura.Mask = mask;
-        if (previousMask is not null && !ReferenceEquals(previousMask, mask))
-            previousMask.Dispose();
+        if (_expandedNameAlphaMask is null)
+        {
+            _expandedNameAlphaMask = ExpandedNameText.GetAlphaMask();
+            _expandedNameDropShadow.Mask = _expandedNameAlphaMask;
+            _expandedNameDropShadowAura.Mask = _expandedNameAlphaMask;
+        }
         _expandedNameShadowRoot.IsVisible = true;
     }
 
     private void UpdateCompactTileShadowVisual(CompactVisualStyle style, bool highContrast)
     {
         if (_compactTileShadowVisual is null || _compactTileDropShadow is null) return;
-        if (highContrast)
+        // WinUI 3's SystemBackdropElement uses ContentExternalBackdropLink hole-punching across
+        // its full rectangular bounds: any XAML DropShadow placed behind CompactSurfaceHost has
+        // its 4 rounded corners punched out to raw desktop wallpaper, creating white square boxes.
+        // Only enable the rounded GPU DropShadow when CompactSurfaceHost is collapsed (NativeDesktop).
+        bool backdropVisible = CompactSurfaceHost.Visibility == Visibility.Visible;
+        if (highContrast || backdropVisible)
         {
             _compactTileShadowVisual.IsVisible = false;
             return;
         }
 
         _compactTileShadowVisual.IsVisible = true;
-        switch (style)
-        {
-            case CompactVisualStyle.GlassTile:
-                _compactTileDropShadow.Color = Color.FromArgb(56, 0, 0, 0);
-                _compactTileDropShadow.BlurRadius = _compactPointerHovered ? 22f : 16f;
-                _compactTileDropShadow.Offset = new Vector3(0f, _compactPointerHovered ? 5.5f : 4.0f, 0f);
-                break;
-            case CompactVisualStyle.FluentFolder:
-                _compactTileDropShadow.Color = Color.FromArgb(48, 0, 0, 0);
-                _compactTileDropShadow.BlurRadius = _compactPointerHovered ? 16f : 12f;
-                _compactTileDropShadow.Offset = new Vector3(0f, _compactPointerHovered ? 4.0f : 3.0f, 0f);
-                break;
-            default: // NativeDesktop
-                _compactTileDropShadow.Color = Color.FromArgb(34, 0, 0, 0);
-                _compactTileDropShadow.BlurRadius = _compactPointerHovered ? 12f : 8f;
-                _compactTileDropShadow.Offset = new Vector3(0f, 2.2f, 0f);
-                break;
-        }
+        _compactTileDropShadow.Color = Color.FromArgb(30, 0, 0, 0);
+        _compactTileDropShadow.BlurRadius = _compactPointerHovered ? 12f : 8f;
+        _compactTileDropShadow.Offset = new Vector3(0f, _compactPointerHovered ? 3.0f : 2.0f, 0f);
     }
 
     private void UpdateCompactSelectionPlateVisual()
@@ -780,7 +788,7 @@ public sealed partial class MainWindow
         }
         if (_compactNameDropShadow is not null) _compactNameDropShadow.Mask = null;
         if (_compactNameDropShadowAura is not null) _compactNameDropShadowAura.Mask = null;
-        _compactNameAlphaMask?.Dispose();
+        // XAML owns TextBlock.GetAlphaMask() brushes; detach from DropShadow without calling Dispose().
         _compactNameAlphaMask = null;
         _compactNameShadowAuraVisual?.Dispose();
         _compactNameShadowAuraVisual = null;
@@ -800,7 +808,6 @@ public sealed partial class MainWindow
         }
         if (_expandedNameDropShadow is not null) _expandedNameDropShadow.Mask = null;
         if (_expandedNameDropShadowAura is not null) _expandedNameDropShadowAura.Mask = null;
-        _expandedNameAlphaMask?.Dispose();
         _expandedNameAlphaMask = null;
         _expandedNameShadowAuraVisual?.Dispose();
         _expandedNameShadowAuraVisual = null;

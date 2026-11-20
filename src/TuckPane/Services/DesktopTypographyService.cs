@@ -69,10 +69,9 @@ internal static class DesktopTypographyService
     }
 
     /// <summary>
-    /// Computes crisp, desktop-harmonious label typography for each visual style:
-    /// - NativeDesktop / FluentFolder match Windows Explorer's ~12 DIP Regular icon label
-    ///   (never inflated to giant 20px billboard text by CompactScale!).
-    /// - GlassTile (iOS 26 Liquid Glass) uses a refined, compact-proportioned ~12.5–14.5 DIP Medium label.
+    /// Computes crisp, pixel-aligned Windows 11 desktop typography across all visual styles:
+    /// uses authentic ~12.0 DIP Normal weight (exact 18px at 150% DPI) matching native Explorer
+    /// icons so Microsoft YaHei UI renders razor-sharp without synthetic bold bloat.
     /// </summary>
     internal static (double FontSizeDip, FontWeight Weight) ResolveCompactLabelTypography(
         CompactVisualStyle style,
@@ -87,14 +86,14 @@ internal static class DesktopTypographyService
         if (CompactVisualStyles.UsesNativeBlendSurface(style))
         {
             // Match native Windows 11 desktop icons (~12 DIP Normal) regardless of tile zoom!
-            double nativeSize = Math.Clamp(baseDip * safeNameScale, 11.5, 14.5);
+            double nativeSize = Math.Clamp(Math.Round(baseDip * safeNameScale * 2.0) / 2.0, 11.5, 14.0);
             return (nativeSize, FontWeights.Normal);
         }
 
-        // iOS 26 Liquid Glass: refined, sleek Medium label that gently scales with tile size without bloating.
-        double gentleScaleFactor = positioned ? 1.0 : Math.Pow(Math.Clamp(compactScale, 1.0, 2.6), 0.20);
-        double glassSize = Math.Clamp((baseDip + 0.3) * gentleScaleFactor * safeNameScale, 12.0, 14.5);
-        return (glassSize, FontWeights.Medium);
+        // GlassTile: crisp pixel-snapped Windows 11 desktop typography (12 DIP Normal at 1.0 name scale)
+        // so CJK text never blurs from fractional font heights or synthetic Medium bolding.
+        double glassSize = Math.Clamp(Math.Round(baseDip * safeNameScale * 2.0) / 2.0, 12.0, 14.0);
+        return (glassSize, FontWeights.Normal);
     }
 
     internal static DesktopTypographyMetrics ReadSystemDesktopTypography()

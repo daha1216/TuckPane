@@ -207,27 +207,33 @@
                     <Border
                         x:Name="CompactLiquidSheen"
                         CornerRadius="14"
-                        BorderThickness="1"
-                        BorderBrush="#32000000"
+                        BorderThickness="0.75"
                         IsHitTestVisible="False">
+                        <Border.BorderBrush>
+                            <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                                <GradientStop Color="#96FFFFFF" Offset="0" />
+                                <GradientStop Color="#12000000" Offset="0.48" />
+                                <GradientStop Color="#1C000000" Offset="1" />
+                            </LinearGradientBrush>
+                        </Border.BorderBrush>
                         <Border.Background>
                             <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
-                                <GradientStop Color="#38FFFFFF" Offset="0" />
-                                <GradientStop Color="#12FFFFFF" Offset="0.34" />
-                                <GradientStop Color="#02FFFFFF" Offset="0.68" />
-                                <GradientStop Color="#1CFFFFFF" Offset="1" />
+                                <GradientStop Color="#30FFFFFF" Offset="0" />
+                                <GradientStop Color="#0EFFFFFF" Offset="0.34" />
+                                <GradientStop Color="#00FFFFFF" Offset="0.68" />
+                                <GradientStop Color="#14FFFFFF" Offset="1" />
                             </LinearGradientBrush>
                         </Border.Background>
                         <Border
                             x:Name="CompactLiquidInnerRim"
                             CornerRadius="13"
-                            BorderThickness="1"
+                            BorderThickness="0.75"
                             IsHitTestVisible="False">
                             <Border.BorderBrush>
                                 <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
-                                    <GradientStop Color="#CCFFFFFF" Offset="0" />
-                                    <GradientStop Color="#1EFFFFFF" Offset="0.48" />
-                                    <GradientStop Color="#64FFFFFF" Offset="1" />
+                                    <GradientStop Color="#D4FFFFFF" Offset="0" />
+                                    <GradientStop Color="#12FFFFFF" Offset="0.46" />
+                                    <GradientStop Color="#52FFFFFF" Offset="1" />
                                 </LinearGradientBrush>
                             </Border.BorderBrush>
                         </Border>
@@ -332,7 +338,7 @@
                         Glyph="&#xE814;" />
                 </Border>
             </Grid>
-            <Grid Grid.Row="2" HorizontalAlignment="Center" VerticalAlignment="Top">
+            <Grid x:Name="CompactNameContainer" Grid.Row="2" HorizontalAlignment="Center" VerticalAlignment="Top">
                 <Grid
                     x:Name="CompactNameShadowHost"
                     HorizontalAlignment="Center"
@@ -426,9 +432,15 @@
                 <Border
                     x:Name="ExpandedLiquidSheen"
                     CornerRadius="36"
-                    BorderThickness="1"
-                    BorderBrush="#2E000000"
+                    BorderThickness="0.75"
                     IsHitTestVisible="False">
+                    <Border.BorderBrush>
+                        <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                            <GradientStop Color="#8AFFFFFF" Offset="0" />
+                            <GradientStop Color="#10000000" Offset="0.48" />
+                            <GradientStop Color="#1A000000" Offset="1" />
+                        </LinearGradientBrush>
+                    </Border.BorderBrush>
                     <Border.Background>
                         <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
                             <GradientStop Color="#20FFFFFF" Offset="0" />
@@ -723,7 +735,7 @@
                                             x:Name="ItemNameText"
                                             MaxWidth="132"
                                             FontFamily="Microsoft YaHei UI, Segoe UI Variable Text"
-                                            FontSize="12.5"
+                                            FontSize="12"
                                             FontWeight="Normal"
                                             Foreground="White"
                                             IsHitTestVisible="False"

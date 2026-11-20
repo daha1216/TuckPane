@@ -279,7 +279,6 @@ public sealed partial class MainWindow : Window
 
     private sealed class ItemMotionState
     {
-        internal Visual? Visual;
         internal Vector3 Translation;
         internal Vector3 TranslationTarget;
         internal Vector3 TranslationVelocity;
@@ -1105,6 +1104,7 @@ public sealed partial class MainWindow : Window
         DisposeItemHostParts(host);
         host.Translation = Vector3.Zero;
         host.Scale = Vector3.One;
+        host.Rotation = 0f;
         host.Opacity = 1;
         host.Shadow = null;
         host.Background = _transparentItemBrush;
@@ -1407,10 +1407,12 @@ public sealed partial class MainWindow : Window
         {
             Visual hostVisual = ElementCompositionPreview.GetElementVisual(parts.NameShadowHost);
             Compositor compositor = hostVisual.Compositor;
+            parts.NameAlphaMask = parts.NameText.GetAlphaMask();
             parts.NameDropShadow = compositor.CreateDropShadow();
-            parts.NameDropShadow.Color = ColorHelper.FromArgb(204, 0, 0, 0);
-            parts.NameDropShadow.BlurRadius = 3.4f;
-            parts.NameDropShadow.Offset = new Vector3(0f, 0.8f, 0f);
+            parts.NameDropShadow.Color = ColorHelper.FromArgb(230, 0, 0, 0);
+            parts.NameDropShadow.BlurRadius = 2.2f;
+            parts.NameDropShadow.Offset = new Vector3(0f, 0.9f, 0f);
+            parts.NameDropShadow.Mask = parts.NameAlphaMask;
             parts.NameShadowVisual = compositor.CreateSpriteVisual();
             parts.NameShadowVisual.Shadow = parts.NameDropShadow;
             ElementCompositionPreview.SetElementChildVisual(parts.NameShadowHost, parts.NameShadowVisual);
@@ -1420,13 +1422,11 @@ public sealed partial class MainWindow : Window
         parts.NameShadowHost.Width = size.X;
         parts.NameShadowHost.Height = size.Y;
         parts.NameShadowVisual.Size = size;
-
-        CompositionBrush mask = parts.NameText.GetAlphaMask();
-        CompositionBrush? previousMask = parts.NameAlphaMask;
-        parts.NameAlphaMask = mask;
-        parts.NameDropShadow!.Mask = mask;
-        if (previousMask is not null && !ReferenceEquals(previousMask, mask))
-            previousMask.Dispose();
+        if (parts.NameAlphaMask is null)
+        {
+            parts.NameAlphaMask = parts.NameText.GetAlphaMask();
+            parts.NameDropShadow!.Mask = parts.NameAlphaMask;
+        }
         parts.NameShadowVisual.IsVisible = true;
     }
 
@@ -1468,7 +1468,8 @@ public sealed partial class MainWindow : Window
             parts.NameDropShadow.Dispose();
             parts.NameDropShadow = null;
         }
-        parts.NameAlphaMask?.Dispose();
+        // Never Dispose() the brush returned by TextBlock.GetAlphaMask():
+        // XAML owns its lifetime across ItemsRepeater recycling (disposing causes RO_E_CLOSED).
         parts.NameAlphaMask = null;
     }
 

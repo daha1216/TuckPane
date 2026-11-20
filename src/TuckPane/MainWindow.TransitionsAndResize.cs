@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Collections.ObjectModel;
 using System.Numerics;
 using System.Runtime.InteropServices;
+using System.Text.Json;
 using TuckPane.Core;
 using TuckPane.Controls;
 using TuckPane.Models;

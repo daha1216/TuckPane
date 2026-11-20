@@ -199,5 +199,22 @@ internal static class CommercialGradeAuditChecks
                 mainCs.Contains("LastChangedThemeTarget", StringComparison.Ordinal) &&
                 mainCs.Contains("ItemHostParts", StringComparison.Ordinal),
             "MainWindow.xaml.cs 未移除多余 VisitTextBlocks 遍历、未缓存 ItemHostParts 或未接入目标隔离主题广播。");
+
+        // P0 Regression Guards:
+        // 1. Item hosts use UIElement.Scale/Translation/Rotation; calling GetElementVisual on them crashes WinUI 3 with 0x80070005!
+        string dragDropCs = File.ReadAllText(Path.Combine(srcRoot, "MainWindow.ItemDragAndDrop.cs"));
+        require(!dragDropCs.Contains("GetElementVisual(", StringComparison.Ordinal) &&
+                !reorderCs.Contains("GetElementVisual(", StringComparison.Ordinal),
+            "MainWindow.ItemDragAndDrop.cs / FreeGridReorder.cs 禁止对使用 UIElement.Scale 的项宿主调用 GetElementVisual（会触发 0x80070005 闪退）。");
+        // 2. CompactShadowHost DropShadow must be hidden whenever CompactSurfaceHost (SystemBackdropElement) is visible to prevent hole-punch white corners!
+        require(styleCs.Contains("bool backdropVisible = CompactSurfaceHost.Visibility == Visibility.Visible;", StringComparison.Ordinal) &&
+                styleCs.Contains("if (highContrast || backdropVisible)", StringComparison.Ordinal),
+            "MainWindow.NativeDesktopStyle.cs 必须在 CompactSurfaceHost 可见时隐藏 CompactShadowHost 阴影，避免 SystemBackdropElement 洞穿产生白角方框。");
+        // 3. Never Dispose() TextBlock.GetAlphaMask() brushes (XAML owns them; disposing breaks ItemsRepeater recycling with RO_E_CLOSED!).
+        require(!mainCs.Contains("NameAlphaMask?.Dispose()", StringComparison.Ordinal) &&
+                !mainCs.Contains("NameAlphaMask.Dispose()", StringComparison.Ordinal) &&
+                !styleCs.Contains("AlphaMask?.Dispose()", StringComparison.Ordinal) &&
+                !styleCs.Contains("AlphaMask.Dispose()", StringComparison.Ordinal),
+            "禁止对 TextBlock.GetAlphaMask() 返回的画刷调用 Dispose()（会导致 ItemsRepeater 回收后抛出 RO_E_CLOSED 闪退）。");
     }
 }

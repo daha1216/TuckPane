@@ -214,7 +214,8 @@ public sealed partial class MainWindow
         (double cellWidth, double cellHeight) = ResolveDragCellSize();
         SyncFreeGridOverlayBounds(columns, totalRows, cellWidth, cellHeight, GetItemLayoutGapDip());
 
-        // Pre-build O(1) host->index lookup and centered GPU Composition pivots ONCE per drag (0 allocations per frame!).
+        // Pre-build O(1) host->index lookup and centered UIElement pivots ONCE per drag (0 allocations per frame!).
+        // Uses UIElement.Rotation instead of ElementCompositionPreview.GetElementVisual so UIElement.Scale/Translation never hit 0x80070005.
         _dragHostIndexLookup.Clear();
         Vector3 pivot = new((float)(cellWidth / 2.0), (float)(cellHeight / 2.0), 0f);
         for (int index = 0; index < _items.Count; index++)
@@ -223,10 +224,7 @@ public sealed partial class MainWindow
             {
                 _dragHostIndexLookup[siblingHost] = index;
                 siblingHost.CenterPoint = pivot;
-                ItemMotionState siblingMotion = GetItemMotion(siblingHost);
-                Visual siblingVisual = siblingMotion.Visual ??= ElementCompositionPreview.GetElementVisual(siblingHost);
-                siblingVisual.CenterPoint = pivot;
-                siblingVisual.RotationAngleInDegrees = 0f;
+                siblingHost.Rotation = 0f;
             }
         }
 
@@ -354,7 +352,7 @@ public sealed partial class MainWindow
                 seconds,
                 responseSeconds: 0.20,
                 dampingFraction: 0.76);
-            (draggedMotion.Visual ??= ElementCompositionPreview.GetElementVisual(_itemDragHost)).RotationAngleInDegrees = _dragTiltAngleDeg;
+            _itemDragHost.Rotation = _dragTiltAngleDeg;
         }
 
         // Flock multi-selected icons behind the primary dragged icon in a fanned iOS 18 stack!
@@ -400,7 +398,7 @@ public sealed partial class MainWindow
             follower.Opacity = k <= 3 ? 0.94 - fanLayer * 0.08 : 0.0;
             float fanAngle = fanLayer % 2 == 1 ? -3.5f : 3.5f;
             motion.RotationAngle = fanAngle;
-            (motion.Visual ??= ElementCompositionPreview.GetElementVisual(follower)).RotationAngleInDegrees = fanAngle;
+            follower.Rotation = fanAngle;
         }
     }
 
@@ -444,7 +442,7 @@ public sealed partial class MainWindow
                 motion.RotationAngle = 0;
                 host.Translation = motion.Translation;
                 host.Scale = Vector3.One;
-                (motion.Visual ??= ElementCompositionPreview.GetElementVisual(host)).RotationAngleInDegrees = 0f;
+                host.Rotation = 0f;
             }
         }
     }
@@ -463,7 +461,7 @@ public sealed partial class MainWindow
                 motion.RotationAngle = 0;
                 host.Translation = motion.Translation;
                 host.Scale = motion.Scale;
-                (motion.Visual ??= ElementCompositionPreview.GetElementVisual(host)).RotationAngleInDegrees = 0f;
+                host.Rotation = 0f;
             }
             return true;
         }
@@ -534,7 +532,7 @@ public sealed partial class MainWindow
                 dampingFraction: 0.85);
             host.Scale = motion.Scale;
 
-            // Subtle living iOS edit-mode micro-jiggle driven directly on cached GPU Composition Visual (zero XAML/interop churn!).
+            // Subtle living iOS edit-mode micro-jiggle driven directly on UIElement.Rotation (GPU-composited, zero GetElementVisual conflict!).
             if (!isStackFollower)
             {
                 if (isActivelyDragging && Vector3.DistanceSquared(motion.Translation, motion.TranslationTarget) < 4f)
@@ -542,14 +540,14 @@ public sealed partial class MainWindow
                     double phase = hostOrdinal * 1.61803398875;
                     float targetWiggle = (float)(Math.Sin(_dragWiggleClockSeconds * 11.5 + phase) * 1.05);
                     motion.RotationAngle = targetWiggle;
-                    (motion.Visual ??= ElementCompositionPreview.GetElementVisual(host)).RotationAngleInDegrees = targetWiggle;
+                    host.Rotation = targetWiggle;
                 }
                 else if (Math.Abs(motion.RotationAngle) > 0.02f)
                 {
                     motion.RotationAngle *= 0.72f;
                     if (Math.Abs(motion.RotationAngle) <= 0.05f) motion.RotationAngle = 0f;
                     else settled = false;
-                    (motion.Visual ??= ElementCompositionPreview.GetElementVisual(host)).RotationAngleInDegrees = motion.RotationAngle;
+                    host.Rotation = motion.RotationAngle;
                 }
             }
             else if (!isActivelyDragging && Math.Abs(motion.RotationAngle) > 0.02f)
@@ -557,7 +555,7 @@ public sealed partial class MainWindow
                 motion.RotationAngle *= 0.70f;
                 if (Math.Abs(motion.RotationAngle) <= 0.05f) motion.RotationAngle = 0f;
                 else settled = false;
-                (motion.Visual ??= ElementCompositionPreview.GetElementVisual(host)).RotationAngleInDegrees = motion.RotationAngle;
+                host.Rotation = motion.RotationAngle;
             }
         }
 
@@ -572,8 +570,7 @@ public sealed partial class MainWindow
                 dampingFraction: 0.85);
             if (_itemDragHost is { } landingHost)
             {
-                ItemMotionState landingMotion = GetItemMotion(landingHost);
-                (landingMotion.Visual ??= ElementCompositionPreview.GetElementVisual(landingHost)).RotationAngleInDegrees = _dragTiltAngleDeg;
+                landingHost.Rotation = _dragTiltAngleDeg;
             }
             if (Math.Abs(_dragTiltAngleDeg) > 0.05f) settled = false;
         }
@@ -747,10 +744,7 @@ public sealed partial class MainWindow
         _dragWiggleClockSeconds = 0;
         if (_itemDragHost is { } host)
         {
-            if (_itemMotionStates.TryGetValue(host, out ItemMotionState? dragMotion) && dragMotion.Visual is not null)
-                dragMotion.Visual.RotationAngleInDegrees = 0f;
-            else
-                ElementCompositionPreview.GetElementVisual(host).RotationAngleInDegrees = 0f;
+            host.Rotation = 0f;
             host.BorderBrush = ItemTransparentBorderBrush;
             if (host.Tag is string dragTag)
                 ApplyItemSelectionVisual(host, dragTag);
@@ -760,10 +754,7 @@ public sealed partial class MainWindow
             if (TryGetRealizedItemHost(idx, out Border member))
             {
                 member.Opacity = 1.0;
-                if (_itemMotionStates.TryGetValue(member, out ItemMotionState? memberMotion) && memberMotion.Visual is not null)
-                    memberMotion.Visual.RotationAngleInDegrees = 0f;
-                else
-                    ElementCompositionPreview.GetElementVisual(member).RotationAngleInDegrees = 0f;
+                member.Rotation = 0f;
                 Canvas.SetZIndex(member, 0);
             }
         }
@@ -773,7 +764,7 @@ public sealed partial class MainWindow
         foreach ((Border motionHost, ItemMotionState motion) in _itemMotionStates)
         {
             motion.RotationAngle = 0f;
-            (motion.Visual ??= ElementCompositionPreview.GetElementVisual(motionHost)).RotationAngleInDegrees = 0f;
+            motionHost.Rotation = 0f;
         }
         // Pool guide cells (collapse instead of destroying/rebuilding XAML tree on every drag!).
         foreach (Border cell in _freeGridGuideCells)

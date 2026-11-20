@@ -921,7 +921,6 @@ public sealed partial class ConsoleWindow : Window
         visual.Properties.InsertVector3("Translation", Vector3.Zero);
         visual.Opacity = 1f;
         page.Opacity = 1;
-        page.Translation = Vector3.Zero;
     }
 
     private void UpdateStartupToggle() =>

@@ -49,12 +49,12 @@ internal static class LiquidGlassAndPerfChecks
 
         var (glass156Size, glass156Weight) = DesktopTypographyService.ResolveCompactLabelTypography(
             CompactVisualStyle.GlassTile, compactScale: 1.56, compactNameScale: 1.0, positioned: false);
-        require(glass156Size is >= 12.0 and <= 14.5 && glass156Weight.Weight == FontWeights.Medium.Weight,
+        require(glass156Size is >= 12.0 and <= 14.0 && glass156Weight.Weight == FontWeights.Normal.Weight,
             $"GlassTile 156% 字号/字重异常：{glass156Size} / {glass156Weight.Weight}。");
 
         var (glass200Size, _) = DesktopTypographyService.ResolveCompactLabelTypography(
             CompactVisualStyle.GlassTile, compactScale: 2.0, compactNameScale: 1.2, positioned: false);
-        require(glass200Size <= 14.5, $"GlassTile 放大上限保护失效：{glass200Size} DIP。");
+        require(glass200Size <= 14.0, $"GlassTile 放大上限保护失效：{glass200Size} DIP。");
     }
 
     private static void CheckDedicatedHookThreadArchitecture(Action<bool, string> require)
@@ -144,9 +144,10 @@ internal static class LiquidGlassAndPerfChecks
         require(!reorderCs.Contains("new ThemeShadow()", StringComparison.Ordinal),
             "MainWindow.FreeGridReorder.cs 仍残留高开销 ThemeShadow，会导致 120Hz 拖拽掉帧。");
         require(reorderCs.Contains("_dragHostIndexLookup", StringComparison.Ordinal) &&
-                reorderCs.Contains("RotationAngleInDegrees", StringComparison.Ordinal) &&
+                reorderCs.Contains(".Rotation =", StringComparison.Ordinal) &&
+                !reorderCs.Contains("GetElementVisual(", StringComparison.Ordinal) &&
                 reorderCs.Contains("GuideCellStrokeBrush", StringComparison.Ordinal),
-            "MainWindow.FreeGridReorder.cs 未启用 O(1) 索引查表、GPU 旋转合成或静态预分配画刷。");
+            "MainWindow.FreeGridReorder.cs 未启用 O(1) 索引查表、安全 UIElement.Rotation（严禁混用 GetElementVisual 引发 0x80070005）或静态预分配画刷。");
 
         int stepStart = reorderCs.IndexOf("private bool StepIosFluidItemSprings", StringComparison.Ordinal);
         int commitStart = reorderCs.IndexOf("private async Task CommitIosFluidReorderAsync", StringComparison.Ordinal);

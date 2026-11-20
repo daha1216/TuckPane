@@ -681,9 +681,10 @@ public sealed partial class MainWindow
     private ItemMotionState GetItemMotion(Border host)
     {
         if (_itemMotionStates.TryGetValue(host, out ItemMotionState? motion)) return motion;
+        // Never touch Composition ElementVisual on item hosts: item hosts use WinUI UIElement
+        // Translation / Scale / Rotation / CenterPoint, and mixing them throws 0x80070005 (E_ACCESSDENIED).
         motion = new ItemMotionState
         {
-            Visual = ElementCompositionPreview.GetElementVisual(host),
             Translation = host.Translation,
             TranslationTarget = host.Translation,
             Scale = host.Scale,
