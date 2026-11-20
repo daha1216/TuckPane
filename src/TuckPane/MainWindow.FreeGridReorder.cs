@@ -22,10 +22,16 @@ public sealed partial class MainWindow
     private Vector3 _dropGhostPosition;
     private Vector3 _dropGhostVelocity;
     private Vector3 _dropGhostTarget;
+    private Vector3 _dropGhostScale = Vector3.One;
+    private Vector3 _dropGhostScaleVelocity;
     private bool _dropGhostPositioned;
     private float _dragTiltAngleDeg;
     private float _dragTiltVelocity;
+    private double _dragWiggleClockSeconds;
     private int? _pendingExternalDropSlot;
+    private bool _dropPositionedInPlace;
+    private int[] _dragStackIndices = [];
+    private Border? _swapHighlightHost;
 
     private bool IsFreeGridLayoutActive =>
         !IsDock &&
@@ -34,6 +40,13 @@ public sealed partial class MainWindow
         !HasActiveFilter;
 
     private bool UsesIosFluidReorder => !IsDock && !IsCompactList;
+
+    internal bool ConsumeDropPositionedInPlace()
+    {
+        bool positioned = _dropPositionedInPlace;
+        _dropPositionedInPlace = false;
+        return positioned;
+    }
 
     internal void RefreshFreeGridLayoutMode()
     {
@@ -81,6 +94,7 @@ public sealed partial class MainWindow
             }
             if (assignedAny)
             {
+                _dropPositionedInPlace = true;
                 _resolvedItemSlots = FreeGridSlotMap.ResolveSlots(names, _definition.ItemSlots);
                 _definition.ItemOrder = FreeGridSlotMap.BuildReadingOrder(names, _resolvedItemSlots);
                 _ = SaveStateAsync();
@@ -155,6 +169,7 @@ public sealed partial class MainWindow
         if (!UsesIosFluidReorder)
         {
             _freeGridEngine = null;
+            _dragStackIndices = [];
             return;
         }
 
@@ -165,13 +180,27 @@ public sealed partial class MainWindow
         int totalRows = FreeGridSlotMap.TotalRowCount(_resolvedItemSlots, columns, minRows, includeDragBufferRow: freeGrid);
         int maxSlots = freeGrid ? columns * totalRows : _items.Count;
 
-        _freeGridEngine = new FreeGridReorderEngine(_resolvedItemSlots, session.SourceIndex, freeGrid, maxSlots);
+        _dragStackIndices = ResolveActiveDragStackIndices(session.SourceIndex);
+        _freeGridEngine = new FreeGridReorderEngine(_resolvedItemSlots, session.SourceIndex, freeGrid, maxSlots, _dragStackIndices);
         _dragTiltAngleDeg = 0;
         _dragTiltVelocity = 0;
+        _dragWiggleClockSeconds = 0;
         _dropGhostPositioned = false;
+        _dropGhostScale = Vector3.One;
+        _dropGhostScaleVelocity = Vector3.Zero;
+        ClearSwapHighlight();
 
         (double cellWidth, double cellHeight) = ResolveDragCellSize();
         SyncFreeGridOverlayBounds(columns, totalRows, cellWidth, cellHeight, GetItemLayoutGapDip());
+
+        // Ensure every realized host has centered pivot for smooth iOS micro-jiggle & stack fan tilt.
+        for (int index = 0; index < _items.Count; index++)
+        {
+            if (TryGetRealizedItemHost(index, out Border siblingHost))
+            {
+                siblingHost.CenterPoint = new Vector3((float)(cellWidth / 2.0), (float)(cellHeight / 2.0), 0);
+            }
+        }
 
         if (freeGrid)
         {
@@ -193,9 +222,38 @@ public sealed partial class MainWindow
                 draggedHost.Shadow = null;
             }
             ItemMotionState motion = GetItemMotion(draggedHost);
-            motion.ScaleTarget = _itemReorderUsesAnimations ? new Vector3(1.12f, 1.12f, 1f) : Vector3.One;
+            motion.ScaleTarget = _itemReorderUsesAnimations ? new Vector3(1.14f, 1.14f, 1f) : Vector3.One;
             motion.RotationAngle = 0;
         }
+
+        if (_dragStackIndices.Length > 1)
+        {
+            FreeGridDragStackBadgeText.Text = _dragStackIndices.Length.ToString();
+            FreeGridDragStackBadge.Visibility = Visibility.Visible;
+            for (int k = 1; k < _dragStackIndices.Length; k++)
+            {
+                if (TryGetRealizedItemHost(_dragStackIndices[k], out Border follower))
+                {
+                    Canvas.SetZIndex(follower, 999 - Math.Min(k, 10));
+                }
+            }
+        }
+    }
+
+    private int[] ResolveActiveDragStackIndices(int sourceIndex)
+    {
+        if (sourceIndex < 0 || sourceIndex >= _items.Count) return [sourceIndex];
+        string sourceName = _items[sourceIndex].RelativeName;
+        if (_itemSelection.Count <= 1 || !_itemSelection.Contains(sourceName))
+            return [sourceIndex];
+
+        var list = new List<int>(_itemSelection.Count) { sourceIndex };
+        for (int i = 0; i < _items.Count; i++)
+        {
+            if (i != sourceIndex && _itemSelection.Contains(_items[i].RelativeName))
+                list.Add(i);
+        }
+        return list.ToArray();
     }
 
     private void UpdateIosFluidReorderFrame(
@@ -220,7 +278,8 @@ public sealed partial class MainWindow
             pointerContent.Y - session.GrabOffset.Y + cellHeight / 2.0);
 
         bool shiftHeld = (NativeMethods.GetAsyncKeyState(0x10) & 0x8000) != 0;
-        bool preferDirectSwap = _host.State.GlobalSettings.FreeGridPreferDirectSwap ^ shiftHeld;
+        bool preferDirectSwap = !_freeGridEngine.IsMultiStackDrag &&
+            (_host.State.GlobalSettings.FreeGridPreferDirectSwap ^ shiftHeld);
 
         bool changed = _freeGridEngine.UpdateFromPointer(
             draggedCenter,
@@ -238,16 +297,16 @@ public sealed partial class MainWindow
             ShowFreeGridDropGhost(_freeGridEngine.TargetSlot, _freeGridEngine.CurrentKind, immediate: !_itemReorderUsesAnimations);
         }
 
-        // Continuously integrate all displaced icons with velocity-preserving iOS underdamped springs!
-        StepIosFluidItemSprings(seconds, directDragHost: _itemDragHost);
+        // Advance living iOS edit-mode wiggle clock.
+        _dragWiggleClockSeconds += seconds;
 
-        // Animate lifted dragged host scale + subtle velocity-coupled iOS tilt.
+        // Animate lifted primary dragged host + velocity-coupled inertia tilt.
         ItemMotionState draggedMotion = GetItemMotion(_itemDragHost);
         Vector3 prevPos = draggedMotion.Translation;
         Vector3 nextTranslation = new(
             (float)(pointerContent.X - session.PressPointerContent.X) + _hoverDragOriginOffset.X,
             (float)(pointerContent.Y - session.PressPointerContent.Y) + _hoverDragOriginOffset.Y,
-            24f);
+            26f);
         if (seconds > 0)
             draggedMotion.TranslationVelocity = (nextTranslation - prevPos) / (float)seconds;
         draggedMotion.Translation = nextTranslation;
@@ -261,34 +320,96 @@ public sealed partial class MainWindow
                 ref draggedMotion.ScaleVelocity,
                 draggedMotion.ScaleTarget,
                 seconds,
-                responseSeconds: 0.24,
+                responseSeconds: 0.22,
                 dampingFraction: 0.78);
             _itemDragHost.Scale = draggedMotion.Scale;
 
-            float targetTilt = Math.Clamp(draggedMotion.TranslationVelocity.X / 360f, -4.5f, 4.5f);
+            float targetTilt = Math.Clamp(draggedMotion.TranslationVelocity.X / 320f, -5.0f, 5.0f);
             _dragTiltAngleDeg = ItemMotionMath.StepScalarSpring(
                 ref _dragTiltAngleDeg,
                 ref _dragTiltVelocity,
                 targetTilt,
                 seconds,
-                responseSeconds: 0.22,
+                responseSeconds: 0.20,
                 dampingFraction: 0.76);
             _itemDragHost.Rotation = _dragTiltAngleDeg;
         }
 
+        // Flock multi-selected icons behind the primary dragged icon in a fanned iOS 18 stack!
+        if (_dragStackIndices.Length > 1)
+        {
+            Point primaryOrigin = FreeGridSlotMap.SlotOrigin(_freeGridEngine.SourceSlot, columns, cellWidth, cellHeight, gap);
+            Point livePrimaryTopLeft = new(primaryOrigin.X + nextTranslation.X, primaryOrigin.Y + nextTranslation.Y);
+            UpdateDragStackFollowers(livePrimaryTopLeft, columns, cellWidth, cellHeight, gap);
+            Canvas.SetLeft(FreeGridDragStackBadge, livePrimaryTopLeft.X + cellWidth - 18);
+            Canvas.SetTop(FreeGridDragStackBadge, livePrimaryTopLeft.Y - 6);
+        }
+
+        // Continuously integrate all sibling icons with velocity-preserving iOS underdamped springs!
+        StepIosFluidItemSprings(seconds, directDragHost: _itemDragHost);
         StepFreeGridDropGhostSpring(seconds);
+    }
+
+    private void UpdateDragStackFollowers(
+        Point livePrimaryTopLeft,
+        int columns,
+        double cellWidth,
+        double cellHeight,
+        double gap)
+    {
+        for (int k = 1; k < _dragStackIndices.Length; k++)
+        {
+            int itemIdx = _dragStackIndices[k];
+            if (!TryGetRealizedItemHost(itemIdx, out Border follower)) continue;
+            Point orig = FreeGridSlotMap.SlotOrigin(_resolvedItemSlots[itemIdx], columns, cellWidth, cellHeight, gap);
+            int fanLayer = Math.Min(k, 3);
+            float fanDx = fanLayer * 5f;
+            float fanDy = fanLayer * 4f;
+            float fanZ = Math.Max(8f, 22f - fanLayer * 3f);
+
+            ItemMotionState motion = GetItemMotion(follower);
+            motion.TranslationTarget = new Vector3(
+                (float)(livePrimaryTopLeft.X - orig.X) + fanDx,
+                (float)(livePrimaryTopLeft.Y - orig.Y) + fanDy,
+                fanZ);
+            motion.ScaleTarget = new Vector3(1.06f - fanLayer * 0.02f, 1.06f - fanLayer * 0.02f, 1f);
+            follower.Opacity = k <= 3 ? 0.94 - fanLayer * 0.08 : 0.0;
+            follower.Rotation = fanLayer % 2 == 1 ? -3.5f : 3.5f;
+        }
     }
 
     private void ApplyIosFluidTargets(int columns, double cellWidth, double cellHeight, double gap)
     {
         if (_freeGridEngine is null) return;
+        ClearSwapHighlight();
+        var stackSet = _dragStackIndices.Length > 1 ? new HashSet<int>(_dragStackIndices) : null;
+
         for (int index = 0; index < _items.Count; index++)
         {
-            if (index == _freeGridEngine.SourceItemIndex || !TryGetRealizedItemHost(index, out Border host)) continue;
+            if (index == _freeGridEngine.SourceItemIndex ||
+                (stackSet is not null && stackSet.Contains(index)) ||
+                !TryGetRealizedItemHost(index, out Border host))
+            {
+                continue;
+            }
+
             Vector2 delta = _freeGridEngine.GetSlotTranslation(index, columns, cellWidth, cellHeight, gap);
             ItemMotionState motion = GetItemMotion(host);
             motion.TranslationTarget = new Vector3(delta, 0);
-            motion.ScaleTarget = delta.LengthSquared() > 1f ? new Vector3(0.97f, 0.97f, 1f) : Vector3.One;
+
+            bool isSwapPeer = _freeGridEngine.CurrentKind == ReorderTargetKind.DirectSwap && delta.LengthSquared() > 1f;
+            if (isSwapPeer)
+            {
+                motion.ScaleTarget = new Vector3(0.93f, 0.93f, 1f);
+                _swapHighlightHost = host;
+                host.BorderBrush = new SolidColorBrush(Color.FromArgb(200, 0, 120, 212));
+                host.BorderThickness = new Thickness(1.5);
+            }
+            else
+            {
+                motion.ScaleTarget = delta.LengthSquared() > 1f ? new Vector3(0.96f, 0.96f, 1f) : Vector3.One;
+            }
+
             if (!_itemReorderUsesAnimations)
             {
                 motion.Translation = motion.TranslationTarget;
@@ -297,6 +418,7 @@ public sealed partial class MainWindow
                 motion.ScaleVelocity = Vector3.Zero;
                 host.Translation = motion.Translation;
                 host.Scale = Vector3.One;
+                host.Rotation = 0;
             }
         }
     }
@@ -319,9 +441,15 @@ public sealed partial class MainWindow
             return true;
         }
 
+        int columns = Math.Max(1, GetItemLayoutColumnCount());
+        bool isActivelyDragging = directDragHost is not null && !_itemDragLanding;
+        var stackSet = _dragStackIndices.Length > 1 ? new HashSet<int>(_dragStackIndices) : null;
         bool settled = true;
+        int hostOrdinal = 0;
+
         foreach ((Border host, ItemMotionState motion) in _itemMotionStates)
         {
+            hostOrdinal++;
             if (!IsFinite(motion.Translation) || !IsFinite(motion.TranslationTarget) || !IsFinite(motion.TranslationVelocity))
             {
                 motion.Translation = Vector3.Zero;
@@ -334,29 +462,76 @@ public sealed partial class MainWindow
                 motion.ScaleTarget = Vector3.One;
                 motion.ScaleVelocity = Vector3.Zero;
             }
-            if (!ReferenceEquals(host, directDragHost))
-            {
-                settled &= ItemMotionMath.StepIosSpring(
-                    ref motion.Translation,
-                    ref motion.TranslationVelocity,
-                    motion.TranslationTarget,
-                    seconds,
-                    responseSeconds: 0.28,
-                    dampingFraction: 0.84);
-                host.Translation = motion.Translation;
+            if (ReferenceEquals(host, directDragHost)) continue;
 
-                // Displaced siblings return gracefully to scale 1.0 as they approach their destination.
-                Vector3 targetScale = Vector3.DistanceSquared(motion.Translation, motion.TranslationTarget) < 64f
+            // Distance-staggered iOS ripple spring response for organic cascading motion.
+            double response = _itemDragLanding ? 0.19 : 0.24;
+            double damping = _itemDragLanding ? 0.88 : 0.83;
+            bool isStackFollower = false;
+
+            if (_freeGridEngine is not null && host.Tag is string tagName)
+            {
+                int itemIndex = IndexOfItem(tagName);
+                if (itemIndex >= 0)
+                {
+                    if (stackSet is not null && stackSet.Contains(itemIndex) && itemIndex != _freeGridEngine.SourceItemIndex)
+                    {
+                        isStackFollower = true;
+                        response = _itemDragLanding ? 0.21 : 0.16;
+                        damping = 0.82;
+                    }
+                    else if (!_itemDragLanding)
+                    {
+                        int hops = Math.Min(4, _freeGridEngine.GetSlotHopDistanceFromTarget(itemIndex, columns));
+                        response = 0.23 + hops * 0.018;
+                    }
+                }
+            }
+
+            settled &= ItemMotionMath.StepIosSpring(
+                ref motion.Translation,
+                ref motion.TranslationVelocity,
+                motion.TranslationTarget,
+                seconds,
+                responseSeconds: response,
+                dampingFraction: damping);
+            host.Translation = motion.Translation;
+
+            Vector3 targetScale = isStackFollower && isActivelyDragging
+                ? motion.ScaleTarget
+                : Vector3.DistanceSquared(motion.Translation, motion.TranslationTarget) < 64f
                     ? Vector3.One
                     : motion.ScaleTarget;
-                settled &= ItemMotionMath.StepIosSpring(
-                    ref motion.Scale,
-                    ref motion.ScaleVelocity,
-                    targetScale,
-                    seconds,
-                    responseSeconds: 0.26,
-                    dampingFraction: 0.85);
-                host.Scale = motion.Scale;
+            settled &= ItemMotionMath.StepIosSpring(
+                ref motion.Scale,
+                ref motion.ScaleVelocity,
+                targetScale,
+                seconds,
+                responseSeconds: 0.24,
+                dampingFraction: 0.85);
+            host.Scale = motion.Scale;
+
+            // Subtle living iOS edit-mode micro-jiggle on idle siblings (muted while translating or landing).
+            if (!isStackFollower)
+            {
+                if (isActivelyDragging && Vector3.DistanceSquared(motion.Translation, motion.TranslationTarget) < 4f)
+                {
+                    double phase = hostOrdinal * 1.61803398875;
+                    float targetWiggle = (float)(Math.Sin(_dragWiggleClockSeconds * 11.5 + phase) * 1.05);
+                    host.Rotation = targetWiggle;
+                }
+                else if (Math.Abs(host.Rotation) > 0.02f)
+                {
+                    host.Rotation *= 0.72f;
+                    if (Math.Abs(host.Rotation) <= 0.05f) host.Rotation = 0f;
+                    else settled = false;
+                }
+            }
+            else if (!isActivelyDragging && Math.Abs(host.Rotation) > 0.02f)
+            {
+                host.Rotation *= 0.70f;
+                if (Math.Abs(host.Rotation) <= 0.05f) host.Rotation = 0f;
+                else settled = false;
             }
         }
 
@@ -367,8 +542,8 @@ public sealed partial class MainWindow
                 ref _dragTiltVelocity,
                 0f,
                 seconds,
-                responseSeconds: 0.20,
-                dampingFraction: 0.82);
+                responseSeconds: 0.18,
+                dampingFraction: 0.85);
             if (_itemDragHost is { } landingHost)
                 landingHost.Rotation = _dragTiltAngleDeg;
             if (Math.Abs(_dragTiltAngleDeg) > 0.05f) settled = false;
@@ -385,26 +560,47 @@ public sealed partial class MainWindow
         try
         {
             StopItemDragInput(keepRendering: true);
+            FreeGridDragStackBadge.Visibility = Visibility.Collapsed;
+            ClearSwapHighlight();
+
             int columns = Math.Max(1, GetItemLayoutColumnCount());
             int[] finalSlots = engine.SnapshotVisualSlots();
             _itemDragLanding = true;
 
+            (double landCellW, double landCellH) = ResolveDragCellSize();
+            double gap = GetItemLayoutGapDip();
+
             if (_itemDragHost is { } draggedHost)
             {
-                (double landCellW, double landCellH) = ResolveDragCellSize();
                 Vector2 landingDelta = engine.GetSlotTranslation(
                     engine.SourceItemIndex,
                     columns,
                     landCellW,
                     landCellH,
-                    GetItemLayoutGapDip());
+                    gap);
+
                 if (_itemReorderUsesAnimations)
                 {
                     ItemMotionState motion = GetItemMotion(draggedHost);
                     motion.TranslationTarget = new Vector3(landingDelta, 0);
                     motion.ScaleTarget = Vector3.One;
+
+                    // Unpack multi-selected stack followers directly to their final target slots!
+                    for (int k = 1; k < _dragStackIndices.Length; k++)
+                    {
+                        int followerIdx = _dragStackIndices[k];
+                        if (TryGetRealizedItemHost(followerIdx, out Border followerHost))
+                        {
+                            followerHost.Opacity = 1.0;
+                            Vector2 followerDelta = engine.GetSlotTranslation(followerIdx, columns, landCellW, landCellH, gap);
+                            ItemMotionState fMotion = GetItemMotion(followerHost);
+                            fMotion.TranslationTarget = new Vector3(followerDelta, 0);
+                            fMotion.ScaleTarget = Vector3.One;
+                        }
+                    }
+
                     _itemMotionSettled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-                    await Task.WhenAny(_itemMotionSettled.Task, Task.Delay(320));
+                    await Task.WhenAny(_itemMotionSettled.Task, Task.Delay(290));
                 }
             }
 
@@ -446,7 +642,6 @@ public sealed partial class MainWindow
                 }
                 else
                 {
-                    // Dense mode: reorder the observable collection in place to match reading order.
                     var lookup = _items.ToDictionary(i => i.RelativeName, StringComparer.OrdinalIgnoreCase);
                     WidgetItem[] desired = nextReadingOrder
                         .Where(lookup.ContainsKey)
@@ -479,17 +674,49 @@ public sealed partial class MainWindow
         }
     }
 
+    private void ClearSwapHighlight()
+    {
+        if (_swapHighlightHost is not null)
+        {
+            string? tag = _swapHighlightHost.Tag as string;
+            _swapHighlightHost.BorderThickness = new Thickness(0);
+            _swapHighlightHost.BorderBrush = null;
+            if (!string.IsNullOrEmpty(tag))
+                ApplyItemSelectionVisual(_swapHighlightHost, tag);
+            _swapHighlightHost = null;
+        }
+    }
+
     private void CleanupIosFreeGridOverlays()
     {
         _freeSlotGridLayout.IncludeDragBufferRow = false;
         FreeGridDropSlotGhost.Visibility = Visibility.Collapsed;
+        FreeGridDragStackBadge.Visibility = Visibility.Collapsed;
+        ClearSwapHighlight();
         _dropGhostPositioned = false;
+        _dropGhostScale = Vector3.One;
+        _dropGhostScaleVelocity = Vector3.Zero;
         _dragTiltAngleDeg = 0;
         _dragTiltVelocity = 0;
+        _dragWiggleClockSeconds = 0;
         if (_itemDragHost is { } host)
         {
             host.Rotation = 0;
             host.Shadow = null;
+        }
+        foreach (int idx in _dragStackIndices)
+        {
+            if (TryGetRealizedItemHost(idx, out Border member))
+            {
+                member.Opacity = 1.0;
+                member.Rotation = 0;
+                Canvas.SetZIndex(member, 0);
+            }
+        }
+        _dragStackIndices = [];
+        foreach ((Border motionHost, _) in _itemMotionStates)
+        {
+            motionHost.Rotation = 0;
         }
         foreach (Border cell in _freeGridGuideCells)
             FreeGridOverlayCanvas.Children.Remove(cell);
@@ -505,10 +732,10 @@ public sealed partial class MainWindow
         double cellWidth = _freeSlotGridLayout.CellWidth;
         double cellHeight = _freeSlotGridLayout.CellHeight;
         double gap = _freeSlotGridLayout.Gap;
-        var strokeBrush = new SolidColorBrush(Color.FromArgb(26, 255, 255, 255));
-        var fillBrush = new SolidColorBrush(Color.FromArgb(8, 255, 255, 255));
+        var strokeBrush = new SolidColorBrush(Color.FromArgb(28, 255, 255, 255));
+        var fillBrush = new SolidColorBrush(Color.FromArgb(9, 255, 255, 255));
 
-        int totalCells = Math.Min(columns * totalRows, 96);
+        int totalCells = Math.Min(columns * totalRows, 160);
         for (int slot = 0; slot < totalCells; slot++)
         {
             Point origin = FreeGridSlotMap.SlotOrigin(slot, columns, cellWidth, cellHeight, gap);
@@ -546,13 +773,14 @@ public sealed partial class MainWindow
 
         FreeGridDropSlotGhost.Width = cellWidth;
         FreeGridDropSlotGhost.Height = cellHeight;
+        FreeGridDropSlotGhost.CenterPoint = new Vector3((float)(cellWidth / 2.0), (float)(cellHeight / 2.0), 0);
         bool isSwap = kind == ReorderTargetKind.DirectSwap;
         FreeGridDropSlotGhost.Background = new SolidColorBrush(isSwap
-            ? Color.FromArgb(56, 0, 120, 212)
-            : Color.FromArgb(38, 255, 255, 255));
+            ? Color.FromArgb(62, 0, 120, 212)
+            : Color.FromArgb(40, 255, 255, 255));
         FreeGridDropSlotGhost.BorderBrush = new SolidColorBrush(isSwap
-            ? Color.FromArgb(220, 0, 120, 212)
-            : Color.FromArgb(145, 255, 255, 255));
+            ? Color.FromArgb(230, 0, 120, 212)
+            : Color.FromArgb(155, 255, 255, 255));
         FreeGridDropSlotGhost.Visibility = Visibility.Visible;
 
         _dropGhostTarget = new Vector3((float)origin.X, (float)origin.Y, 0);
@@ -560,9 +788,18 @@ public sealed partial class MainWindow
         {
             _dropGhostPosition = _dropGhostTarget;
             _dropGhostVelocity = Vector3.Zero;
+            _dropGhostScale = Vector3.One;
+            _dropGhostScaleVelocity = Vector3.Zero;
             _dropGhostPositioned = true;
             Canvas.SetLeft(FreeGridDropSlotGhost, _dropGhostPosition.X);
             Canvas.SetTop(FreeGridDropSlotGhost, _dropGhostPosition.Y);
+            FreeGridDropSlotGhost.Scale = Vector3.One;
+        }
+        else
+        {
+            // Tactile magnetic catch pulse whenever target slot changes!
+            _dropGhostScale = new Vector3(0.93f, 0.93f, 1f);
+            _dropGhostScaleVelocity = new Vector3(0.6f, 0.6f, 0f);
         }
     }
 
@@ -574,14 +811,23 @@ public sealed partial class MainWindow
             ref _dropGhostVelocity,
             _dropGhostTarget,
             seconds,
+            responseSeconds: 0.20,
+            dampingFraction: 0.85);
+        ItemMotionMath.StepIosSpring(
+            ref _dropGhostScale,
+            ref _dropGhostScaleVelocity,
+            Vector3.One,
+            seconds,
             responseSeconds: 0.22,
-            dampingFraction: 0.86);
+            dampingFraction: 0.72);
         Canvas.SetLeft(FreeGridDropSlotGhost, _dropGhostPosition.X);
         Canvas.SetTop(FreeGridDropSlotGhost, _dropGhostPosition.Y);
+        FreeGridDropSlotGhost.Scale = _dropGhostScale;
     }
 
     private void RecordExternalDropSlotFromEvent(DragEventArgs e)
     {
+        _dropPositionedInPlace = false;
         if (!IsFreeGridLayoutActive)
         {
             _pendingExternalDropSlot = null;

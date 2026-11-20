@@ -215,7 +215,7 @@
                             <ColumnDefinition Width="*" />
                         </Grid.ColumnDefinitions>
                         <TextBlock VerticalAlignment="Center" Tag="loc:RowsLabel" Text="行数" TextWrapping="Wrap" Foreground="{StaticResource FormPrimaryTextBrush}" />
-                        <controls:ConsoleSlider x:Name="RowsSlider" Grid.Column="1" Minimum="2" Maximum="6" StepFrequency="1" Value="3" ValueChanged="FormControl_Changed" />
+                        <controls:ConsoleSlider x:Name="RowsSlider" Grid.Column="1" Minimum="2" Maximum="8" StepFrequency="1" Value="3" ValueChanged="FormControl_Changed" />
                     </Grid>
                 </Border>
                 <Border x:Name="ColumnsCard" Style="{StaticResource Row}">
@@ -225,7 +225,7 @@
                             <ColumnDefinition Width="*" />
                         </Grid.ColumnDefinitions>
                         <TextBlock VerticalAlignment="Center" Tag="loc:ColumnsLabel" Text="列数" TextWrapping="Wrap" Foreground="{StaticResource FormPrimaryTextBrush}" />
-                        <controls:ConsoleSlider x:Name="ColumnsSlider" Grid.Column="1" Minimum="2" Maximum="6" StepFrequency="1" Value="3" ValueChanged="FormControl_Changed" />
+                        <controls:ConsoleSlider x:Name="ColumnsSlider" Grid.Column="1" Minimum="2" Maximum="8" StepFrequency="1" Value="3" ValueChanged="FormControl_Changed" />
                     </Grid>
                 </Border>
                 <Border x:Name="CompactScaleCard" Style="{StaticResource Row}">

@@ -73,9 +73,9 @@
 
 ---
 
-## 三、四阶段 PR 交付架构
+## 三、五阶段 PR 交付架构
 
-为便于上游仓库清晰评审与按需合入，本次重构拆分为四条职责清晰的渐进式提交链路：
+为便于上游仓库清晰评审与按需合入，本次重构拆分为五条职责清晰的渐进式提交链路：
 
 1. **PR #11（`fix/startup-cloak-and-edge-placement`）— P0 开机体验救火专修**
    - 解决开机巨型黑窗（DWM Cloak + 预定位 + 预样式化 + 首帧稳定后显现）。
@@ -103,6 +103,17 @@
      - **80ms 路过防误触驻留 + 18% 边界滞回迟滞**：快速斜穿其他图标时不再把整行图标掀翻，边界徘徊零抖动。
    - **Apple 风格连续解析欠阻尼弹簧物理（`ItemMotionMath.StepIosSpring` + `MainWindow.FreeGridReorder.cs`）**：使用精确解析欠阻尼谐振子（`response = 0.28s, dampingFraction = 0.84`），全程保留动量并支持任意中途零停顿改向；拖动中图标抬升至 `1.12x` 并附带真实 `ThemeShadow` 投影与速度耦合微倾（`±4.5°`），背景显现极淡方格参考线与弹簧滑动落位幽灵框，放手时零跳变丝滑落位。
    - **完全向后兼容持久化与 60 套回归校验**：在 `SchemaVersion = 16` 下扩展 `OrganizerDefinition.ItemSlots` 与两项交互设置开关，老版本配置自动无损迁移为紧凑槽位；新增 `--ios-free-grid` 回归测试（纳入 `--ci-headless`，共 60 套）。
+5. **PR #15（`feat/8x8-shell-move-integrity-ios-stack-refactor`，基于 PR #14）— 8×8 网格扩容、桌面真移动与快捷方式无损启动、iOS 多选叠卡拖拽与巨型单文件瘦身**
+   - **普通收纳窗容量扩容至 `8×8`（64 格/页）**：将 `OrganizerLimits.MaximumLayoutDimension` 与设置滑块上限提升至 `8`，自由网格辅助线池上限提升至 160，全分辨率 DPI 尺寸与 `SchemaVersion = 16` 持久化完整兼容。
+   - **P0 根治“桌面拖入变复制”与“软件快捷方式打不开”**：
+     - **`ShellFileOperationService` + `OrganizerInteractionMath.SelectIncomingDropOperation`**：来自用户桌面或公共桌面（`C:\Users\Public\Desktop`）的拖入默认强制按 **真实移动（Move）** 处理（仅按住 `Ctrl` 才显式复制）；自动清除只读属性避免跨盘退化为 `CopiedSourceRetained`；对受权限保护的公共桌面项目在 `UnauthorizedAccessException` 时无缝桥接原生 COM **`IFileOperation`** 触发标准系统 UAC 提权真移动；移动后立刻广播 `SHChangeNotify`，桌面原图标瞬时消失、彻底杜绝残留副本。
+     - **`ShortcutIntegrityService` 迁入自动修复**：在 `.lnk` 移入更深目录时，自动清理绑定旧桌面的失效 `SLDF_HAS_RELPATH`、将空白/相对/失效 `WorkingDirectory` 锚定到目标程序真实目录并修复相对图标路径，同时严格跳过 MSI 广告快捷方式（`SLDF_HAS_DARWINID`）和 UWP / `shell:AppsFolder` 虚拟 PIDL，100% 完整保留启动参数、`SLDF_RUNAS_USER` 管理员标志与 `AppUserModelID`。
+     - **升级 `ShellLaunchService` 为原生 `ShellExecuteExW` 健壮启动管线**：为标准 `.lnk` 与可执行文件显式传入有效 `lpDirectory`（彻底解决开机自启进程 CWD 为 `C:\Windows\System32` 导致便携工具/脚本找不到同目录 DLL 与配置的崩溃问题）；对 UWP/MSI 快捷方式启用 `SEE_MASK_INVOKEIDLIST` 原生激活；对受损 `.lnk` 与 `.url` 自动自愈回退直启目标（附带 `.url` 协议白名单防护）；静默忽略用户主动取消 UAC 的 `ERROR_CANCELLED (1223)`。
+     - **Windows 11 重解析点兼容**：`DropValidator` 通过 `FindFirstFileW` 精确识别重解析标签，放行 OneDrive 云占位文件与 Windows Store AppExecLink 应用别名，同时继续严格拦截符号链接与目录联接点防止递归攻击。
+   - **真·iOS 18/26 双向最近空位分水岭 + 有机微晃 + 窗内多选叠卡成堆拖拽**：
+     - `FreeGridReorderEngine` 升级双向最近空位比较 + 指针入场方向分水岭（向左/向右始终选择移动图标数量最少的波纹链），并新增 `ComputeStackLayout` 支持窗内多选图标以 iOS 18 扇形叠卡 + 蓝色数量角标成堆拖动与批量展开落位；
+     - `MainWindow.FreeGridReorder.cs` 增加距离分级波纹弹簧、静置图标黄金比例相位有机微晃、磁性幽灵框捕获脉冲与直换目标蓝框高亮；外部文件定点落入自由方格时保持视口位置不再强制滚到底部。
+   - **架构瘦身去臃肿**：将原 6,531 行的 `MainWindow.xaml.cs` 巨型单文件按职责拆离出 `MainWindow.TransitionsAndResize.cs`（展开/收缩过渡、交互缩放与紧凑拖拽）与 `MainWindow.ItemDragAndDrop.cs`（项目拖拽、边界鼠标钩子与 OLE 拖放），主文件体量直降 **51.8%**（至 ~3,149 行）；新增第 61 套回归测试 `--desktop-move-8x8`。
 
 ---
 

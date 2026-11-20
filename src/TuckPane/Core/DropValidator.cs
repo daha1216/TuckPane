@@ -57,7 +57,8 @@ public static class DropValidator
                 continue;
             }
 
-            if ((attributes & FileAttributes.ReparsePoint) != 0)
+            if ((attributes & FileAttributes.ReparsePoint) != 0 &&
+                (isDirectory || !ShellFileOperationService.IsSafeCloudOrAppAliasReparsePoint(fullPath)))
             {
                 errors.Add(AppStrings.Format("UnsupportedReparseFormat", Path.GetFileName(fullPath)));
                 continue;
@@ -142,12 +143,14 @@ public static class DropValidator
                 {
                     cancellationToken.ThrowIfCancellationRequested();
                     FileAttributes attributes = File.GetAttributes(entry);
-                    if ((attributes & FileAttributes.ReparsePoint) != 0)
+                    bool entryDir = (attributes & FileAttributes.Directory) != 0;
+                    if ((attributes & FileAttributes.ReparsePoint) != 0 &&
+                        (entryDir || !ShellFileOperationService.IsSafeCloudOrAppAliasReparsePoint(entry)))
                     {
                         error = AppStrings.Format("DirectoryReparseFormat", Path.GetFileName(entry));
                         return false;
                     }
-                    if ((attributes & FileAttributes.Directory) != 0) pending.Push(entry);
+                    if (entryDir) pending.Push(entry);
                 }
             }
             error = null;

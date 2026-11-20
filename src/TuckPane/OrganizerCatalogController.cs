@@ -589,10 +589,7 @@ internal sealed class OrganizerCatalogController
         using var diagnostic = AppLogger.Begin(DiagnosticArea.Drop);
         e.AcceptedOperation = DataPackageOperation.None;
         if (!_window.HasActiveLocalFileDrop) return;
-
-        DataPackageOperation operation = OrganizerInteractionMath.SelectDropOperation(e.AllowedOperations);
-        if (operation == DataPackageOperation.None) return;
-        bool move = operation == DataPackageOperation.Move;
+        if (e.AllowedOperations == DataPackageOperation.None) return;
 
         string[] paths = [];
         Exception? storageReadError = null;
@@ -629,6 +626,15 @@ internal sealed class OrganizerCatalogController
             return;
         }
 
+        bool controlPressed = (NativeMethods.GetAsyncKeyState(0x11) & 0x8000) != 0;
+        bool fromDesktop = paths.All(ShellFileOperationService.IsDesktopOrigin);
+        DataPackageOperation operation = OrganizerInteractionMath.SelectIncomingDropOperation(
+            e.AllowedOperations,
+            fromDesktop,
+            controlPressed);
+        if (operation == DataPackageOperation.None) return;
+        bool move = operation == DataPackageOperation.Move;
+
         if (!_window.IsExpandedCore)
         {
             await _window.ExpandOrganizerAsync(scrollToEnd: true);
@@ -653,7 +659,8 @@ internal sealed class OrganizerCatalogController
             if (_window.IsClosing) return;
             StartWatcher();
             await RefreshCatalogAsync(notifyUnsupported: false);
-            await _window.ScrollToEndAfterRenderAsync();
+            if (!_window.ConsumeDropPositionedInPlace())
+                await _window.ScrollToEndAfterRenderAsync();
 
             TransferOutcome[] warnings = outcomes.Where(outcome => move
                 ? outcome.Status is not (TransferStatus.Moved or TransferStatus.ShortcutCreated or TransferStatus.Cancelled)

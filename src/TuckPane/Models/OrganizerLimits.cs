@@ -12,7 +12,7 @@ internal static class OrganizerLimits
     internal const int MinimumGridDimension = 2;
     internal const int MinimumStationRows = 1;
     internal const int MinimumStationColumns = 1;
-    internal const int MaximumLayoutDimension = 6;
+    internal const int MaximumLayoutDimension = 8;
     internal const int MaximumStationRows = 9;
     internal const int MaximumStationColumns = 9;
     internal const double DefaultCompactListCanvasWidthDip = 280;
