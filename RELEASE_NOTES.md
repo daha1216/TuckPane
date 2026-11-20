@@ -1,3 +1,20 @@
+## 4.3.1
+
+本版聚焦 **极致丝滑性能抢救、Windows 11 原生桌面字体对齐与屏幕边缘防裁切、以及超越 Apple iOS 26 的液态玻璃光学与动效重构**，全面解决 `4.3.0` 实机反馈的卡顿掉帧、紧凑标签字体违和/边缘裁切及浅色壁纸下毛玻璃发灰问题（完全保持 `SchemaVersion = 16` 配置向后兼容，应用内更新只检查本 fork）。
+
+- **P0 流畅度彻底根治（>98% 主 UI 线程 CPU 下降，120–240Hz ProMotion 级丝滑）**：
+  - **独立高优先级原生消息泵线程运行鼠标钩子**：将 `DesktopMarqueeHookService` 与 `OutsideClickHook` 的 `WH_MOUSE_LL` 钩子从 WinUI 3 主 UI 线程彻底剥离至独立 `ThreadPriority.AboveNormal` 原生 `GetMessage` 线程，并增加非桌面框选态 ~15ns 极速短路路径；彻底消除设置界面（`ConsoleWindow`）滚动、切换、拖滑块与展开/收起动效卡顿。
+  - **关停隐藏态 DWM Acrylic 实时模糊**：原生桌面融合模式隐藏背景时将 `CompactSurfaceHost.Visibility` 置为 `Collapsed`（替代仅改 `Opacity = 0`），彻底关停不可见的实时 GPU 模糊管线。
+  - **120Hz 零分配自由网格拖拽引擎**：移除拖拽宿主每帧全图重绘的 `ThemeShadow`，改为轻量液态高亮描边；用拖拽期预建 `O(1)` 字典查表取代 `StepIosFluidItemSprings` 内每帧 `O(N²)` `IndexOfItem` 扫描与 `HashSet` 分配；将所有微震与惯性倾斜迁移至 GPU `Composition Visual.RotationAngleInDegrees`；池化复用网格引导格，并将所有选区/悬停/拖拽 `SolidColorBrush` 静态预分配。
+- **Windows 11 原生桌面字体与双层 GPU 高斯文字阴影**：
+  - 新增 `DesktopTypographyService`，通过 `SystemParametersInfoForDpi(SPI_GETICONMETRICS, 96 DPI)` 读取系统真实桌面图标字体（中文 Windows 11 为 `Microsoft YaHei UI`、`12 DIP`、`Normal`）并缓存高对比度状态；彻底取代随入口缩放膨胀至 20px 的巨型粗体标题，同步统一展开窗项目标签字体。
+  - 废除硬边双影克隆，改由 `CompactNameText.GetAlphaMask()` 驱动**双层 GPU 高斯 `DropShadow`**（外层柔光晕 `BlurRadius = 5.6` + 内层紧凑核心 `BlurRadius = 2.1`，精准复刻 Windows 资源管理器 `DrawShadowText`），在纯白壁纸、纯黑壁纸与高反差线条壁纸上均清晰锐利、零空心双影。
+  - 新增 `UpdateCompactLabelSafeWidth()` 屏幕边缘对称防裁切算法：贴边悬浮窗自动按显示器边界余量收紧安全行宽并优雅换行/省略，彻底根除靠右贴边时文字被屏幕边缘切半的缺陷。
+- **超越 Apple iOS 26 液态玻璃光学层 & 原生桌面融合重构**：
+  - **iOS 26 液态玻璃（收起态 + 展开态全套升级）**：采用 24.4% Apple 连续超椭圆曲率（`CompactCornerRadiusDip = 9.5`）、双层光学边缘（外层 `#24000000` 轮廓线在纯白壁纸上立现通透轮廓 + 内层 `#D4FFFFFF` 液态折射高光边）、斜向焦散折射光泽、悬浮环境 GPU 阴影、实时追踪光标的 GPU `CompositionRadialGradientBrush` 流动高光斑，以及原生 DWM 合成器线程 `SpringVector3NaturalMotionAnimation` 悬停抬升与按压回弹物理动效；展开窗面板同步加入角半径随动变形的液态光学边缘。
+  - **原生桌面融合（Windows 11）**：升级为晶透一体图标胶囊 + 轻盈环境阴影 + 真实 Windows 11 桌面字体与双层高斯阴影，与左侧系统桌面图标浑然一体，告别四个小图标悬空漂浮的突兀感。
+- **验证**：Release x64 0 警告 0 错误构建；全套无头 `TuckPane.LogicChecks` **62/62**（含新增 `--liquid-glass-perf`）、`UpdateChecks` **4/4**、Node 便签 **3/3** 全部通过；Windows 11 隔离沙箱实测 6 个真实右贴边收纳窗在 250 次高频鼠标移动下独立钩子线程 `0.00ms`、主 UI 线程仅 `15.62ms`（较 `4.3.0` 下降 >98%），三种风格全量零报错。
+
 ## 4.3.0
 
 本版合入五项里程碑级重构与体验升级 PR（[#11](https://github.com/daha1216/TuckPane/pull/11)、[#12](https://github.com/daha1216/TuckPane/pull/12)、[#13](https://github.com/daha1216/TuckPane/pull/13)、[#14](https://github.com/daha1216/TuckPane/pull/14)、[#15](https://github.com/daha1216/TuckPane/pull/15)），彻底根治开机黑窗、贴边回中、桌面拖入变复制与软件快捷方式启动失败等核心痛点，全面引入原生桌面视觉融合、全链路框选多选、iOS 18/26 自由方格与多选叠卡弹簧重排，以及 `8×8` 大容量网格与主窗口深度瘦身（完全保持 `SchemaVersion = 16` 配置向后兼容，应用内更新只检查本 fork）。

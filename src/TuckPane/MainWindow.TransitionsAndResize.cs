@@ -737,6 +737,7 @@ public sealed partial class MainWindow
             return;
         }
 
+        SetCompactPressVisualState(true);
         BeginWidgetPress(CompactTile, e, point.Position, expanded: false);
     }
 
@@ -1483,6 +1484,7 @@ public sealed partial class MainWindow
 
     private void CompactTile_PointerMoved(object sender, PointerRoutedEventArgs e)
     {
+        UpdateCompactSpecularPointer(e);
         if (!_pressActive || e.Pointer.PointerId != _pressedPointerId)
         {
             return;
@@ -1507,6 +1509,11 @@ public sealed partial class MainWindow
 
     private IntPtr GestureWindowProc(IntPtr hWnd, uint message, UIntPtr wParam, IntPtr lParam, UIntPtr subclassId, IntPtr referenceData)
     {
+        if (message is NativeMethods.WM_SETTINGCHANGE or NativeMethods.WM_THEMECHANGED)
+        {
+            DesktopTypographyService.InvalidateCache();
+            DispatcherQueue.TryEnqueue(() => { if (!_closing) ApplyCompactVisualStyle(); });
+        }
         if (message is 0x02E0 or 0x007E) // WM_DPICHANGED / WM_DISPLAYCHANGE
             ResetHoverWave();
         if (IsDock && message is 0x02E0 or 0x007E) // WM_DPICHANGED / WM_DISPLAYCHANGE
@@ -1941,6 +1948,7 @@ public sealed partial class MainWindow
                     ApplyBounds(_compactBounds, show: true);
                 }
                 _definition.Position = DisplayPlacementService.Capture(_compactBounds, _hwnd);
+                UpdateCompactLabelSafeWidth();
                 await SaveStateAsync();
                 await _host.CommitMultiSelectedGroupDragAsync(this);
             }
@@ -1964,6 +1972,7 @@ public sealed partial class MainWindow
 
     private void ResetCompactPress()
     {
+        SetCompactPressVisualState(false);
         _pressedOrganizerTitle = false;
         _widgetMousePress = false;
         _longPressTimer.Stop();

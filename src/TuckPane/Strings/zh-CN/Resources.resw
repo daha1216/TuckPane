@@ -516,8 +516,8 @@
   <data name="ContextBatchCopyPaths" xml:space="preserve"><value>复制全部完整路径</value></data>
   <data name="ContextBatchDeleteFormat" xml:space="preserve"><value>删除已选 {0} 项</value></data>
   <data name="CompactVisualStyleTitle" xml:space="preserve"><value>收缩外观融合风格</value></data>
-  <data name="CompactVisualStyleGlassTile" xml:space="preserve"><value>经典毛玻璃卡片</value></data>
-  <data name="CompactVisualStyleNativeDesktop" xml:space="preserve"><value>原生桌面融合（无底框）</value></data>
+  <data name="CompactVisualStyleGlassTile" xml:space="preserve"><value>iOS 26 液态玻璃（推荐）</value></data>
+  <data name="CompactVisualStyleNativeDesktop" xml:space="preserve"><value>原生桌面融合（Windows 11）</value></data>
   <data name="CompactVisualStyleFluentFolder" xml:space="preserve"><value>Fluent 立体文件夹</value></data>
   <data name="SnapFloatingToDesktopGridTitle" xml:space="preserve"><value>悬浮窗拖动时自动吸附桌面图标网格</value></data>
   <data name="DesktopMarqueeSelectionTitle" xml:space="preserve"><value>桌面蓝色框选联动多选悬浮窗</value></data>

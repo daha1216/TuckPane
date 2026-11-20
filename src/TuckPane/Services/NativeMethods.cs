@@ -536,6 +536,10 @@ internal static partial class NativeMethods
     [DllImport("user32.dll", EntryPoint = "GetMessageW")]
     internal static extern int GetMessage(out MSG message, IntPtr hWnd, uint minimum, uint maximum);
 
+    [DllImport("user32.dll", EntryPoint = "PeekMessageW")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool PeekMessage(out MSG message, IntPtr hWnd, uint minimum, uint maximum, uint removeMessage);
+
     [DllImport("user32.dll")]
     internal static extern IntPtr GetCapture();
 

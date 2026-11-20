@@ -516,8 +516,8 @@
   <data name="ContextBatchCopyPaths" xml:space="preserve"><value>すべてのフルパスをコピー</value></data>
   <data name="ContextBatchDeleteFormat" xml:space="preserve"><value>選択中の {0} 件を削除</value></data>
   <data name="CompactVisualStyleTitle" xml:space="preserve"><value>収納時のデスクトップ融合スタイル</value></data>
-  <data name="CompactVisualStyleGlassTile" xml:space="preserve"><value>クラシック・グラスタイル</value></data>
-  <data name="CompactVisualStyleNativeDesktop" xml:space="preserve"><value>ネイティブデスクトップ融合（枠なし）</value></data>
+  <data name="CompactVisualStyleGlassTile" xml:space="preserve"><value>iOS 26 リキッドグラス（推奨）</value></data>
+  <data name="CompactVisualStyleNativeDesktop" xml:space="preserve"><value>ネイティブデスクトップ融合（Windows 11）</value></data>
   <data name="CompactVisualStyleFluentFolder" xml:space="preserve"><value>Fluent フォルダーシルエット</value></data>
   <data name="SnapFloatingToDesktopGridTitle" xml:space="preserve"><value>ドラッグ時にデスクトップアイコンのグリッドへ吸着</value></data>
   <data name="DesktopMarqueeSelectionTitle" xml:space="preserve"><value>デスクトップの範囲選択とフローティングボックスを連動</value></data>

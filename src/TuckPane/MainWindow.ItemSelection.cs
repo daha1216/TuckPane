@@ -14,6 +14,10 @@ namespace TuckPane;
 
 public sealed partial class MainWindow
 {
+    private static readonly SolidColorBrush ItemSelectedBgBrush = new(Color.FromArgb(68, 0, 120, 212));
+    private static readonly SolidColorBrush ItemSelectedBorderBrush = new(Color.FromArgb(215, 0, 120, 212));
+    private static readonly SolidColorBrush ItemTransparentBorderBrush = new(Colors.Transparent);
+
     private readonly ItemSelectionModel _itemSelection = new();
     private bool _marqueePressed;
     private bool _marqueeActive;
@@ -256,13 +260,13 @@ public sealed partial class MainWindow
         bool selected = _itemSelection.Contains(relativeName);
         if (selected)
         {
-            host.Background = new SolidColorBrush(Color.FromArgb(68, 0, 120, 212));
-            host.BorderBrush = new SolidColorBrush(Color.FromArgb(215, 0, 120, 212));
+            host.Background = ItemSelectedBgBrush;
+            host.BorderBrush = ItemSelectedBorderBrush;
             host.BorderThickness = new Thickness(1);
         }
         else
         {
-            host.BorderBrush = new SolidColorBrush(Colors.Transparent);
+            host.BorderBrush = ItemTransparentBorderBrush;
             host.BorderThickness = new Thickness(0);
             if (!ReferenceEquals(host, _itemDragHost))
                 host.Background = _transparentItemBrush;

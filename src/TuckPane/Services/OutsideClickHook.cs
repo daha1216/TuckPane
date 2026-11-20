@@ -1,15 +1,25 @@
+using System.Runtime.InteropServices;
 using Microsoft.UI.Dispatching;
 
 namespace TuckPane.Services;
 
+/// <summary>
+/// Dedicated native-thread WH_MOUSE_LL outside-click detector. Runs off the WinUI 3 UI thread
+/// so mouse movement and clicks while an organizer is expanded NEVER stall UI animations or input.
+/// </summary>
 internal sealed class OutsideClickHook : IDisposable
 {
     private readonly IntPtr _window;
     private readonly DispatcherQueue _dispatcher;
     private readonly Action<NativeMethods.POINT> _outsideClick;
     private readonly NativeMethods.HookProc _callback;
+    private readonly object _lifecycleSync = new();
+
+    private Thread? _hookThread;
+    private uint _hookThreadId;
     private IntPtr _hook;
     private long _generation;
+    private volatile bool _running;
 
     internal OutsideClickHook(IntPtr window, DispatcherQueue dispatcher, Action<NativeMethods.POINT> outsideClick)
     {
@@ -21,14 +31,20 @@ internal sealed class OutsideClickHook : IDisposable
 
     public void Start()
     {
-        if (_hook != IntPtr.Zero)
+        lock (_lifecycleSync)
         {
-            return;
-        }
-        _hook = NativeMethods.SetWindowsHookEx(NativeMethods.WH_MOUSE_LL, _callback, NativeMethods.GetModuleHandle(null), 0);
-        if (_hook == IntPtr.Zero)
-        {
-            AppLogger.Error("无法安装外部点击捕获钩子。");
+            if (_running) return;
+            _running = true;
+            using var ready = new ManualResetEventSlim(false);
+            var thread = new Thread(() => HookThreadMain(ready))
+            {
+                IsBackground = true,
+                Name = "TuckPane Outside Click Hook",
+                Priority = ThreadPriority.AboveNormal
+            };
+            _hookThread = thread;
+            thread.Start();
+            ready.Wait(TimeSpan.FromMilliseconds(500));
         }
     }
 
@@ -36,26 +52,64 @@ internal sealed class OutsideClickHook : IDisposable
 
     public void Dispose() => StopNow();
 
-    private IntPtr OnMouse(int code, IntPtr wParam, IntPtr lParam)
+    private void HookThreadMain(ManualResetEventSlim ready)
     {
-        if (code < 0 || _hook == IntPtr.Zero)
+        _hookThreadId = NativeMethods.GetCurrentThreadId();
+        _ = NativeMethods.PeekMessage(out _, IntPtr.Zero, 0, 0, 0);
+
+        IntPtr installed = NativeMethods.SetWindowsHookEx(
+            NativeMethods.WH_MOUSE_LL,
+            _callback,
+            NativeMethods.GetModuleHandle(null),
+            0);
+        _hook = installed;
+        ready.Set();
+
+        if (installed == IntPtr.Zero)
         {
-            return NativeMethods.CallNextHookEx(_hook, code, wParam, lParam);
+            _running = false;
+            AppLogger.Error("无法安装外部点击捕获钩子。");
+            return;
         }
 
-        int message = wParam.ToInt32();
-        bool isDown = message is NativeMethods.WM_LBUTTONDOWN or NativeMethods.WM_RBUTTONDOWN or NativeMethods.WM_MBUTTONDOWN;
-        if (isDown && NativeMethods.GetWindowRect(_window, out NativeMethods.RECT windowRect))
+        try
         {
-            NativeMethods.MSLLHOOKSTRUCT data = System.Runtime.InteropServices.Marshal.PtrToStructure<NativeMethods.MSLLHOOKSTRUCT>(lParam);
-            bool outside = data.Point.X < windowRect.Left || data.Point.X >= windowRect.Right || data.Point.Y < windowRect.Top || data.Point.Y >= windowRect.Bottom;
+            while (_running && NativeMethods.GetMessage(out _, IntPtr.Zero, 0, 0) > 0)
+            {
+            }
+        }
+        finally
+        {
+            if (_hook != IntPtr.Zero)
+            {
+                _ = NativeMethods.UnhookWindowsHookEx(_hook);
+                _hook = IntPtr.Zero;
+            }
+        }
+    }
+
+    private IntPtr OnMouse(int code, IntPtr wParam, IntPtr lParam)
+    {
+        if (code < 0 || !_running)
+            return NativeMethods.CallNextHookEx(_hook, code, wParam, lParam);
+
+        int message = wParam.ToInt32();
+        if (message is not (NativeMethods.WM_LBUTTONDOWN or NativeMethods.WM_RBUTTONDOWN or NativeMethods.WM_MBUTTONDOWN))
+            return NativeMethods.CallNextHookEx(_hook, code, wParam, lParam);
+
+        if (NativeMethods.GetWindowRect(_window, out NativeMethods.RECT windowRect))
+        {
+            NativeMethods.MSLLHOOKSTRUCT data = Marshal.PtrToStructure<NativeMethods.MSLLHOOKSTRUCT>(lParam);
+            bool outside = data.Point.X < windowRect.Left || data.Point.X >= windowRect.Right ||
+                           data.Point.Y < windowRect.Top || data.Point.Y >= windowRect.Bottom;
             if (outside)
             {
                 NativeMethods.POINT clickPoint = data.Point;
                 long generation = Volatile.Read(ref _generation);
                 _ = _dispatcher.TryEnqueue(() =>
                 {
-                    if (_hook != IntPtr.Zero && generation == Volatile.Read(ref _generation)) _outsideClick(clickPoint);
+                    if (_running && generation == Volatile.Read(ref _generation))
+                        _outsideClick(clickPoint);
                 });
             }
         }
@@ -65,16 +119,23 @@ internal sealed class OutsideClickHook : IDisposable
 
     private void StopNow()
     {
-        // Retire callbacks already queued on the UI dispatcher, even if Start follows immediately.
-        Interlocked.Increment(ref _generation);
-        if (_hook == IntPtr.Zero)
+        Thread? threadToJoin;
+        uint threadId;
+        lock (_lifecycleSync)
         {
-            return;
+            // Retire callbacks already queued on the UI dispatcher, even if Start follows immediately.
+            Interlocked.Increment(ref _generation);
+            if (!_running && _hookThread is null) return;
+            _running = false;
+            threadToJoin = _hookThread;
+            threadId = _hookThreadId;
+            _hookThread = null;
+            _hookThreadId = 0;
         }
-        if (_hook != IntPtr.Zero)
-        {
-            _ = NativeMethods.UnhookWindowsHookEx(_hook);
-            _hook = IntPtr.Zero;
-        }
+
+        if (threadId != 0)
+            _ = NativeMethods.PostThreadMessage(threadId, NativeMethods.WM_QUIT, UIntPtr.Zero, IntPtr.Zero);
+        if (threadToJoin is not null && threadToJoin != Thread.CurrentThread)
+            _ = threadToJoin.Join(TimeSpan.FromMilliseconds(400));
     }
 }

@@ -36,7 +36,7 @@ public sealed partial class MainWindow : Window
     private const int CompactPreviewRows = 2;
     private const int CompactPreviewColumns = 2;
     private const int CompactPreviewItemCount = CompactPreviewRows * CompactPreviewColumns;
-    private const double CompactCornerRadiusDip = 8;
+    private const double CompactCornerRadiusDip = 9.5;
     private const double ExpandedCornerRadiusDip = 36;
     private const double TransitionResponseSeconds = .30;
     private const double StationTransitionResponseSeconds = .24;
@@ -288,6 +288,7 @@ public sealed partial class MainWindow : Window
         WindowRoot.Loaded += (_, _) =>
         {
             WindowRoot.XamlRoot.Changed += (_, _) => UpdateSurfaceClips();
+            ApplyCompactVisualStyle();
             UpdateSurfaceClips();
         };
         ExpandedView.AddHandler(UIElement.PointerPressedEvent, new PointerEventHandler(ExpandedView_PointerPressed), handledEventsToo: true);
@@ -2110,6 +2111,7 @@ public sealed partial class MainWindow : Window
         _expandedSurface.Dispose();
         _compactEdgeSurface.Dispose();
         _expandedEdgeSurface.Dispose();
+        DisposeCompactVisualResources();
         _windowAlignmentGuide?.Dispose();
         _windowAlignmentGuide = null;
         _outsideClickHook?.Dispose();
@@ -2590,7 +2592,7 @@ public sealed partial class MainWindow : Window
         _pressedItemBrush.Color = ColorHelper.FromArgb(38, foregroundColor.R, foregroundColor.G, foregroundColor.B);
         _collapseHoverBrush.Color = ColorHelper.FromArgb(26, foregroundColor.R, foregroundColor.G, foregroundColor.B);
         _collapsePressedBrush.Color = ColorHelper.FromArgb(46, foregroundColor.R, foregroundColor.G, foregroundColor.B);
-        bool highContrast = new Windows.UI.ViewManagement.AccessibilitySettings().HighContrast;
+        bool highContrast = DesktopTypographyService.IsHighContrast();
         CompactWarningBadge.Background = new SolidColorBrush(highContrast
             ? _uiSettings.GetColorValue(Windows.UI.ViewManagement.UIColorType.Accent)
             : ColorHelper.FromArgb(184, 29, 35, 43));
@@ -2696,6 +2698,7 @@ public sealed partial class MainWindow : Window
         ExpandedView.Opacity = 0;
         CompactView.Visibility = Visibility.Visible;
         CompactView.Opacity = 1;
+        UpdateCompactLabelSafeWidth();
         UpdateSurfaceClips();
         _desktopLayer?.SetExpanded(false, showWindow: false);
         ApplyBounds(_compactBounds, show: true);
@@ -2727,17 +2730,11 @@ public sealed partial class MainWindow : Window
         CompactTile.Height = 39 * scale;
         UpdateCompactThumbnailMetrics();
         UpdateCompactPreviewItemScale();
-        CompactNameText.MaxWidth = positioned
-            ? Math.Max(1, CompactView.Width)
-            : 72 * scale * compactNameScale;
-        CompactNameText.FontSize = positioned
-            ? 13 * compactNameScale
-            : 13 * scale * compactNameScale;
         CompactView.RowDefinitions[0].Height = new GridLength(39 * scale);
-        CompactView.RowDefinitions[1].Height = new GridLength(positioned ? 4 : 4 * scale);
+        CompactView.RowDefinitions[1].Height = new GridLength(positioned ? 4 : Math.Clamp(4 * scale, 3, 6));
         CompactView.RowDefinitions[2].Height = new GridLength(positioned
             ? Math.Max(1, CompactView.Height - 39 * scale - 4)
-            : 23 * scale * compactNameScale);
+            : Math.Max(32, 23 * scale * compactNameScale));
 
         if (_hwnd != IntPtr.Zero)
         {
@@ -2936,6 +2933,8 @@ public sealed partial class MainWindow : Window
         }
         _compactSurface.SetCornerRadius(compactRadius);
         _compactEdgeSurface.SetCornerRadius(compactRadius);
+        UpdateCompactShadowGeometry(compactRadius);
+        UpdateExpandedLiquidSheenGeometry(expandedRadius);
         Visual compactBackdropVisual = ElementCompositionPreview.GetElementVisual(CompactSurfaceHost);
         Visual expandedBackdropVisual = ElementCompositionPreview.GetElementVisual(ExpandedSurfaceHost);
         Visual compactContentVisual = ElementCompositionPreview.GetElementVisual(CompactIconPresenter);
@@ -2968,6 +2967,7 @@ public sealed partial class MainWindow : Window
         ExpandedSurfaceHost.CornerRadius = new CornerRadius(snappedRadius);
         _expandedSurface.SetCornerRadius(snappedRadius);
         _expandedEdgeSurface.SetCornerRadius(snappedRadius);
+        UpdateExpandedLiquidSheenGeometry(snappedRadius);
     }
 
     private void ApplyPixelAlignedClip(RectangleClip clip, FrameworkElement element, double radius)
