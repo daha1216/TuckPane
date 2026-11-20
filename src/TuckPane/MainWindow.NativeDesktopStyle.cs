@@ -59,6 +59,12 @@ public sealed partial class MainWindow
     private SpriteVisual? _expandedNameShadowVisual;
     private DropShadow? _expandedNameDropShadow;
     private CompositionBrush? _expandedNameAlphaMask;
+    private string? _expandedNameMaskText;
+    private double _expandedNameMaskFontSize;
+    private Vector2 _expandedNameMaskSize;
+    private bool _expandedNameAlphaMaskDirty;
+    private bool _expandedNameShadowRefreshQueued;
+    private bool _expandedNameShadowRefreshMarkDirty;
     private bool _expandedNameShadowHooked;
     private long _expandedNameVisibilityCallbackToken;
     private long _expandedEditorVisibilityCallbackToken;
@@ -297,14 +303,40 @@ public sealed partial class MainWindow
 
     private void ExpandedNameText_VisibilityChanged(DependencyObject sender, DependencyProperty dp)
     {
+        _expandedNameAlphaMaskDirty = true;
         SyncExpandedNameShadow();
         if (!_closing && ExpandedView.Visibility == Visibility.Visible)
         {
             UpdateAllRealizedItemNameShadows(DesktopTypographyService.IsHighContrast());
-            if (ExpandedNameText.ActualWidth <= 1 || ExpandedNameText.ActualHeight <= 1)
+            QueueExpandedNameShadowRefresh(markMaskDirty: true);
+        }
+    }
+
+    private void QueueExpandedNameShadowRefresh(bool markMaskDirty = false)
+    {
+        if (_closing) return;
+        if (markMaskDirty)
+            _expandedNameShadowRefreshMarkDirty = true;
+        if (_expandedNameShadowRefreshQueued) return;
+        _expandedNameShadowRefreshQueued = true;
+        if (!DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low, () =>
             {
-                DispatcherQueue.TryEnqueue(SyncExpandedNameShadow);
-            }
+                _expandedNameShadowRefreshQueued = false;
+                if (_closing)
+                {
+                    _expandedNameShadowRefreshMarkDirty = false;
+                    return;
+                }
+                if (_expandedNameShadowRefreshMarkDirty)
+                {
+                    _expandedNameShadowRefreshMarkDirty = false;
+                    _expandedNameAlphaMaskDirty = true;
+                }
+                SyncExpandedNameShadow();
+            }))
+        {
+            _expandedNameShadowRefreshQueued = false;
+            _expandedNameShadowRefreshMarkDirty = false;
         }
     }
 
@@ -372,7 +404,11 @@ public sealed partial class MainWindow
             SyncExpandedSweepGeometry(w, h, clamped);
         }
         if (ExpandedView.Visibility == Visibility.Visible)
+        {
+            _expandedNameAlphaMaskDirty = true;
             SyncExpandedNameShadow();
+            QueueExpandedNameShadowRefresh(markMaskDirty: true);
+        }
     }
 
     private void EnsureExpandedSpecularSweepVisual()
@@ -427,6 +463,7 @@ public sealed partial class MainWindow
     internal void BindExpandedTransitionSweep(CompositionPropertySet transitionProps)
     {
         if (_closing || !WindowRoot.IsLoaded) return;
+        _expandedNameAlphaMaskDirty = true;
         SyncExpandedNameShadow();
         if (DesktopTypographyService.IsHighContrast() || !UseCustomAnimations)
         {
@@ -533,9 +570,9 @@ public sealed partial class MainWindow
             Compositor compositor = expandedHostVisual.Compositor;
 
             _expandedNameDropShadowAura = compositor.CreateDropShadow();
-            _expandedNameDropShadowAura.Color = Color.FromArgb(224, 0, 0, 0);
-            _expandedNameDropShadowAura.BlurRadius = 6.5f;
-            _expandedNameDropShadowAura.Offset = new Vector3(0f, 2.2f, 0f);
+            _expandedNameDropShadowAura.Color = Color.FromArgb(235, 0, 0, 0);
+            _expandedNameDropShadowAura.BlurRadius = 9.0f;
+            _expandedNameDropShadowAura.Offset = new Vector3(0f, 2.5f, 0f);
             _expandedNameDropShadowAura.Opacity = 0.92f;
 
             _expandedNameShadowAuraVisual = compositor.CreateSpriteVisual();
@@ -543,8 +580,8 @@ public sealed partial class MainWindow
 
             _expandedNameDropShadow = compositor.CreateDropShadow();
             _expandedNameDropShadow.Color = Color.FromArgb(255, 0, 0, 0);
-            _expandedNameDropShadow.BlurRadius = 2.0f;
-            _expandedNameDropShadow.Offset = new Vector3(0f, 1.4f, 0f);
+            _expandedNameDropShadow.BlurRadius = 2.6f;
+            _expandedNameDropShadow.Offset = new Vector3(0f, 1.0f, 0f);
             _expandedNameDropShadow.Opacity = 1.0f;
 
             _expandedNameShadowVisual = compositor.CreateSpriteVisual();
@@ -771,30 +808,61 @@ public sealed partial class MainWindow
         if (!visible)
         {
             _expandedNameShadowRoot.IsVisible = false;
+            _expandedNameAlphaMaskDirty = true;
             return;
         }
 
-        double width = ExpandedNameText.ActualWidth;
-        double height = ExpandedNameText.ActualHeight;
+        Thickness margin = ExpandedNameText.Margin;
+        double width = ExpandedNameText.ActualWidth > 1
+            ? ExpandedNameText.ActualWidth
+            : Math.Max(0, ExpandedNameText.DesiredSize.Width - margin.Left - margin.Right);
+        double height = ExpandedNameText.ActualHeight > 1
+            ? ExpandedNameText.ActualHeight
+            : Math.Max(0, ExpandedNameText.DesiredSize.Height - margin.Top - margin.Bottom);
         if (width <= 1 || height <= 1)
         {
             _expandedNameShadowRoot.IsVisible = false;
+            QueueExpandedNameShadowRefresh(markMaskDirty: true);
             return;
         }
 
         Vector2 size = new((float)width, (float)height);
-        ExpandedNameShadowHost.Width = size.X;
-        ExpandedNameShadowHost.Height = size.Y;
         _expandedNameShadowRoot.Size = size;
         _expandedNameShadowVisual.Size = size;
         _expandedNameShadowAuraVisual.Size = size;
 
-        if (_expandedNameAlphaMask is null)
+        string text = ExpandedNameText.Text;
+        double fontSize = ExpandedNameText.FontSize;
+        bool contentChanged = !string.Equals(_expandedNameMaskText, text, StringComparison.Ordinal) ||
+                              Math.Abs(_expandedNameMaskFontSize - fontSize) > 0.01 ||
+                              Math.Abs(_expandedNameMaskSize.X - size.X) > 0.25f ||
+                              Math.Abs(_expandedNameMaskSize.Y - size.Y) > 0.25f;
+        if (_expandedNameAlphaMask is null || _expandedNameAlphaMaskDirty || contentChanged)
         {
-            _expandedNameAlphaMask = ExpandedNameText.GetAlphaMask();
-            _expandedNameDropShadow.Mask = _expandedNameAlphaMask;
-            _expandedNameDropShadowAura.Mask = _expandedNameAlphaMask;
+            // XAML owns TextBlock.GetAlphaMask() brushes; rebind without calling Dispose().
+            CompositionBrush alphaMask = ExpandedNameText.GetAlphaMask();
+            _expandedNameAlphaMask = alphaMask;
+            _expandedNameDropShadow.Mask = alphaMask;
+            _expandedNameDropShadowAura.Mask = alphaMask;
+            _expandedNameMaskText = text;
+            _expandedNameMaskFontSize = fontSize;
+            _expandedNameMaskSize = size;
+            _expandedNameAlphaMaskDirty = false;
+            if (contentChanged)
+                QueueExpandedNameShadowRefresh(markMaskDirty: true);
         }
+
+        if (!_animating && !_dwmTransitionRunning)
+        {
+            if (ExpandedNameShadowHost.Opacity < 0.999)
+                ExpandedNameShadowHost.Opacity = 1;
+            if (_expandedNameShadowCompositionVisual is not null &&
+                _expandedNameShadowCompositionVisual.Opacity < 0.999f)
+            {
+                _expandedNameShadowCompositionVisual.Opacity = 1f;
+            }
+        }
+
         _expandedNameDropShadow.Opacity = 1.0f;
         _expandedNameDropShadowAura.Opacity = 0.92f;
         _expandedNameShadowRoot.IsVisible = true;
@@ -1132,6 +1200,12 @@ public sealed partial class MainWindow
         if (_expandedNameDropShadow is not null) _expandedNameDropShadow.Mask = null;
         if (_expandedNameDropShadowAura is not null) _expandedNameDropShadowAura.Mask = null;
         _expandedNameAlphaMask = null;
+        _expandedNameMaskText = null;
+        _expandedNameMaskFontSize = 0;
+        _expandedNameMaskSize = Vector2.Zero;
+        _expandedNameAlphaMaskDirty = false;
+        _expandedNameShadowRefreshQueued = false;
+        _expandedNameShadowRefreshMarkDirty = false;
         _expandedNameShadowAuraVisual?.Dispose();
         _expandedNameShadowAuraVisual = null;
         _expandedNameDropShadowAura?.Dispose();

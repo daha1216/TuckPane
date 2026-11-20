@@ -1,6 +1,7 @@
 namespace TuckPane.Core;
 
 using TuckPane.Models;
+using TuckPane.Services;
 using Windows.ApplicationModel.DataTransfer;
 
 [Flags]
@@ -192,6 +193,35 @@ internal static class OrganizerInteractionMath
         return Math.Max(0, 1 + (deltaX * vectorX + deltaY * vectorY) / lengthSquared);
     }
 
+    internal static double CalculateAnchoredResizeFactor(
+        CanvasResizeEdge edge,
+        double deltaX,
+        double deltaY,
+        double startWidth,
+        double startHeight)
+    {
+        bool hasHorizontal = (edge & (CanvasResizeEdge.Left | CanvasResizeEdge.Right)) != 0;
+        bool hasVertical = (edge & (CanvasResizeEdge.Top | CanvasResizeEdge.Bottom)) != 0;
+        if (!hasHorizontal && !hasVertical) return 1;
+        if (hasHorizontal && !hasVertical)
+        {
+            if (startWidth <= 0) return 1;
+            double signedDelta = edge.HasFlag(CanvasResizeEdge.Left) ? -deltaX : deltaX;
+            return Math.Max(0, 1 + signedDelta / startWidth);
+        }
+        if (hasVertical && !hasHorizontal)
+        {
+            if (startHeight <= 0) return 1;
+            double signedDelta = edge.HasFlag(CanvasResizeEdge.Top) ? -deltaY : deltaY;
+            return Math.Max(0, 1 + signedDelta / startHeight);
+        }
+        double vectorX = edge.HasFlag(CanvasResizeEdge.Left) ? -startWidth : startWidth;
+        double vectorY = edge.HasFlag(CanvasResizeEdge.Top) ? -startHeight : startHeight;
+        double lengthSquared = vectorX * vectorX + vectorY * vectorY;
+        if (lengthSquared <= 0) return 1;
+        return Math.Max(0, 1 + (deltaX * vectorX + deltaY * vectorY) / lengthSquared);
+    }
+
     internal static double ApplyWheelSteps(double current, int steps, double minimum, double maximum)
     {
         if (minimum > maximum) minimum = maximum;
@@ -247,5 +277,68 @@ internal static class OrganizerInteractionMath
         int roundedWidth = Math.Max(1, (int)Math.Round(width));
         int roundedHeight = Math.Max(1, (int)Math.Round(height));
         return (centerX - roundedWidth / 2, centerY - roundedHeight / 2, roundedWidth, roundedHeight);
+    }
+
+    internal static NativeMethods.RECT CreateAnchoredBounds(
+        CanvasResizeEdge edge,
+        NativeMethods.RECT startPanel,
+        NativeMethods.RECT workPanel,
+        double width,
+        double height)
+    {
+        int maxWidth = Math.Max(1, workPanel.Width);
+        int maxHeight = Math.Max(1, workPanel.Height);
+        double safeWidth = Math.Max(1, width);
+        double safeHeight = Math.Max(1, height);
+        if (safeWidth > maxWidth || safeHeight > maxHeight)
+        {
+            double fit = Math.Min(1, Math.Min(maxWidth / safeWidth, maxHeight / safeHeight));
+            safeWidth *= fit;
+            safeHeight *= fit;
+        }
+        int roundedWidth = Math.Clamp((int)Math.Round(safeWidth), 1, maxWidth);
+        int roundedHeight = Math.Clamp((int)Math.Round(safeHeight), 1, maxHeight);
+
+        int left;
+        if (edge.HasFlag(CanvasResizeEdge.Left))
+        {
+            left = startPanel.Right - roundedWidth;
+        }
+        else if (edge.HasFlag(CanvasResizeEdge.Right))
+        {
+            left = startPanel.Left;
+        }
+        else
+        {
+            int startCenterX = startPanel.Left + startPanel.Width / 2;
+            left = startCenterX - roundedWidth / 2;
+        }
+        int maxLeft = Math.Max(workPanel.Left, workPanel.Right - roundedWidth);
+        left = Math.Clamp(left, workPanel.Left, maxLeft);
+
+        int top;
+        if (edge.HasFlag(CanvasResizeEdge.Top))
+        {
+            top = startPanel.Bottom - roundedHeight;
+        }
+        else if (edge.HasFlag(CanvasResizeEdge.Bottom))
+        {
+            top = startPanel.Top;
+        }
+        else
+        {
+            int startCenterY = startPanel.Top + startPanel.Height / 2;
+            top = startCenterY - roundedHeight / 2;
+        }
+        int maxTop = Math.Max(workPanel.Top, workPanel.Bottom - roundedHeight);
+        top = Math.Clamp(top, workPanel.Top, maxTop);
+
+        return new NativeMethods.RECT
+        {
+            Left = left,
+            Top = top,
+            Right = left + roundedWidth,
+            Bottom = top + roundedHeight
+        };
     }
 }

@@ -30,6 +30,7 @@ internal static partial class NativeMethods
     internal const uint SWP_FRAMECHANGED = 0x0020;
     internal const uint SWP_SHOWWINDOW = 0x0040;
     internal const uint SWP_HIDEWINDOW = 0x0080;
+    internal const uint SWP_NOCOPYBITS = 0x0100;
     internal const uint SWP_NOOWNERZORDER = 0x0200;
     internal const uint GW_HWNDNEXT = 2;
     internal const uint GW_HWNDPREV = 3;

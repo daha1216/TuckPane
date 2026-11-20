@@ -439,15 +439,19 @@ public sealed class DesktopLayerService : IDisposable
         long style = NativeMethods.GetWindowLongPtr(_window, NativeMethods.GWL_EXSTYLE).ToInt64();
         style = enabled ? style & ~NativeMethods.WS_EX_NOACTIVATE : style | NativeMethods.WS_EX_NOACTIVATE;
         _ = NativeMethods.SetWindowLongPtr(_window, NativeMethods.GWL_EXSTYLE, new IntPtr(style));
+        uint frameFlags = NativeMethods.SWP_NOMOVE | NativeMethods.SWP_NOSIZE | NativeMethods.SWP_FRAMECHANGED |
+            NativeMethods.SWP_NOOWNERZORDER |
+            (enabled
+                ? NativeMethods.SWP_SHOWWINDOW
+                : NativeMethods.SWP_NOZORDER | NativeMethods.SWP_NOACTIVATE);
         _ = NativeMethods.SetWindowPos(
             _window,
-            NativeMethods.HWND_TOP,
+            enabled ? NativeMethods.HWND_TOP : IntPtr.Zero,
             0,
             0,
             0,
             0,
-            NativeMethods.SWP_NOMOVE | NativeMethods.SWP_NOSIZE | NativeMethods.SWP_FRAMECHANGED |
-            NativeMethods.SWP_SHOWWINDOW | NativeMethods.SWP_NOOWNERZORDER);
+            frameFlags);
 
         if (enabled)
         {

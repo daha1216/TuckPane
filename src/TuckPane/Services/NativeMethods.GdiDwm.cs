@@ -106,6 +106,47 @@ internal static partial class NativeMethods
     [DllImport("user32.dll")]
     internal static extern int ReleaseDC(IntPtr hWnd, IntPtr hdc);
 
+    internal const uint SRCCOPY = 0x00CC0020;
+    internal const uint CAPTUREBLT = 0x40000000;
+    internal const uint ULW_ALPHA = 0x00000002;
+    internal const byte AC_SRC_OVER = 0x00;
+    internal const byte AC_SRC_ALPHA = 0x01;
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct BLENDFUNCTION
+    {
+        public byte BlendOp;
+        public byte BlendFlags;
+        public byte SourceConstantAlpha;
+        public byte AlphaFormat;
+    }
+
+    [DllImport("gdi32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool BitBlt(
+        IntPtr hdcDest,
+        int xDest,
+        int yDest,
+        int width,
+        int height,
+        IntPtr hdcSrc,
+        int xSrc,
+        int ySrc,
+        uint rop);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool UpdateLayeredWindow(
+        IntPtr hwnd,
+        IntPtr hdcDst,
+        ref POINT pptDst,
+        ref SIZE psize,
+        IntPtr hdcSrc,
+        ref POINT pptSrc,
+        uint crKey,
+        ref BLENDFUNCTION pblend,
+        uint dwFlags);
+
     [DllImport("user32.dll", ExactSpelling = true)]
     internal static extern int FillRect(IntPtr hdc, ref RECT rect, IntPtr brush);
 

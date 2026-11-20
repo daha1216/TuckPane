@@ -169,5 +169,52 @@ internal static class LiquidGlassAndPerfChecks
         require(applySelStart > 0 && clearSelStart > applySelStart, "找不到 ApplyItemSelectionVisual 方法。");
         require(!selectionCs[applySelStart..clearSelStart].Contains("new SolidColorBrush(", StringComparison.Ordinal),
             "MainWindow.ItemSelection.cs 的 ApplyItemSelectionVisual 仍存在逐项画刷分配。");
+
+        // 7. Panel-aligned 8-direction resize hit zones (56 DIP title band + 36 DIP rounded corners)
+        require(CanvasResizeHitZones.HitTestPanel(200, 10, 400, 456, compactList: false, panelTopDip: 56) == CanvasResizeEdge.None,
+            "标题带上方透明空气不应触发顶部拉伸热区。");
+        require(CanvasResizeHitZones.HitTestPanel(200, 56, 400, 456, compactList: false, panelTopDip: 56) == CanvasResizeEdge.Top,
+            "玻璃面板可见顶边（y=56）必须命中 Top 拉伸热区。");
+        require(CanvasResizeHitZones.HitTestPanel(200, 48, 400, 456, compactList: false, panelTopDip: 56) == CanvasResizeEdge.Top,
+            "玻璃面板可见顶边外沿（y=48）应支持轻松命中 Top。");
+        require(CanvasResizeHitZones.HitTestPanel(200, 450, 400, 456, compactList: false, panelTopDip: 56) == CanvasResizeEdge.Bottom,
+            "玻璃面板底边必须命中 Bottom 拉伸热区。");
+        require(CanvasResizeHitZones.HitTestPanel(24, 56 + 24, 400, 456, compactList: false, panelTopDip: 56) == (CanvasResizeEdge.Left | CanvasResizeEdge.Top),
+            "左上 36 DIP 圆角弧段必须命中 Left|Top 双向拉伸。");
+        require(CanvasResizeHitZones.HitTestPanel(376, 56 + 24, 400, 456, compactList: false, panelTopDip: 56) == (CanvasResizeEdge.Right | CanvasResizeEdge.Top),
+            "右上 36 DIP 圆角弧段必须命中 Right|Top 双向拉伸。");
+        require(CanvasResizeHitZones.HitTestPanel(24, 456 - 24, 400, 456, compactList: false, panelTopDip: 56) == (CanvasResizeEdge.Left | CanvasResizeEdge.Bottom),
+            "左下 36 DIP 圆角弧段必须命中 Left|Bottom 双向拉伸。");
+        require(CanvasResizeHitZones.HitTestPanel(376, 456 - 24, 400, 456, compactList: false, panelTopDip: 56) == (CanvasResizeEdge.Right | CanvasResizeEdge.Bottom),
+            "右下 36 DIP 圆角弧段必须命中 Right|Bottom 双向拉伸。");
+        require(CanvasResizeHitZones.PanelEdgeRectangles(800, 912, 1.5, compactList: false, panelTopPx: 84).Length == 8,
+            "图标模式原生拉伸子窗口应覆盖四边 + 四圆角内弧（共 8 块）。");
+
+        // 8. Opposite-edge anchored resize & lifted consistent full-work-area max scale
+        var liftedRange = OrganizerContentScale.FactorRange(400, 400, 200, 200, 1200, 1200, 1.0, 1.0);
+        require(liftedRange.Max >= 2.99,
+            $"大显示器工作区下最大缩放系数不应被 1.65 锁死，实际 Max={liftedRange.Max}。");
+        var workPanel = new TuckPane.Services.NativeMethods.RECT { Left = 0, Top = 56, Right = 2560, Bottom = 1400 };
+        var startRightEdge = new TuckPane.Services.NativeMethods.RECT { Left = 1900, Top = 300, Right = 2500, Bottom = 900 };
+        double leftPullFactor = OrganizerInteractionMath.CalculateAnchoredResizeFactor(CanvasResizeEdge.Left, -600, 0, 600, 600);
+        require(Math.Abs(leftPullFactor - 2.0) < 0.001, "左拖拉宽 600px 应精确 1:1 跟踪为 2.0x。");
+        var anchoredLeftPull = OrganizerInteractionMath.CreateAnchoredBounds(
+            CanvasResizeEdge.Left, startRightEdge, workPanel, 1200, 1200);
+        require(anchoredLeftPull.Right == startRightEdge.Right && anchoredLeftPull.Width == 1200,
+            "右边缘收纳窗向左拉伸时，右边必须钉死不动且可跨越整屏自由放大。");
+
+        // 9. Zero-flash atomic transition bridge & zero-twitch resize source invariants
+        string resizeCs = File.ReadAllText(Path.Combine(srcRoot, "MainWindow.CanvasResize.cs"));
+        string alignCs = File.ReadAllText(Path.Combine(srcRoot, "MainWindow.Alignment.cs"));
+        string transitionsCs = File.ReadAllText(Path.Combine(srcRoot, "MainWindow.TransitionsAndResize.cs"));
+        require(alignCs.Contains("SWP_NOCOPYBITS", StringComparison.Ordinal),
+            "ApplyCanvasResizeBounds 必须携带 SWP_NOCOPYBITS 防止左/上边缘移动时 GDI BitBlt 撕裂抽搐。");
+        require(resizeCs.Contains("CompositionTarget.Rendering += OnCanvasResizeRendering", StringComparison.Ordinal) &&
+                resizeCs.Contains("BeginCanvasResizeGpuScaling", StringComparison.Ordinal),
+            "画布拉伸必须由单 VSync CompositionTarget.Rendering + GPU 缩放驱动。");
+        require(transitionsCs.Contains("TransitionBridgeOverlay", StringComparison.Ordinal) &&
+                transitionsCs.Contains("CloakForAtomicRelocation", StringComparison.Ordinal) &&
+                transitionsCs.Contains("CommitCompactHandoffAsync", StringComparison.Ordinal),
+            "展开/收起必须通过 TransitionBridgeOverlay + DWMWA_CLOAK 实现零瞬移、零闪烁原子交接。");
     }
 }

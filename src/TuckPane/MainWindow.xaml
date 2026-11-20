@@ -407,27 +407,31 @@
                 <RowDefinition Height="*" />
             </Grid.RowDefinitions>
             <Grid
-                x:Name="ExpandedNameShadowHost"
+                x:Name="ExpandedNameContainer"
                 Grid.Row="0"
-                Margin="16,0"
-                HorizontalAlignment="Stretch"
-                VerticalAlignment="Center"
-                IsHitTestVisible="False" />
-            <TextBlock
-                x:Name="ExpandedNameText"
-                Grid.Row="0"
-                Margin="16,0"
-                HorizontalAlignment="Stretch"
-                VerticalAlignment="Center"
-                AutomationProperties.AutomationId="ExpandedOrganizerName"
-                FontFamily="Microsoft YaHei UI, Segoe UI Variable Display"
-                FontSize="42"
-                FontWeight="SemiBold"
-                Foreground="White"
-                IsHitTestVisible="True"
-                TextAlignment="Center"
-                TextTrimming="CharacterEllipsis"
-                TextWrapping="NoWrap" />
+                HorizontalAlignment="Center"
+                VerticalAlignment="Center">
+                <Grid
+                    x:Name="ExpandedNameShadowHost"
+                    Margin="16,0"
+                    HorizontalAlignment="Stretch"
+                    VerticalAlignment="Stretch"
+                    IsHitTestVisible="False" />
+                <TextBlock
+                    x:Name="ExpandedNameText"
+                    Margin="16,0"
+                    HorizontalAlignment="Stretch"
+                    VerticalAlignment="Center"
+                    AutomationProperties.AutomationId="ExpandedOrganizerName"
+                    FontFamily="Microsoft YaHei UI, Segoe UI Variable Display"
+                    FontSize="42"
+                    FontWeight="SemiBold"
+                    Foreground="White"
+                    IsHitTestVisible="True"
+                    TextAlignment="Center"
+                    TextTrimming="CharacterEllipsis"
+                    TextWrapping="NoWrap" />
+            </Grid>
             <TextBox x:Name="ExpandedNameEditor" Grid.Row="0" Margin="16,0"
                 HorizontalAlignment="Stretch" VerticalAlignment="Center"
                 HorizontalContentAlignment="Stretch" VerticalContentAlignment="Center"

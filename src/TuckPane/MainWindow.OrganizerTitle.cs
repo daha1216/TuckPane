@@ -40,6 +40,7 @@ public sealed partial class MainWindow
         ExpandedNameEditor.Foreground = ExpandedNameText.Foreground;
         ExpandedNameText.Visibility = Visibility.Collapsed;
         ExpandedNameEditor.Visibility = Visibility.Visible;
+        SyncExpandedNameShadow();
         ExpandedNameEditor.Focus(FocusState.Programmatic);
         ExpandedNameEditor.SelectAll();
     }
@@ -61,6 +62,7 @@ public sealed partial class MainWindow
         bool save = _organizerTitleEdit.Finish(commit);
         ExpandedNameEditor.Visibility = Visibility.Collapsed;
         ApplyOrganizerNameVisibility();
+        SyncExpandedNameShadow();
         try
         {
             if (save) await _host.RenameOrganizerAsync(OrganizerId, draft);

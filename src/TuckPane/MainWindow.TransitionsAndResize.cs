@@ -26,14 +26,17 @@ namespace TuckPane;
 public sealed partial class MainWindow
 {
     private const float ExpandSpringDampingRatio = 0.80f;
-    private const int ExpandSpringPeriodMs = 46;
-    private const float CollapseSpringDampingRatio = 0.92f;
-    private const int CollapseSpringPeriodMs = 36;
+    private const int ExpandSpringPeriodMs = 44;
+    private const float CollapseSpringDampingRatio = 0.94f;
+    private const int CollapseSpringPeriodMs = 32;
     private const float StationSpringDampingRatio = 0.94f;
     private const int StationSpringPeriodMs = 40;
     private const int ReducedMotionTransitionDurationMs = 140;
-    private const int DwmBatchSafetyTimeoutMs = 900;
+    private const int ExpandBatchSafetyTimeoutMs = 480;
+    private const int CollapseBatchSafetyTimeoutMs = 300;
+    private const int StationBatchSafetyTimeoutMs = 380;
     private const int PreWarmFrameTimeoutMs = 50;
+    private const int AtomicRelocationFrameTimeoutMs = 32;
 
     // 100% DWM GPU Compositor transition resources (reused across every expand/collapse, zero per-frame allocations).
     private CompositionPropertySet? _transitionProps;
@@ -65,6 +68,8 @@ public sealed partial class MainWindow
     private CubicBezierEasingFunction? _reducedMotionEaseOut;
 
     private TransitionCanvasPlan? _activeTransitionCanvas;
+    private TransitionBridgeOverlay? _transitionBridge;
+    private bool _transitionWindowCloaked;
     private bool _dwmTransitionRunning;
     private bool _dwmTransitionExpressionsBound;
     private bool _dwmTransitionStationBound;
@@ -208,6 +213,13 @@ public sealed partial class MainWindow
                     Visual expandedVisual = GetExpandedCompositionVisual();
                     Visual compactVisual = GetCompactCompositionVisual();
                     bool showCompactDuringTransition = !contained && (!reducedMotion || ContainsRect(expandedBounds, compactOrigin));
+                    // Cloak the HWND under a 1:1 frozen screen snapshot before relocating/resizing to
+                    // CanvasBounds so DWM never flashes CompactView at the canvas top-left for 1 frame.
+                    bool shouldCloakForCanvasRelocation = !contained && _runtimeVisible && !RectsEqual(compactOrigin, plan.CanvasBounds);
+                    if (shouldCloakForCanvasRelocation)
+                    {
+                        CloakForAtomicRelocation(compactOrigin, topmost: false);
+                    }
 
                     ExpandedView.Visibility = Visibility.Visible;
                     ExpandedView.Opacity = 1;
@@ -242,7 +254,7 @@ public sealed partial class MainWindow
                     }
                     else
                     {
-                        ApplyBounds(plan.CanvasBounds, show: _runtimeVisible);
+                        ApplyBounds(plan.CanvasBounds, show: _runtimeVisible, preserveZOrder: shouldCloakForCanvasRelocation);
                     }
                     _lastTransitionWindowLeft = plan.CanvasBounds.Left;
                     _lastTransitionWindowTop = plan.CanvasBounds.Top;
@@ -257,6 +269,44 @@ public sealed partial class MainWindow
 
             trace?.Advance(AnimationTraceStage.Animation);
             await RunVisualTransitionAsync(1, transition.Token);
+            if (!IsCurrent() || transition.IsCancellationRequested) return;
+
+            if (_activeTransitionCanvas is { IsUnionNeeded: true } expandedUnionPlan &&
+                expandedUnionPlan.ExpandedOffsetDip.LengthSquared() > 0.25f)
+            {
+                trace?.Advance(AnimationTraceStage.Handoff);
+                bool canCloak = _runtimeVisible || contained;
+                if (canCloak)
+                {
+                    CloakForAtomicRelocation(expandedUnionPlan.ExpandedBounds, topmost: contained);
+                }
+
+                _dwmTransitionRunning = false;
+                _activeTransitionCanvas = null;
+                _collapseTransitionGeometry = null;
+                StopTransitionCompositionAnimations();
+                ClearExpandedTransitionSweep();
+                CompactView.Visibility = Visibility.Collapsed;
+                CompactView.Opacity = 1;
+                ResetCompactVisualToRest();
+                RestoreExpandedViewDefaultLayout();
+                ExpandedView.Opacity = 1;
+                ResetExpandedTransitionOpacities();
+                ResetExpandedVisualToRest(opacity: 1f);
+                ApplyBounds(expandedUnionPlan.ExpandedBounds, show: _runtimeVisible || contained, preserveZOrder: true);
+                _lastTransitionWindowLeft = expandedUnionPlan.ExpandedBounds.Left;
+                _lastTransitionWindowTop = expandedUnionPlan.ExpandedBounds.Top;
+                _animationTrace?.Metrics.RecordWork(AnimationTraceWork.UpdateLayout);
+                WindowRoot.UpdateLayout();
+                UpdateSurfaceClips();
+
+                if (canCloak)
+                {
+                    await WaitForNextRenderedAsync(transition.Token, AtomicRelocationFrameTimeoutMs);
+                    if (!IsCurrent() || transition.IsCancellationRequested) return;
+                    UncloakAfterAtomicRelocation(flushDwm: true);
+                }
+            }
         }
         catch (OperationCanceledException)
         {
@@ -321,6 +371,11 @@ public sealed partial class MainWindow
                 UpdateCanvasResizeEdgeWindows(show: true);
                 if (trace is not null) trace.Outcome = "completed";
             }
+            if (requestVersion == _transitionRequestVersion &&
+                (_transitionWindowCloaked || _transitionBridge is { IsVisible: true }))
+            {
+                ForceRestoreUncloakedState();
+            }
         }
     }
 
@@ -355,6 +410,7 @@ public sealed partial class MainWindow
         CancellationTokenSource transition = StartTransition(modeCancellation);
         _expanded = false;
         _animating = true;
+        bool compactHandoffCompleted = false;
         try
         {
             RefreshPerformanceSettings();
@@ -399,6 +455,15 @@ public sealed partial class MainWindow
                     Visual compactVisual = GetCompactCompositionVisual();
                     Visual expandedVisual = GetExpandedCompositionVisual();
                     bool showCompactDuringTransition = !contained && (!reducedMotion || ContainsRect(plan.ExpandedBounds, compactTarget));
+                    // Cloak left/top-offset union expansions before moving the HWND origin so
+                    // ExpandedView never jumps up/left for 1 frame before Margin commits.
+                    bool shouldCloakForCanvasRelocation = plan.IsUnionNeeded &&
+                        plan.ExpandedOffsetDip.LengthSquared() > 0.25f &&
+                        (_runtimeVisible || contained);
+                    if (shouldCloakForCanvasRelocation)
+                    {
+                        CloakForAtomicRelocation(plan.ExpandedBounds, topmost: contained);
+                    }
                     expandedVisual.IsVisible = true;
 
                     if (showCompactDuringTransition)
@@ -442,6 +507,16 @@ public sealed partial class MainWindow
 
             trace?.Advance(AnimationTraceStage.Animation);
             await RunVisualTransitionAsync(0, transition.Token);
+            if (!IsCurrent() || transition.IsCancellationRequested) return;
+
+            if (!isStation && !contained)
+            {
+                trace?.Advance(AnimationTraceStage.Handoff);
+                bool needsAtomicHandoff = ShouldUseAtomicCompactHandoff(_activeTransitionCanvas, compactTarget);
+                await CommitCompactHandoffAsync(compactTarget, needsAtomicHandoff, transition.Token);
+                if (!IsCurrent() || transition.IsCancellationRequested) return;
+                compactHandoffCompleted = true;
+            }
         }
         catch (OperationCanceledException)
         {
@@ -468,45 +543,97 @@ public sealed partial class MainWindow
                 _dwmTransitionRunning = false;
                 _activeTransitionCanvas = null;
                 _collapseTransitionGeometry = null;
-                StopTransitionCompositionAnimations();
-                ClearExpandedTransitionSweep();
                 _host.NotifyDockOpenStateChanged();
-                CompactView.Opacity = 1;
-                if (isStation)
+                if (!compactHandoffCompleted)
                 {
-                    RestoreExpandedViewDefaultLayout();
-                    ExpandedView.Visibility = Visibility.Collapsed;
-                    ExpandedView.Opacity = 0;
-                    ResetExpandedTransitionOpacities();
-                    ResetExpandedVisualToRest(opacity: 0f);
-                    ClearStationTransitionVisuals();
+                    StopTransitionCompositionAnimations();
+                    ClearExpandedTransitionSweep();
+                    CompactView.Opacity = 1;
+                    if (isStation)
+                    {
+                        RestoreExpandedViewDefaultLayout();
+                        ExpandedView.Visibility = Visibility.Collapsed;
+                        ExpandedView.Opacity = 0;
+                        ResetExpandedTransitionOpacities();
+                        ResetExpandedVisualToRest(opacity: 0f);
+                        ClearStationTransitionVisuals();
+                    }
+                    else if (contained)
+                    {
+                        ResetCompactVisualToRest();
+                        CompactView.Visibility = Visibility.Collapsed;
+                        RestoreExpandedViewDefaultLayout();
+                        ExpandedView.Visibility = Visibility.Collapsed;
+                        ExpandedView.Opacity = 0;
+                        ResetExpandedTransitionOpacities();
+                        ResetExpandedVisualToRest(opacity: 0f);
+                        _appWindow?.Hide();
+                    }
+                    else
+                    {
+                        CommitCompactHandoff(compactTarget);
+                    }
+                    ClearExpandedFilter(releaseInputActivation: true);
+                    if (isStation || contained) _appWindow?.Hide();
+                    _desktopLayer?.SetExpanded(false, showWindow: false);
                 }
-                else if (contained)
-                {
-                    ResetCompactVisualToRest();
-                    CompactView.Visibility = Visibility.Collapsed;
-                    RestoreExpandedViewDefaultLayout();
-                    ExpandedView.Visibility = Visibility.Collapsed;
-                    ExpandedView.Opacity = 0;
-                    ResetExpandedTransitionOpacities();
-                    ResetExpandedVisualToRest(opacity: 0f);
-                    _appWindow?.Hide();
-                }
-                else
-                {
-                    CommitCompactHandoff(compactTarget);
-                }
-                ClearExpandedFilter(releaseInputActivation: true);
                 CancelItemMarquee();
                 ClearItemSelection();
                 _keyboardFocusedIndex = -1;
-                if (isStation || contained) _appWindow?.Hide();
-                _desktopLayer?.SetExpanded(false, showWindow: false);
                 RefreshPerformanceSettings();
                 _host.NotifyCollapsed(this);
                 if (trace is not null) trace.Outcome = "completed";
             }
+            if (requestVersion == _transitionRequestVersion &&
+                (_transitionWindowCloaked || _transitionBridge is { IsVisible: true }))
+            {
+                ForceRestoreUncloakedState();
+            }
         }
+    }
+
+    private void CloakForAtomicRelocation(NativeMethods.RECT? bridgeRect, bool topmost = false)
+    {
+        if (_closing || _hwnd == IntPtr.Zero || !NativeMethods.IsWindow(_hwnd)) return;
+        bool bridgeShown = false;
+        if (bridgeRect is { Width: > 0, Height: > 0 } rect)
+        {
+            _transitionBridge ??= new TransitionBridgeOverlay();
+            bridgeShown = _transitionBridge.CaptureAndShow(rect, _hwnd, topmost);
+        }
+        if (!_transitionWindowCloaked)
+        {
+            if (NativeMethods.SetWindowCloaked(_hwnd, true))
+            {
+                _transitionWindowCloaked = true;
+            }
+            else if (bridgeShown)
+            {
+                _transitionBridge?.Hide();
+            }
+        }
+    }
+
+    private void UncloakAfterAtomicRelocation(bool flushDwm = true)
+    {
+        bool wasCloaked = _transitionWindowCloaked;
+        _transitionWindowCloaked = false;
+        if (wasCloaked && !_startupCloaked && _hwnd != IntPtr.Zero && NativeMethods.IsWindow(_hwnd))
+        {
+            _ = NativeMethods.SetWindowCloaked(_hwnd, false);
+            if (flushDwm) _ = NativeMethods.DwmFlush();
+        }
+        _transitionBridge?.Hide();
+    }
+
+    private void ForceRestoreUncloakedState() => UncloakAfterAtomicRelocation(flushDwm: false);
+
+    private bool ShouldUseAtomicCompactHandoff(TransitionCanvasPlan? settledPlan, NativeMethods.RECT compactTarget)
+    {
+        if (!_runtimeVisible || _hwnd == IntPtr.Zero) return false;
+        if (settledPlan is { } plan)
+            return !RectsEqual(plan.CanvasBounds, compactTarget);
+        return TryGetLogicalWindowRect(out NativeMethods.RECT currentRect) && !RectsEqual(currentRect, compactTarget);
     }
 
     private void RecoverFailedTransition(CancellationTokenSource transition)
@@ -547,8 +674,47 @@ public sealed partial class MainWindow
             UpdateSurfaceClips();
         }
         _desktopLayer?.SetExpanded(false, showWindow: false);
+        ForceRestoreUncloakedState();
         RefreshPerformanceSettings();
         _host.NotifyCollapsed(this);
+    }
+
+    private async Task CommitCompactHandoffAsync(
+        NativeMethods.RECT compactTarget,
+        bool useAtomicCloak,
+        CancellationToken cancellationToken)
+    {
+        bool cloakedHere = false;
+        try
+        {
+            if (useAtomicCloak)
+            {
+                CloakForAtomicRelocation(compactTarget, topmost: false);
+                cloakedHere = _transitionWindowCloaked;
+            }
+
+            _dwmTransitionRunning = false;
+            _activeTransitionCanvas = null;
+            _collapseTransitionGeometry = null;
+            CommitCompactHandoff(compactTarget);
+            ClearExpandedFilter(releaseInputActivation: true);
+            _desktopLayer?.SetExpanded(false, showWindow: false);
+
+            if (cloakedHere)
+            {
+                await WaitForNextRenderedAsync(cancellationToken, AtomicRelocationFrameTimeoutMs);
+                if (_closing || cancellationToken.IsCancellationRequested) return;
+                UncloakAfterAtomicRelocation(flushDwm: true);
+                cloakedHere = false;
+            }
+        }
+        finally
+        {
+            if (cloakedHere && !cancellationToken.IsCancellationRequested)
+            {
+                ForceRestoreUncloakedState();
+            }
+        }
     }
 
     private void CommitCompactHandoff(NativeMethods.RECT compactTarget)
@@ -611,6 +777,7 @@ public sealed partial class MainWindow
                 UpdateSurfaceClips();
             }
         }
+        ForceRestoreUncloakedState();
         _host.NotifyDockOpenStateChanged();
         RefreshPerformanceSettings();
     }
@@ -784,6 +951,7 @@ public sealed partial class MainWindow
         ResetExpandedVisualToRest(opacity: _expanded ? 1f : 0f);
         ResetCompactVisualToRest();
         if (_stationTransitionClip is not null) ClearStationTransitionVisuals();
+        ForceRestoreUncloakedState();
     }
 
     private void EnsureTransitionCompositionResources()
@@ -881,6 +1049,9 @@ public sealed partial class MainWindow
         }
         try { StopTransitionCompositionAnimations(); } catch { }
         try { ClearExpandedTransitionSweep(); } catch { }
+        ForceRestoreUncloakedState();
+        _transitionBridge?.Dispose();
+        _transitionBridge = null;
         _dwmTransitionRunning = false;
         _activeTransitionCanvas = null;
 
@@ -1220,6 +1391,8 @@ public sealed partial class MainWindow
             _dwmTransitionRunning = false;
             _transitionProgress = target;
             _transitionVelocity = 0;
+            if (_transitionWindowCloaked)
+                UncloakAfterAtomicRelocation(flushDwm: true);
             return true;
         }
 
@@ -1251,13 +1424,21 @@ public sealed partial class MainWindow
             animation = spring;
         }
 
+        int safetyTimeoutMs = reducedMotion
+            ? ReducedMotionTransitionDurationMs + 80
+            : isStation
+                ? StationBatchSafetyTimeoutMs
+                : expanding
+                    ? ExpandBatchSafetyTimeoutMs
+                    : CollapseBatchSafetyTimeoutMs;
+
         using IDisposable clockBoost = CompositorClockBoost.Acquire();
         var tcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
 
         CompositionScopedBatch? batch = null;
         TypedEventHandler<object, CompositionBatchCompletedEventArgs>? completedHandler = null;
         var safetyTimer = DispatcherQueue.CreateTimer();
-        safetyTimer.Interval = TimeSpan.FromMilliseconds(DwmBatchSafetyTimeoutMs);
+        safetyTimer.Interval = TimeSpan.FromMilliseconds(safetyTimeoutMs);
         safetyTimer.IsRepeating = false;
         TypedEventHandler<Microsoft.UI.Dispatching.DispatcherQueueTimer, object>? timeoutHandler =
             (_, _) => tcs.TrySetResult(false);
@@ -1278,11 +1459,18 @@ public sealed partial class MainWindow
             _transitionVelocity = 0;
             _animationTrace?.Metrics.RecordWork(AnimationTraceWork.VisualFrame);
 
+            long dwmStartedAt = Stopwatch.GetTimestamp();
             props.StartAnimation("Progress", animation);
             batch.End();
+            if (_transitionWindowCloaked)
+            {
+                UncloakAfterAtomicRelocation(flushDwm: true);
+            }
             safetyTimer.Start();
 
             bool completedByBatch = await tcs.Task;
+            double elapsedMs = Stopwatch.GetElapsedTime(dwmStartedAt).TotalMilliseconds;
+            AppLogger.Performance($"dwm-transition dir={(expanding ? "expand" : "collapse")} elapsed={elapsedMs:0}ms batch={completedByBatch}");
             _animationTrace?.Metrics.RecordWait(rendered: true, completed: completedByBatch);
 
             if (!cancellationToken.IsCancellationRequested)
@@ -1449,6 +1637,10 @@ public sealed partial class MainWindow
                     _transitionVelocity = scaledVel / 100.0;
                 }
                 ApplyTransitionFrame(_transitionProgress, reducedMotion);
+                if (_transitionWindowCloaked)
+                {
+                    UncloakAfterAtomicRelocation(flushDwm: true);
+                }
                 if (Math.Abs(target - _transitionProgress) <= 0.001 && Math.Abs(_transitionVelocity) <= 0.01)
                 {
                     _transitionProgress = target;
@@ -1890,175 +2082,6 @@ public sealed partial class MainWindow
             ReferenceEquals(e.OriginalSource, ExpandedNameText);
     }
 
-    private bool TryBeginCanvasResize(CanvasResizeEdge requestedEdge = CanvasResizeEdge.None)
-    {
-        if (_organizerTitleEdit.IsBusy || _closing || _widgetGesture.IsCompleting || _resizeGesture.IsCompleting) return false;
-        if (IsDock || _definition.PlacementMode == OrganizerPlacementMode.Station || !_expanded || _animating ||
-            _canvasResize is not null || _shellDragActive || _itemReorderSession is not null ||
-            !NativeMethods.GetCursorPos(out NativeMethods.POINT cursor) ||
-            !TryGetLogicalWindowRect(out NativeMethods.RECT bounds)) return false;
-        CanvasResizeEdge edge = requestedEdge == CanvasResizeEdge.None
-            ? GetCanvasResizeEdge(cursor, bounds)
-            : requestedEdge;
-        if (edge == CanvasResizeEdge.None) return false;
-
-        DisplayInfo display = DisplayPlacementService.ForBounds(bounds) with
-        {
-            Scale = Math.Max(1, NativeMethods.GetDpiForWindow(_hwnd) / 96d)
-        };
-        bool compactList = IsCompactList;
-        double startScale = 1;
-        int titleHeightPx = GetExpandedTitleBandPx(display.Scale);
-        int panelHeightPx = Math.Max(1, bounds.Height - titleHeightPx);
-        WindowAlignmentInsets? alignmentInsets = OrganizerInteractionMath.ShouldUseWindowAlignment(
-                _host.State.GlobalSettings.WindowAlignmentEnabled, true, _definition.PlacementMode, false, IsPermanentlyExpanded) &&
-            TryGetWindowAlignmentFrame(out NativeMethods.RECT alignmentFrame)
-                ? WindowAlignmentInsets.From(bounds, alignmentFrame) : null;
-        NativeMethods.RECT work = alignmentInsets is WindowAlignmentInsets insets
-            ? insets.ToWindow(display.Work)
-            : DisplayPlacementService.GetExpandedWorkArea(display);
-        double baseWidth = bounds.Width / display.Scale;
-        double baseHeight = panelHeightPx / display.Scale;
-        var minimumSize = compactList
-            ? (OrganizerLimits.MinimumCompactListCanvasWidthDip, OrganizerLimits.MinimumCompactListCanvasHeightDip)
-            : DisplayPlacementService.CalculateMinimumExpandedSizeDip(_definition.Layout, .5);
-        int centerX = bounds.Left + bounds.Width / 2;
-        int centerY = bounds.Top + titleHeightPx + panelHeightPx / 2;
-        double maximumWidth = Math.Max(1, 2d * Math.Min(centerX - work.Left, work.Right - centerX)) / display.Scale;
-        double maximumHeight = Math.Max(1, 2d * Math.Min(centerY - work.Top - titleHeightPx, work.Bottom - centerY)) / display.Scale;
-        (double minimumScale, double maximumScale) = OrganizerContentScale.FactorRange(
-            baseWidth, baseHeight, minimumSize.Item1, minimumSize.Item2, maximumWidth, maximumHeight,
-            ContentScale, compactList ? _definition.CompactListItemScale : _definition.ItemScale);
-
-        _ = NativeMethods.SetCapture(_hwnd);
-        if (NativeMethods.GetCapture() != _hwnd) return false;
-        _dragCurrentBounds = bounds;
-        _hasPendingCanvasResizeCursor = false;
-        if (!_resizeGesture.TryStart()) return false;
-        ClearWindowAlignment();
-        _canvasResize = new(
-            edge,
-            cursor,
-            bounds,
-            compactList,
-            startScale,
-            ContentScale,
-            baseWidth,
-            baseHeight,
-            minimumScale,
-            maximumScale,
-            display.Scale,
-            work,
-            alignmentInsets,
-            display);
-        ResetHoverWave();
-        SetCanvasResizeCursor(edge);
-        _canvasResizeClockBoost ??= CompositorClockBoost.Acquire();
-        if (!_canvasResizeInputTimer.IsRunning) _canvasResizeInputTimer.Start();
-        return true;
-    }
-
-    private void PollCanvasResizeInput()
-    {
-        if (_canvasResize is null)
-        {
-            _canvasResizeInputTimer.Stop();
-            return;
-        }
-        bool leftButtonDown = (NativeMethods.GetAsyncKeyState(NativeMethods.VK_LBUTTON) & 0x8000) != 0;
-        if (!_expanded || _animating || !NativeMethods.GetCursorPos(out NativeMethods.POINT cursor))
-            return;
-        if (_canvasResizeProbeRunning)
-            return;
-        if (leftButtonDown)
-        {
-            CommitCanvasResize(cursor);
-        }
-        else
-        {
-            _ = FinishCanvasResizeAsync(cursor);
-        }
-    }
-
-    private void AttachCanvasResizeWindowProc(IntPtr window)
-    {
-        IntPtr resizeWindowProc = Marshal.GetFunctionPointerForDelegate(_canvasResizeWindowProc);
-        if (NativeMethods.GetWindowLongPtr(window, NativeMethods.GWLP_WNDPROC) == resizeWindowProc) return;
-        IntPtr previous = NativeMethods.SetWindowLongPtr(
-            window,
-            NativeMethods.GWLP_WNDPROC,
-            resizeWindowProc);
-        if (previous != IntPtr.Zero) _canvasResizeOriginalWindowProcs[window] = previous;
-    }
-
-    private void UpdateCanvasResizeEdgeWindows(bool show)
-    {
-        if (_hwnd == IntPtr.Zero || !NativeMethods.IsWindow(_hwnd)) return;
-        if (!show || IsDock || _definition.PlacementMode == OrganizerPlacementMode.Station)
-        {
-            foreach (IntPtr edgeWindow in _canvasResizeEdgeWindows)
-            {
-                _ = NativeMethods.SetWindowPos(
-                    edgeWindow,
-                    IntPtr.Zero,
-                    0,
-                    0,
-                    0,
-                    0,
-                    NativeMethods.SWP_NOMOVE | NativeMethods.SWP_NOSIZE | NativeMethods.SWP_NOACTIVATE | NativeMethods.SWP_HIDEWINDOW);
-            }
-            return;
-        }
-        if (_canvasResizeEdgeWindows.Count == 0)
-        {
-            for (int index = 0; index < 4; index++)
-            {
-                IntPtr edgeWindow = NativeMethods.CreateWindowEx(
-                    NativeMethods.WS_EX_LAYERED | NativeMethods.WS_EX_NOACTIVATE,
-                    "STATIC",
-                    null,
-                    NativeMethods.WS_CHILD | NativeMethods.WS_VISIBLE,
-                    0,
-                    0,
-                    1,
-                    1,
-                    _hwnd,
-                    IntPtr.Zero,
-                    IntPtr.Zero,
-                    IntPtr.Zero);
-                if (edgeWindow == IntPtr.Zero) continue;
-                _ = NativeMethods.SetLayeredWindowAttributes(edgeWindow, 0, 1, NativeMethods.LWA_ALPHA);
-                AttachCanvasResizeWindowProc(edgeWindow);
-                _canvasResizeEdgeWindows.Add(edgeWindow);
-            }
-        }
-
-        if (_canvasResizeEdgeWindows.Count != 4 || !NativeMethods.GetClientRect(_hwnd, out NativeMethods.RECT client)) return;
-        int width = Math.Max(1, client.Width);
-        int height = Math.Max(1, client.Height);
-        var rectangles = CanvasResizeHitZones.EdgeRectangles(
-            width, height, NativeMethods.GetDpiForWindow(_hwnd) / 96d, IsCompactList);
-        for (int index = 0; index < rectangles.Length; index++)
-        {
-            var rectangle = rectangles[index];
-            _ = NativeMethods.SetWindowPos(
-                _canvasResizeEdgeWindows[index],
-                NativeMethods.HWND_TOP,
-                rectangle.X,
-                rectangle.Y,
-                rectangle.Width,
-                rectangle.Height,
-                NativeMethods.SWP_NOACTIVATE | NativeMethods.SWP_SHOWWINDOW);
-        }
-    }
-
-    private void RestoreCanvasResizeWindowProc(IntPtr window)
-    {
-        if (!_canvasResizeOriginalWindowProcs.Remove(window, out IntPtr previous) || !NativeMethods.IsWindow(window)) return;
-        IntPtr current = NativeMethods.GetWindowLongPtr(window, NativeMethods.GWLP_WNDPROC);
-        if (current == Marshal.GetFunctionPointerForDelegate(_canvasResizeWindowProc))
-            _ = NativeMethods.SetWindowLongPtr(window, NativeMethods.GWLP_WNDPROC, previous);
-    }
 
     private void BeginWidgetPress(UIElement captureTarget, PointerRoutedEventArgs e, Point point, bool expanded)
     {
@@ -2260,308 +2283,6 @@ public sealed partial class MainWindow
         _interactionSaveTimer.Start();
     }
 
-    private void CommitCanvasResize(NativeMethods.POINT cursor)
-    {
-        if (_canvasResize is not { } session) return;
-        ClearStationTransitionVisuals();
-        if (session.CompactList)
-        {
-            CommitCompactCanvasResize(session, cursor);
-            return;
-        }
-        bool align = session.AlignmentInsets is not null &&
-            OrganizerInteractionMath.ShouldUseWindowAlignment(_host.State.GlobalSettings.WindowAlignmentEnabled,
-                true, _definition.PlacementMode, false, IsPermanentlyExpanded);
-        WindowAlignmentResult? alignment = null;
-        int titleHeightPx = GetExpandedTitleBandPx(session.DisplayScale);
-        int startPanelHeightPx = Math.Max(1, session.StartBounds.Height - titleHeightPx);
-        double factor = OrganizerInteractionMath.CalculateResizeFactor(
-            session.Edge,
-            cursor.X - session.StartCursor.X,
-            cursor.Y - session.StartCursor.Y,
-            session.StartBounds.Width,
-            startPanelHeightPx);
-        double canvasScale = Math.Clamp(
-            session.StartCanvasScale * factor,
-            session.MinimumCanvasScale,
-            session.MaximumCanvasScale);
-        int centerX = session.StartBounds.Left + session.StartBounds.Width / 2;
-        int centerY = session.StartBounds.Top + titleHeightPx + startPanelHeightPx / 2;
-        (int left, int top, int width, int height) = OrganizerInteractionMath.CreateCenteredBounds(
-            centerX,
-            centerY,
-            session.BaseWidthDip * canvasScale * session.DisplayScale,
-            session.BaseHeightDip * canvasScale * session.DisplayScale);
-        var bounds = new NativeMethods.RECT
-        {
-            Left = left,
-            Top = top - titleHeightPx,
-            Right = left + width,
-            Bottom = top + height
-        };
-        if (align && session.AlignmentInsets is WindowAlignmentInsets scaleInsets)
-        {
-            uint dpi = Math.Max(96u, NativeMethods.GetDpiForWindow(_hwnd));
-            WindowAlignmentScaleResult snapped = WindowAlignmentMath.AlignScale(centerX, centerY,
-                session.BaseWidthDip * session.DisplayScale, session.BaseHeightDip * session.DisplayScale,
-                canvasScale, session.MinimumCanvasScale, session.MaximumCanvasScale,
-                session.Display.Work, _host.GetWindowAlignmentTargets(this, session.Display), session.Edge,
-                WindowAlignmentMath.DipToPx(WindowAlignmentMath.SnapDistanceDip, dpi),
-                WindowAlignmentMath.DipToPx(WindowAlignmentMath.ReleaseDistanceDip, dpi), _windowAlignmentState);
-            canvasScale = snapped.Scale;
-            alignment = snapped.Alignment;
-            bounds = scaleInsets.ToWindow(snapped.Alignment.Bounds);
-            width = snapped.Alignment.Bounds.Width;
-            height = snapped.Alignment.Bounds.Height;
-        }
-        bool unchangedCanvas = RectsEqual(bounds, _dragCurrentBounds);
-        if (unchangedCanvas) return;
-        double previousFit = _contentDisplayFit;
-        double previousStoredScale = session.CompactList ? _definition.CompactListContentScale : _definition.IconContentScale;
-        _contentDisplayFit = 1;
-        double nextScale = session.StartContentScale * canvasScale;
-        if (session.CompactList) _definition.CompactListContentScale = nextScale;
-        else _definition.IconContentScale = nextScale;
-        // SizeChanged may run inside SetWindowPos: expose matching metrics first.
-        ApplyExpandedContentInset();
-        if (!ApplyCanvasResizeBounds(bounds, alignment))
-        {
-            if (session.CompactList) _definition.CompactListContentScale = previousStoredScale;
-            else _definition.IconContentScale = previousStoredScale;
-            _contentDisplayFit = previousFit;
-            ApplyExpandedContentInset();
-            return;
-        }
-        if (session.CompactList)
-        {
-            _definition.CompactListCanvasWidthDip = width / session.DisplayScale;
-            _definition.CompactListCanvasHeightDip = height / session.DisplayScale;
-        }
-        else
-        {
-            _definition.ManualCanvasBaseWidthDip = width / session.DisplayScale / _definition.CanvasScale;
-            _definition.ManualCanvasBaseHeightDip = height / session.DisplayScale / _definition.CanvasScale;
-        }
-        ConfigureItemsLayout();
-        UpdateCanvasResizeEdgeWindows(show: true);
-    }
-
-    private void QueueCanvasResizeCompletion()
-    {
-        long version = _resizeGesture.Version;
-        _ = DispatcherQueue.TryEnqueue(() =>
-        {
-            if (!_closing) _ = RunSafelyAsync(() => FinishCanvasResizeAsync(version: version), "缩放结束失败");
-        });
-    }
-
-    private Task FinishCanvasResizeAsync(NativeMethods.POINT? finalCursor = null, long? version = null) =>
-        _resizeGesture.CompleteAsync(version ?? _resizeGesture.Version, () => FinishCanvasResizeCoreAsync(finalCursor));
-
-    private async Task FinishCanvasResizeCoreAsync(NativeMethods.POINT? finalCursor)
-    {
-        if (_canvasResize is null || _closing) return;
-        NativeMethods.POINT cursor;
-        try
-        {
-            StopCanvasResizeRendering();
-            if (finalCursor is { } suppliedCursor) CommitCanvasResize(suppliedCursor);
-            else if (NativeMethods.GetCursorPos(out cursor)) CommitCanvasResize(cursor);
-        }
-        finally
-        {
-            // ReleaseCapture synchronously sends WM_CAPTURECHANGED. Retire the session first.
-            _canvasResize = null;
-            _canvasResizeInputTimer.Stop();
-            _canvasResizeClockBoost?.Dispose();
-            _canvasResizeClockBoost = null;
-            ClearWindowAlignment();
-            if (NativeMethods.GetCapture() == _hwnd) _ = NativeMethods.ReleaseCapture();
-            RefreshPerformanceSettings();
-        }
-        ConfigureItemsLayout();
-        UpdateCompactPreviewItemScale();
-        UpdateSurfaceClips();
-        if (NativeMethods.GetCursorPos(out cursor)) SetCanvasResizeCursor(GetCanvasResizeEdge(cursor));
-        _interactionSaveTimer.Stop();
-        CaptureExpandedPosition();
-        await SaveStateAsync();
-        if (!_closing) _desktopLayer?.Reattach();
-    }
-
-#if DEBUG
-    private async Task RunCanvasResizeProbeAsync()
-    {
-        await Task.Delay(100);
-        if (!TryGetLogicalWindowRect(out NativeMethods.RECT startBounds))
-            throw new InvalidOperationException("Resize probe could not read the organizer bounds.");
-
-        var startCursor = new NativeMethods.POINT
-        {
-            X = startBounds.Right - 8,
-            Y = startBounds.Top + startBounds.Height / 2
-        };
-        _ = NativeMethods.SetCursorPos(startCursor.X, startCursor.Y);
-        await Task.Delay(50);
-        CanvasResizeEdge edge = GetCanvasResizeEdge(startCursor, startBounds);
-        _canvasResizeProbeRunning = true;
-        if (!TryBeginCanvasResize(edge)) throw new InvalidOperationException("Resize probe could not start resizing.");
-        bool cursorMatches = SetCanvasResizeCursor(edge) && GetCanvasResizeHitTest(edge) == NativeMethods.HTRIGHT;
-
-        var samples = new List<NativeMethods.RECT>();
-        NativeMethods.POINT finalCursor = startCursor;
-        for (int step = 1; step <= 12; step++)
-        {
-            finalCursor = new NativeMethods.POINT { X = startCursor.X - step * 8, Y = startCursor.Y };
-            QueueCanvasResize(finalCursor);
-            await Task.Delay(25);
-            if (TryGetLogicalWindowRect(out NativeMethods.RECT sample)) samples.Add(sample);
-        }
-
-        var releaseClock = Stopwatch.StartNew();
-        Task finish = FinishCanvasResizeAsync(finalCursor);
-        _canvasResizeProbeRunning = false;
-        long releaseSettledMs = releaseClock.ElapsedMilliseconds;
-        _ = TryGetLogicalWindowRect(out NativeMethods.RECT beforeFreeMove);
-        _ = NativeMethods.SetCursorPos(finalCursor.X - 120, finalCursor.Y);
-        await Task.Delay(200);
-        _ = TryGetLogicalWindowRect(out NativeMethods.RECT afterFreeMove);
-        await finish;
-        WindowRoot.UpdateLayout();
-
-        int distinctWidths = samples.Select(sample => sample.Width).Distinct().Count();
-        double dpiScale = Math.Max(1, NativeMethods.GetDpiForWindow(_hwnd) / 96d);
-        int titleHeightPx = GetExpandedTitleBandPx(dpiScale);
-        double startRatio = startBounds.Width / (double)Math.Max(1, startBounds.Height - titleHeightPx);
-        double maximumAspectErrorPx = samples.Count == 0
-            ? double.PositiveInfinity
-            : samples.Max(sample => Math.Abs(sample.Width - Math.Max(1, sample.Height - titleHeightPx) * startRatio));
-        bool surfaceMatchesClient = NativeMethods.GetClientRect(_hwnd, out NativeMethods.RECT client) &&
-            Math.Abs(ExpandedSurfaceHost.ActualWidth - client.Width / dpiScale) <= 1 &&
-            Math.Abs(ExpandedSurfaceHost.ActualHeight + DisplayPlacementService.ExpandedTitleBandDip - client.Height / dpiScale) <= 1;
-        Visual expandedVisual = GetExpandedCompositionVisual();
-        bool transitionVisualReset = (_stationTransitionClip is null || expandedVisual.Clip != _stationTransitionClip) &&
-            Vector3.Distance(expandedVisual.Scale, Vector3.One) <= .001f &&
-            Vector3.Distance(GetExpandedContentVisualTranslation(), Vector3.Zero) <= .001f;
-        bool followedAfterRelease = !RectsEqual(beforeFreeMove, afterFreeMove);
-        bool passed = edge == CanvasResizeEdge.Right &&
-            GetCanvasResizeHitTest(edge) == NativeMethods.HTRIGHT &&
-            cursorMatches && distinctWidths >= 9 && maximumAspectErrorPx <= 1 &&
-            surfaceMatchesClient && transitionVisualReset && releaseSettledMs <= 120 && !followedAfterRelease;
-        string resultPath = Path.Combine(AppPaths.LocalRoot, "resize-probe.json");
-        string result = JsonSerializer.Serialize(new
-        {
-            Passed = passed,
-            CursorMatchesNativeResize = cursorMatches,
-            ResizeHitTest = GetCanvasResizeHitTest(edge),
-            DistinctLiveWidths = distinctWidths,
-            LiveResponseRatio = Math.Round(distinctWidths / 12d, 3),
-            MaximumAspectErrorPx = Math.Round(maximumAspectErrorPx, 3),
-            SurfaceMatchesClient = surfaceMatchesClient,
-            TransitionVisualReset = transitionVisualReset,
-            ReleaseSettledMs = releaseSettledMs,
-            FollowedAfterRelease = followedAfterRelease
-        }, new JsonSerializerOptions { WriteIndented = true });
-        await File.WriteAllTextAsync(resultPath, result);
-    }
-#endif
-
-    private void QueueCanvasResize(NativeMethods.POINT cursor)
-    {
-        _pendingCanvasResizeCursor = cursor;
-        _hasPendingCanvasResizeCursor = true;
-        if (_canvasResizeCommitQueued) return;
-        _canvasResizeCommitQueued = true;
-        long version = _resizeGesture.Version;
-        if (!DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.High,
-                () => { if (!_closing && version == _resizeGesture.Version) ProcessQueuedCanvasResize(); }))
-        {
-            _canvasResizeCommitQueued = false;
-        }
-    }
-
-    private void ProcessQueuedCanvasResize()
-    {
-        _canvasResizeCommitQueued = false;
-        if (_canvasResize is null) return;
-        if (!_hasPendingCanvasResizeCursor) return;
-        NativeMethods.POINT cursor = _pendingCanvasResizeCursor;
-        _hasPendingCanvasResizeCursor = false;
-        CommitCanvasResize(cursor);
-    }
-
-    private void StopCanvasResizeRendering()
-    {
-        _canvasResizeCommitQueued = false;
-        _hasPendingCanvasResizeCursor = false;
-    }
-
-    private static CanvasResizeEdge GetCanvasResizeEdge(Point point, double width, double height)
-        => CanvasResizeHitZones.HitTest(point.X, point.Y, width, height, compactList: false);
-
-    private CanvasResizeEdge GetCanvasResizeEdge(NativeMethods.POINT cursor)
-    {
-        if (_definition.PlacementMode == OrganizerPlacementMode.Station || !_expanded || _animating ||
-            _itemReorderSession is not null || _shellDragActive ||
-            !TryGetLogicalWindowRect(out NativeMethods.RECT bounds)) return CanvasResizeEdge.None;
-        return GetCanvasResizeEdge(cursor, bounds);
-    }
-
-    private CanvasResizeEdge GetCanvasResizeEdge(NativeMethods.POINT cursor, NativeMethods.RECT bounds)
-    {
-        if (IsDock) return CanvasResizeEdge.None;
-        if (HasHoverPresentation && TryScreenToHoverViewport(cursor, out Point hoverPoint) &&
-            HoverItemAtViewportPoint(hoverPoint) is not null) return CanvasResizeEdge.None;
-        if (_definition.PlacementMode == OrganizerPlacementMode.Station || !_expanded || _animating ||
-            _itemReorderSession is not null || _shellDragActive) return CanvasResizeEdge.None;
-        double scale = Math.Max(1, NativeMethods.GetDpiForWindow(_hwnd) / 96d);
-        Point point = new((cursor.X - bounds.Left) / scale, (cursor.Y - bounds.Top) / scale);
-        return IsCompactList
-            ? CanvasResizeHitZones.HitTest(point.X, point.Y, bounds.Width / scale, bounds.Height / scale, compactList: true)
-            : GetCanvasResizeEdge(point, bounds.Width / scale, bounds.Height / scale);
-    }
-
-    private bool SetCanvasResizeCursor(CanvasResizeEdge edge)
-    {
-        uint cursorId = edge switch
-        {
-            CanvasResizeEdge.None => NativeMethods.IDC_ARROW,
-            CanvasResizeEdge.Left or CanvasResizeEdge.Right => NativeMethods.IDC_SIZEWE,
-            CanvasResizeEdge.Top or CanvasResizeEdge.Bottom => NativeMethods.IDC_SIZENS,
-            CanvasResizeEdge.Left | CanvasResizeEdge.Top or CanvasResizeEdge.Right | CanvasResizeEdge.Bottom => NativeMethods.IDC_SIZENWSE,
-            _ => NativeMethods.IDC_SIZENESW
-        };
-        IntPtr cursor = NativeMethods.LoadCursor(IntPtr.Zero, new UIntPtr(cursorId));
-        if (cursor == IntPtr.Zero) return false;
-        _ = NativeMethods.SetCursor(cursor);
-        return true;
-    }
-
-    private static int GetCanvasResizeHitTest(CanvasResizeEdge edge) => edge switch
-    {
-        CanvasResizeEdge.Left => NativeMethods.HTLEFT,
-        CanvasResizeEdge.Right => NativeMethods.HTRIGHT,
-        CanvasResizeEdge.Top => NativeMethods.HTTOP,
-        CanvasResizeEdge.Bottom => NativeMethods.HTBOTTOM,
-        CanvasResizeEdge.Left | CanvasResizeEdge.Top => NativeMethods.HTTOPLEFT,
-        CanvasResizeEdge.Right | CanvasResizeEdge.Top => NativeMethods.HTTOPRIGHT,
-        CanvasResizeEdge.Left | CanvasResizeEdge.Bottom => NativeMethods.HTBOTTOMLEFT,
-        CanvasResizeEdge.Right | CanvasResizeEdge.Bottom => NativeMethods.HTBOTTOMRIGHT,
-        _ => NativeMethods.HTCLIENT
-    };
-
-    private static CanvasResizeEdge GetCanvasResizeEdgeFromHitTest(int hitTest) => hitTest switch
-    {
-        NativeMethods.HTLEFT => CanvasResizeEdge.Left,
-        NativeMethods.HTRIGHT => CanvasResizeEdge.Right,
-        NativeMethods.HTTOP => CanvasResizeEdge.Top,
-        NativeMethods.HTBOTTOM => CanvasResizeEdge.Bottom,
-        NativeMethods.HTTOPLEFT => CanvasResizeEdge.Left | CanvasResizeEdge.Top,
-        NativeMethods.HTTOPRIGHT => CanvasResizeEdge.Right | CanvasResizeEdge.Top,
-        NativeMethods.HTBOTTOMLEFT => CanvasResizeEdge.Left | CanvasResizeEdge.Bottom,
-        NativeMethods.HTBOTTOMRIGHT => CanvasResizeEdge.Right | CanvasResizeEdge.Bottom,
-        _ => CanvasResizeEdge.None
-    };
 
     // Hide only the visual subtree: the transparent button retains its original hit area.
     internal void RefreshCollapseIndicator() =>
@@ -2695,75 +2416,6 @@ public sealed partial class MainWindow
         return NativeMethods.DefSubclassProc(hWnd, message, wParam, lParam);
     }
 
-    private IntPtr CanvasResizeWindowProc(IntPtr hWnd, uint message, UIntPtr wParam, IntPtr lParam)
-    {
-        try
-        {
-            if (TryHandleCanvasResizeWindowMessage(hWnd, message, wParam, out IntPtr result)) return result;
-        }
-        catch (Exception ex)
-        {
-            AppLogger.Error("缩放边缘窗口消息处理异常。", ex);
-        }
-        return _canvasResizeOriginalWindowProcs.TryGetValue(hWnd, out IntPtr previous)
-            ? NativeMethods.CallWindowProc(previous, hWnd, message, wParam, lParam)
-            : IntPtr.Zero;
-    }
-
-    private bool TryHandleCanvasResizeWindowMessage(IntPtr hWnd, uint message, UIntPtr wParam, out IntPtr result)
-    {
-        result = IntPtr.Zero;
-        if (message == NativeMethods.WM_NCHITTEST && NativeMethods.GetCursorPos(out NativeMethods.POINT hitCursor))
-        {
-            if (hWnd != _hwnd)
-            {
-                result = new IntPtr(NativeMethods.HTCLIENT);
-                return true;
-            }
-            CanvasResizeEdge edge = _canvasResize?.Edge ?? GetCanvasResizeEdge(hitCursor);
-            if (edge != CanvasResizeEdge.None)
-            {
-                result = new IntPtr(GetCanvasResizeHitTest(edge));
-                return true;
-            }
-        }
-        if (message == NativeMethods.WM_SETCURSOR && NativeMethods.GetCursorPos(out NativeMethods.POINT hoverCursor))
-        {
-            CanvasResizeEdge edge = _canvasResize?.Edge ?? GetCanvasResizeEdge(hoverCursor);
-            if (edge != CanvasResizeEdge.None)
-            {
-                SetCanvasResizeCursor(edge);
-                result = new IntPtr(1);
-                return true;
-            }
-        }
-        if (message == NativeMethods.WM_NCLBUTTONDOWN)
-        {
-            CanvasResizeEdge edge = GetCanvasResizeEdgeFromHitTest(unchecked((int)wParam.ToUInt64()));
-            if (edge != CanvasResizeEdge.None && TryBeginCanvasResize(edge)) return true;
-        }
-        if (message == NativeMethods.WM_LBUTTONDOWN && NativeMethods.GetCursorPos(out NativeMethods.POINT pressCursor))
-        {
-            CanvasResizeEdge edge = GetCanvasResizeEdge(pressCursor);
-            if (edge != CanvasResizeEdge.None && TryBeginCanvasResize(edge)) return true;
-        }
-        if (_canvasResize is not null && message == NativeMethods.WM_MOUSEMOVE &&
-            NativeMethods.GetCursorPos(out NativeMethods.POINT resizeCursor))
-        {
-            if (!_canvasResizeProbeRunning)
-            {
-                if ((wParam.ToUInt64() & NativeMethods.MK_LBUTTON) == 0) QueueCanvasResizeCompletion();
-                else QueueCanvasResize(resizeCursor);
-            }
-            return true;
-        }
-        if (_canvasResize is not null && message is NativeMethods.WM_LBUTTONUP or NativeMethods.WM_NCLBUTTONUP or NativeMethods.WM_CAPTURECHANGED)
-        {
-            QueueCanvasResizeCompletion();
-            return true;
-        }
-        return false;
-    }
 
     private void UpdateWidgetDragFromCursor()
     {
