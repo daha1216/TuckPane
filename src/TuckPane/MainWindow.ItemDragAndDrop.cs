@@ -1452,7 +1452,11 @@ public sealed partial class MainWindow
         e.Handled = true;
         RecordExternalDropSlotFromEvent(e);
         try { await _catalogController.ImportFromDragAsync(e); }
-        finally { _dragHasLocalFile = false; }
+        finally
+        {
+            ClearPendingExternalDropSlot();
+            _dragHasLocalFile = false;
+        }
     }
 
     private void WindowRoot_DragEnter(object sender, DragEventArgs e)
@@ -1532,6 +1536,7 @@ public sealed partial class MainWindow
             }
             finally
             {
+                ClearPendingExternalDropSlot();
                 _dragHasLocalFile = false;
             }
         }

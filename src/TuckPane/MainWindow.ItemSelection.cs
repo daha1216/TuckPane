@@ -318,6 +318,19 @@ public sealed partial class MainWindow
         {
             SelectionCountBadge.Visibility = Visibility.Collapsed;
         }
+
+        UpdateExpandedTopOverlayOffsets();
+    }
+
+    private void UpdateExpandedTopOverlayOffsets()
+    {
+        bool bothVisible = ExpandedFilterBar.Visibility == Visibility.Visible &&
+            SelectionCountBadge.Visibility == Visibility.Visible;
+        Thickness targetMargin = bothVisible
+            ? new Thickness(14, 46, 0, 0)
+            : new Thickness(14, 10, 0, 0);
+        if (SelectionCountBadge.Margin != targetMargin)
+            SelectionCountBadge.Margin = targetMargin;
     }
 
     internal void ApplyItemSelectionVisual(Border host, string relativeName)

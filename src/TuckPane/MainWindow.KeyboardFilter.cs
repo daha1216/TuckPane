@@ -69,6 +69,7 @@ public sealed partial class MainWindow
     {
         if (_closing || !_expanded || IsDock || _definition.PlacementMode == OrganizerPlacementMode.Station) return;
         ExpandedFilterBar.Visibility = Visibility.Visible;
+        UpdateExpandedTopOverlayOffsets();
         ExpandedFilterBox.PlaceholderText = AppStrings.Get("OrganizerFilterPlaceholder");
         if (!_filterBoxInputActive)
         {
@@ -90,6 +91,7 @@ public sealed partial class MainWindow
         _activeFilterQuery = string.Empty;
         if (ExpandedFilterBox.Text.Length > 0) ExpandedFilterBox.Text = string.Empty;
         ExpandedFilterBar.Visibility = Visibility.Collapsed;
+        UpdateExpandedTopOverlayOffsets();
         if (releaseInputActivation && _filterBoxInputActive)
         {
             _filterBoxInputActive = false;
@@ -167,7 +169,10 @@ public sealed partial class MainWindow
                 _desktopLayer?.SetInputActivation(false);
         }
         if (!HasActiveFilter)
+        {
             ExpandedFilterBar.Visibility = Visibility.Collapsed;
+            UpdateExpandedTopOverlayOffsets();
+        }
     }
 
     private void ExpandedFilterClearButton_Click(object sender, RoutedEventArgs e) =>

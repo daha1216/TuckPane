@@ -346,6 +346,8 @@ internal static class LiquidGlassAndPerfChecks
         string sortOrderCs = File.ReadAllText(Path.Combine(srcRoot, "Core", "OrganizerSortOrder.cs"));
         string canvasResizeCs = File.ReadAllText(Path.Combine(srcRoot, "MainWindow.CanvasResize.cs"));
         string keyboardCs = File.ReadAllText(Path.Combine(srcRoot, "MainWindow.KeyboardFilter.cs"));
+        string dragDropCs = File.ReadAllText(Path.Combine(srcRoot, "MainWindow.ItemDragAndDrop.cs"));
+        string selectionCs = File.ReadAllText(Path.Combine(srcRoot, "MainWindow.ItemSelection.cs"));
         string todoXaml = File.ReadAllText(Path.Combine(srcRoot, "TodoWindow.xaml"));
         string noteTitleCs = File.ReadAllText(Path.Combine(srcRoot, "MainWindow.OrganizerTitle.cs"));
 
@@ -363,8 +365,10 @@ internal static class LiquidGlassAndPerfChecks
                 transCs.Contains("Clamp(props.Progress, 0.0, 1.0)", StringComparison.Ordinal),
             "缺少无条件悬停弹簧复位、展开态指针离窗流光熄灭或 DWM 表达式进度钳位。");
         require(keyboardCs.Contains("MoveKeyboardFocusDirectional(", StringComparison.Ordinal) &&
+                dragDropCs.Contains("ClearPendingExternalDropSlot();", StringComparison.Ordinal) &&
+                selectionCs.Contains("UpdateExpandedTopOverlayOffsets()", StringComparison.Ordinal) &&
                 todoXaml.Contains("UpdateSourceTrigger=PropertyChanged", StringComparison.Ordinal) &&
                 noteTitleCs.Contains("ExpandedNameEditorCapsule.Visibility = Visibility.Visible;", StringComparison.Ordinal),
-            "缺少 2D 自由网格方向键导航、待办回车即时绑定更新或内联标题编辑高对比度磨砂胶囊。");
+            "缺少 2D 自由网格方向键导航、外部拖入 finally 落格清理、过滤栏/多选徽章避让、待办回车即时绑定更新或内联标题编辑高对比度磨砂胶囊。");
     }
 }
