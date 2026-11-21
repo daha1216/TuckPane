@@ -19,6 +19,7 @@ internal sealed class FreeSlotGridLayout : NonVirtualizingLayout
     private int _minimumVisibleRows = 3;
     private bool _includeDragBufferRow;
     private Func<int, int>? _slotResolver;
+    private Func<UIElement, int, int>? _elementSlotResolver;
 
     internal double CellWidth
     {
@@ -102,6 +103,17 @@ internal sealed class FreeSlotGridLayout : NonVirtualizingLayout
         }
     }
 
+    internal Func<UIElement, int, int>? ElementSlotResolver
+    {
+        get => _elementSlotResolver;
+        set
+        {
+            if (ReferenceEquals(_elementSlotResolver, value)) return;
+            _elementSlotResolver = value;
+            InvalidateMeasure();
+        }
+    }
+
     internal void InvalidateSlots()
     {
         InvalidateMeasure();
@@ -118,7 +130,7 @@ internal sealed class FreeSlotGridLayout : NonVirtualizingLayout
         {
             UIElement child = context.Children[index];
             child.Measure(slotSize);
-            int slot = ResolveSlot(index);
+            int slot = ResolveSlot(child, index);
             maxRow = Math.Max(maxRow, slot / _columns);
         }
 
@@ -134,17 +146,25 @@ internal sealed class FreeSlotGridLayout : NonVirtualizingLayout
         for (int index = 0; index < count; index++)
         {
             UIElement child = context.Children[index];
-            int slot = ResolveSlot(index);
+            int slot = ResolveSlot(child, index);
             Point origin = FreeGridSlotMap.SlotOrigin(slot, _columns, _cellWidth, _cellHeight, _gap);
             child.Arrange(new Rect(origin.X, origin.Y, _cellWidth, _cellHeight));
         }
         return finalSize;
     }
 
-    private int ResolveSlot(int index)
+    private int ResolveSlot(UIElement child, int fallbackIndex)
     {
-        if (_slotResolver is null) return index;
-        int slot = _slotResolver(index);
-        return slot >= 0 ? slot : index;
+        if (_elementSlotResolver is not null)
+        {
+            int resolved = _elementSlotResolver(child, fallbackIndex);
+            if (resolved >= 0) return resolved;
+        }
+        if (_slotResolver is not null)
+        {
+            int slot = _slotResolver(fallbackIndex);
+            return slot >= 0 ? slot : fallbackIndex;
+        }
+        return fallbackIndex;
     }
 }

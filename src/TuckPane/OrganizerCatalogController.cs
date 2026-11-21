@@ -36,11 +36,13 @@ internal sealed class OrganizerCatalogController
     private int _watcherRefreshPosted;
     private bool _catalogRefreshIconsPending;
     private bool _catalogNotifyUnsupportedPending;
+    private bool _catalogRefreshAllowDuringReceivingDrop;
     private Task? _catalogRefreshTask;
     private CancellationTokenSource? _catalogRefreshCancellation;
     private long _catalogRefreshGeneration;
     private HashSet<string> _lastUnsupported = new(StringComparer.OrdinalIgnoreCase);
     private bool _addingItem;
+    private int _activeDialogCount;
 
     public OrganizerCatalogController(MainWindow window)
     {
@@ -51,7 +53,16 @@ internal sealed class OrganizerCatalogController
         _watcherDebounceTimer.Tick += WatcherDebounceTimer_Tick;
     }
 
-    public bool IsAddingItem => _addingItem;
+    public bool IsDialogActive => _activeDialogCount > 0;
+    public bool IsAddingItem => _addingItem || _activeDialogCount > 0;
+
+    private Task YieldForMenuDismissAsync()
+    {
+        var completion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        if (!_window.DispatcherQueue.TryEnqueue(DispatcherQueuePriority.Low, () => completion.TrySetResult()))
+            return Task.CompletedTask;
+        return completion.Task;
+    }
 
     public void Stop()
     {
@@ -165,20 +176,29 @@ internal sealed class OrganizerCatalogController
         }
     }
 
-    public Task RefreshCatalogAsync(bool notifyUnsupported, bool refreshIcons = false)
+    public Task RefreshCatalogAsync(bool notifyUnsupported, bool refreshIcons = false, bool allowDuringReceivingDrop = false)
     {
         _catalogRefreshPending = true;
         Interlocked.Increment(ref _catalogRefreshGeneration);
         _catalogNotifyUnsupportedPending |= notifyUnsupported;
         _catalogRefreshIconsPending |= refreshIcons;
+        _catalogRefreshAllowDuringReceivingDrop |= allowDuringReceivingDrop;
         if (_catalogRefreshTask is { IsCompleted: false })
             _catalogRefreshCancellation?.Cancel();
         return StartCatalogRefreshIfReady();
     }
 
+    private bool IsCatalogRefreshBlocked()
+    {
+        OrganizerInteractionSnapshot interaction = _window.CaptureInteractionState();
+        return _catalogRefreshAllowDuringReceivingDrop
+            ? interaction.BlocksCatalogRefreshDuringDropFinalization
+            : interaction.BlocksCatalogRefresh;
+    }
+
     public Task StartCatalogRefreshIfReady()
     {
-        if (_window.IsClosing || _window.CaptureInteractionState().BlocksCatalogRefresh) return Task.CompletedTask;
+        if (_window.IsClosing || IsCatalogRefreshBlocked()) return Task.CompletedTask;
         if (_catalogRefreshTask is { IsCompleted: false }) return _catalogRefreshTask;
         _catalogRefreshTask = FlushCatalogRefreshesAsync();
         return _catalogRefreshTask;
@@ -194,15 +214,17 @@ internal sealed class OrganizerCatalogController
         CancellationToken cancellationToken = refreshCancellation.Token;
         try
         {
-            while (_catalogRefreshPending && !_window.IsClosing && !_window.CaptureInteractionState().BlocksCatalogRefresh)
+            while (_catalogRefreshPending && !_window.IsClosing && !IsCatalogRefreshBlocked())
             {
                 bool notifyUnsupported = _catalogNotifyUnsupportedPending;
                 bool refreshIcons = _catalogRefreshIconsPending;
+                bool allowDuringReceivingDrop = _catalogRefreshAllowDuringReceivingDrop;
                 _catalogRefreshPending = false;
                 _catalogNotifyUnsupportedPending = false;
                 _catalogRefreshIconsPending = false;
+                _catalogRefreshAllowDuringReceivingDrop = false;
                 long generation = Volatile.Read(ref _catalogRefreshGeneration);
-                await RefreshCatalogCoreAsync(notifyUnsupported, refreshIcons, generation, cancellationToken);
+                await RefreshCatalogCoreAsync(notifyUnsupported, refreshIcons, allowDuringReceivingDrop, generation, cancellationToken);
             }
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested || _window.IsClosing)
@@ -221,7 +243,7 @@ internal sealed class OrganizerCatalogController
             {
                 refreshCancellation.Dispose();
             }
-            if (_catalogRefreshPending && !_window.IsClosing && !_window.CaptureInteractionState().BlocksCatalogRefresh)
+            if (_catalogRefreshPending && !_window.IsClosing && !IsCatalogRefreshBlocked())
             {
                 _ = _window.DispatcherQueue.TryEnqueue(() => _ = StartCatalogRefreshIfReady());
             }
@@ -231,6 +253,7 @@ internal sealed class OrganizerCatalogController
     private async Task RefreshCatalogCoreAsync(
         bool notifyUnsupported,
         bool refreshIcons,
+        bool allowDuringReceivingDrop,
         long generation,
         CancellationToken cancellationToken)
     {
@@ -240,7 +263,7 @@ internal sealed class OrganizerCatalogController
         IReadOnlyList<WidgetItem> diskItems = await Task.Run(_window.Storage.ReadItems, cancellationToken);
         IReadOnlyList<string> unsupportedNames = _window.Storage.ReadUnsupportedNames();
         cancellationToken.ThrowIfCancellationRequested();
-        if (_window.IsClosing || generation != Volatile.Read(ref _catalogRefreshGeneration)) return;
+        if (_window.IsClosing || (!allowDuringReceivingDrop && generation != Volatile.Read(ref _catalogRefreshGeneration))) return;
         long traceUiStart = traceStart == 0 ? 0 : Stopwatch.GetTimestamp();
         Volatile.Write(ref _knownPortableNames, (IReadOnlySet<string>)diskItems
             .Where(item => item.Kind is WidgetItemKind.PortableNote or WidgetItemKind.PortableTodo)
@@ -263,15 +286,55 @@ internal sealed class OrganizerCatalogController
             }
         }
 
+        bool addedAny = byName.Count > 0 && definition.ItemOrder.Count > 0;
         ordered.AddRange(byName.Values.OrderBy(item => item.RelativeName, StringComparer.CurrentCultureIgnoreCase));
         if (duplicateItems.Count > 0)
             ordered.AddRange(duplicateItems.OrderBy(item => item.RelativeName, StringComparer.CurrentCultureIgnoreCase));
-        bool orderChanged = !definition.ItemOrder.SequenceEqual(ordered.Select(item => item.RelativeName), StringComparer.OrdinalIgnoreCase);
+
+        // Prune deleted item keys from ItemSlots against the full unfiltered catalog so deleted items
+        // never permanently occupy stale FreeGrid slots (skip if storage directory is temporarily offline).
+        bool slotsPruned = false;
+        if (_window.Storage.Exists && definition.ItemSlots is { Count: > 0 })
+        {
+            var activeNames = new HashSet<string>(
+                ordered.Select(item => item.RelativeName),
+                StringComparer.OrdinalIgnoreCase);
+            foreach (string staleKey in definition.ItemSlots.Keys.Where(key => !activeNames.Contains(key)).ToArray())
+            {
+                definition.ItemSlots.Remove(staleKey);
+                slotsPruned = true;
+            }
+        }
+
+        List<string> previousItemOrder = definition.ItemOrder.ToList();
         _window.ApplyCatalogItemsAndRender(ordered, refreshIcons);
-        definition.ItemOrder = ordered.Select(item => item.RelativeName).ToList();
-        if (orderChanged)
+
+        // Preserve FreeGrid visual reading order when ItemSlots are active instead of clobbering ItemOrder.
+        string[] allNames = ordered.Select(item => item.RelativeName).ToArray();
+        List<string> canonicalOrder;
+        if (!_window.IsDockWindow &&
+            definition.ExpandedContentMode != OrganizerExpandedContentMode.CompactList &&
+            _window.Host.State.GlobalSettings.FreeGridPlacementEnabled &&
+            definition.ItemSlots is { Count: > 0 })
+        {
+            int[] allSlots = FreeGridSlotMap.ResolveSlots(allNames, definition.ItemSlots);
+            canonicalOrder = FreeGridSlotMap.BuildReadingOrder(allNames, allSlots);
+        }
+        else
+        {
+            canonicalOrder = allNames.ToList();
+        }
+
+        bool orderChanged = !previousItemOrder.SequenceEqual(canonicalOrder, StringComparer.OrdinalIgnoreCase);
+        bool slotMapDirty = _window.ConsumePendingSlotMapSave();
+        definition.ItemOrder = canonicalOrder;
+        if (orderChanged || slotsPruned || slotMapDirty)
         {
             await _window.SaveOrganizerStateAsync();
+        }
+        if (addedAny)
+        {
+            _window.InvalidateActiveSortCriterion();
         }
 
         _window.Host.NotifyOrganizerPreviewChanged(definition.Id);
@@ -291,12 +354,13 @@ internal sealed class OrganizerCatalogController
 
     public async Task AddSelectedItemAsync(bool folder)
     {
-        if (_addingItem || _window.IsClosing) return;
+        if (_addingItem || _activeDialogCount > 0 || _window.IsClosing) return;
         _addingItem = true;
         _window.AdjustOverlayCount(+1);
+        _window.PauseOutsideClickForOverlay();
         try
         {
-            await Task.Yield();
+            await YieldForMenuDismissAsync();
             if (_window.IsClosing) return;
             _window.DesktopLayer?.SetInputActivation(true);
             _window.ResetStationDelay();
@@ -309,8 +373,16 @@ internal sealed class OrganizerCatalogController
                 return;
             }
             StartWatcher();
+            _window.InvalidateActiveSortCriterion();
             await RefreshCatalogAsync(notifyUnsupported: false);
+            string addedName = !string.IsNullOrWhiteSpace(outcome.DestinationPath)
+                ? Path.GetFileNameWithoutExtension(outcome.DestinationPath)
+                : Path.GetFileName(source.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+            string toast = string.IsNullOrWhiteSpace(addedName)
+                ? AppStrings.Get("ShortcutCreated")
+                : MainWindow.LocalizeToast($"已添加“{addedName}”", $"Added \"{addedName}\"", $"「{addedName}」を追加しました");
             _window.ShowOrganizerMessage(AppStrings.Get("ShortcutCreated"), InfoBarSeverity.Success);
+            _window.ShowExpandedToast(toast, InfoBarSeverity.Success);
         }
         catch (Exception ex)
         {
@@ -319,10 +391,11 @@ internal sealed class OrganizerCatalogController
         }
         finally
         {
-            if (!_window.IsClosing) _window.DesktopLayer?.SetInputActivation(_window.IsContextMenuActivated);
-            _window.AdjustOverlayCount(-1);
             _addingItem = false;
+            if (!_window.IsClosing) _window.DesktopLayer?.SetInputActivation(_window.IsContextMenuActivated || IsAddingItem);
+            _window.AdjustOverlayCount(-1);
             _window.ResetStationDelay();
+            _window.ResumeOutsideClickAfterOverlay();
         }
     }
 
@@ -335,6 +408,12 @@ internal sealed class OrganizerCatalogController
                     ? "TodoDragSaveFailed"
                     : "NoteDragSaveFailed"));
             ShellDragService.SetCopyClipboard(item.FullPath);
+            if (!_window.IsClosing)
+            {
+                _window.ShowExpandedToast(
+                    MainWindow.LocalizeToast($"已复制“{item.Name}”", $"Copied \"{item.Name}\"", $"「{item.Name}」をコピーしました"),
+                    InfoBarSeverity.Success);
+            }
         }
         catch (Exception ex)
         {
@@ -352,6 +431,12 @@ internal sealed class OrganizerCatalogController
                     ? "TodoDragSaveFailed"
                     : "NoteDragSaveFailed"));
             ShellDragService.SetCutClipboard(item.FullPath);
+            if (!_window.IsClosing)
+            {
+                _window.ShowExpandedToast(
+                    MainWindow.LocalizeToast($"已剪切“{item.Name}”", $"Cut \"{item.Name}\"", $"「{item.Name}」を切り取りました"),
+                    InfoBarSeverity.Informational);
+            }
         }
         catch (Exception ex)
         {
@@ -362,17 +447,21 @@ internal sealed class OrganizerCatalogController
 
     public async Task ShowRenameFileDialogAsync(WidgetItem item)
     {
-        OrganizerDefinition definition = _window.Definition;
-        bool station = definition.PlacementMode == OrganizerPlacementMode.Station;
+        if (_window.IsClosing || _activeDialogCount > 0) return;
         bool directory = Directory.Exists(item.FullPath);
         string initialName = directory
             ? Path.GetFileName(item.FullPath)
             : Path.GetFileNameWithoutExtension(item.FullPath);
         string acceptedName = initialName;
+        _activeDialogCount++;
         _window.AdjustOverlayCount(+1);
-        if (station) _window.DesktopLayer?.SetInputActivation(true);
+        _window.PauseOutsideClickForOverlay();
         try
         {
+            await YieldForMenuDismissAsync();
+            if (_window.IsClosing) return;
+            _window.DesktopLayer?.SetInputActivation(true);
+            _window.ResetStationDelay();
             DisplayInfo display = _window.IsDockWindow ? _window.ResolveRenameDialogDisplay()
                 : _window.GetOrResolveStationDisplay();
             bool accepted = await OwnedDialogWindow.ShowTextInputAsync(
@@ -388,7 +477,16 @@ internal sealed class OrganizerCatalogController
                     acceptedName = candidate.Trim();
                     return TryGetRenameTarget(item, acceptedName, out _);
                 });
-            if (accepted) await RenameFileItemAsync(item, acceptedName);
+            if (accepted)
+            {
+                await RenameFileItemAsync(item, acceptedName);
+                if (!_window.IsClosing)
+                {
+                    _window.ShowExpandedToast(
+                        MainWindow.LocalizeToast($"已重命名为“{acceptedName}”", $"Renamed to \"{acceptedName}\"", $"「{acceptedName}」に名前を変更しました"),
+                        InfoBarSeverity.Success);
+                }
+            }
         }
         catch (Exception ex)
         {
@@ -397,11 +495,13 @@ internal sealed class OrganizerCatalogController
         }
         finally
         {
+            _activeDialogCount = Math.Max(0, _activeDialogCount - 1);
             _window.AdjustOverlayCount(-1);
             if (!_window.IsClosing)
             {
-                if (station) _window.DesktopLayer?.SetInputActivation(false);
+                _window.DesktopLayer?.SetInputActivation(_window.IsContextMenuActivated || IsAddingItem);
                 _window.ResetStationDelay();
+                _window.ResumeOutsideClickAfterOverlay();
             }
         }
     }
@@ -438,11 +538,13 @@ internal sealed class OrganizerCatalogController
         if (item.Kind == WidgetItemKind.PortableNote)
         {
             await _window.Host.RenameExternalNoteAsync(item.FullPath, candidate);
+            _window.InvalidateActiveSortCriterion();
             return;
         }
         if (item.Kind == WidgetItemKind.PortableTodo)
         {
             await _window.Host.RenameExternalTodoAsync(item.FullPath, candidate);
+            _window.InvalidateActiveSortCriterion();
             return;
         }
 
@@ -491,6 +593,7 @@ internal sealed class OrganizerCatalogController
             }
             throw;
         }
+        _window.InvalidateActiveSortCriterion();
         await RefreshCatalogAsync(notifyUnsupported: false);
     }
 
@@ -524,6 +627,12 @@ internal sealed class OrganizerCatalogController
             if (MainWindow.IsDocumentWidgetItem(item)) _window.Host.ClosePortableWindowWithoutSave(item.FullPath);
             StartWatcher();
             await RefreshCatalogAsync(notifyUnsupported: false);
+            if (!_window.IsClosing)
+            {
+                _window.ShowExpandedToast(
+                    MainWindow.LocalizeToast($"已将“{item.Name}”移入回收站", $"Moved \"{item.Name}\" to Recycle Bin", $"「{item.Name}」をごみ箱に移動しました"),
+                    InfoBarSeverity.Success);
+            }
         }
         catch (Exception ex)
         {
@@ -532,17 +641,132 @@ internal sealed class OrganizerCatalogController
         }
     }
 
+    public async Task<int> DeleteFileItemsBatchAsync(IReadOnlyList<WidgetItem> items)
+    {
+        if (items.Count == 0 || _window.IsClosing) return 0;
+        if (items.Count == 1)
+        {
+            await DeleteFileItemAsync(items[0]);
+            return 1;
+        }
+
+        var ready = new List<WidgetItem>(items.Count);
+        var failed = new List<(WidgetItem Item, Exception Error)>();
+
+        foreach (WidgetItem item in items)
+        {
+            try
+            {
+                if (MainWindow.IsDocumentWidgetItem(item) && !await _window.Host.FlushPortableWindowAsync(item.FullPath))
+                    throw new IOException(AppStrings.Get(item.Kind == WidgetItemKind.PortableTodo
+                        ? "TodoDragSaveFailed"
+                        : "NoteDragSaveFailed"));
+                ready.Add(item);
+            }
+            catch (Exception ex)
+            {
+                AppLogger.Error($"批量删除保存便携文档失败：{item.FullPath}", ex);
+                failed.Add((item, ex));
+            }
+        }
+
+        var deletedItems = new List<WidgetItem>(ready.Count);
+        await Task.Run(() =>
+        {
+            foreach (WidgetItem item in ready)
+            {
+                try
+                {
+                    if (Directory.Exists(item.FullPath))
+                    {
+                        FileSystem.DeleteDirectory(
+                            item.FullPath,
+                            UIOption.OnlyErrorDialogs,
+                            RecycleOption.SendToRecycleBin,
+                            UICancelOption.ThrowException);
+                    }
+                    else if (File.Exists(item.FullPath))
+                    {
+                        FileSystem.DeleteFile(
+                            item.FullPath,
+                            UIOption.OnlyErrorDialogs,
+                            RecycleOption.SendToRecycleBin,
+                            UICancelOption.ThrowException);
+                    }
+                    deletedItems.Add(item);
+                }
+                catch (Exception ex)
+                {
+                    AppLogger.Error($"无法将文件项目移入回收站：{item.FullPath}", ex);
+                    failed.Add((item, ex));
+                }
+            }
+        });
+
+        foreach (WidgetItem deleted in deletedItems)
+        {
+            if (MainWindow.IsDocumentWidgetItem(deleted))
+                _window.Host.ClosePortableWindowWithoutSave(deleted.FullPath);
+        }
+
+        if (deletedItems.Count > 0)
+        {
+            StartWatcher();
+            await RefreshCatalogAsync(notifyUnsupported: false);
+        }
+
+        if (!_window.IsClosing)
+        {
+            if (deletedItems.Count > 0 && failed.Count == 0)
+            {
+                string message = deletedItems.Count == 1
+                    ? MainWindow.LocalizeToast(
+                        $"已将“{deletedItems[0].Name}”移入回收站",
+                        $"Moved \"{deletedItems[0].Name}\" to Recycle Bin",
+                        $"「{deletedItems[0].Name}」をごみ箱に移動しました")
+                    : MainWindow.LocalizeToast(
+                        $"已将 {deletedItems.Count} 项移入回收站",
+                        $"Moved {deletedItems.Count} items to Recycle Bin",
+                        $"{deletedItems.Count} 件をごみ箱に移動しました");
+                _window.ShowExpandedToast(message, InfoBarSeverity.Success);
+            }
+            else if (deletedItems.Count > 0)
+            {
+                _window.ShowExpandedToast(
+                    MainWindow.LocalizeToast(
+                        $"已移入回收站 {deletedItems.Count} 项，{failed.Count} 项失败",
+                        $"Moved {deletedItems.Count} items to Recycle Bin ({failed.Count} failed)",
+                        $"{deletedItems.Count} 件をごみ箱に移動しました（{failed.Count} 件失敗）"),
+                    InfoBarSeverity.Warning);
+            }
+            else if (failed.Count > 0)
+            {
+                (WidgetItem firstItem, Exception firstError) = failed[0];
+                _window.ShowOrganizerMessage(
+                    AppStrings.Format("DeleteItemErrorFormat", firstItem.Name, firstError.Message),
+                    InfoBarSeverity.Error);
+            }
+        }
+
+        return deletedItems.Count;
+    }
+
     public async Task ShowRenameNoteDialogAsync(Guid noteId)
     {
+        if (_window.IsClosing || _activeDialogCount > 0) return;
         OrganizerDefinition definition = _window.Definition;
         NoteDefinition? note = definition.Notes.FirstOrDefault(item => item.Id == noteId);
         if (note is null) return;
-        bool station = definition.PlacementMode == OrganizerPlacementMode.Station;
+        _activeDialogCount++;
         _window.AdjustOverlayCount(+1);
-        if (station) _window.DesktopLayer?.SetInputActivation(true);
+        _window.PauseOutsideClickForOverlay();
         string acceptedName = note.Name;
         try
         {
+            await YieldForMenuDismissAsync();
+            if (_window.IsClosing) return;
+            _window.DesktopLayer?.SetInputActivation(true);
+            _window.ResetStationDelay();
             DisplayInfo display = _window.IsDockWindow ? _window.ResolveRenameDialogDisplay()
                 : DisplayPlacementService.GetDisplay(definition.Position?.MonitorDevice);
             bool accepted = await OwnedDialogWindow.ShowTextInputAsync(
@@ -561,7 +785,17 @@ internal sealed class OrganizerCatalogController
                         definition.Notes.Where(item => item.Id != noteId).Select(item => item.Name),
                         acceptedName) ? null : AppStrings.Get("NoteNameDuplicate");
                 });
-            if (accepted) await _window.Host.RenameNoteAsync(definition.Id, noteId, acceptedName);
+            if (accepted)
+            {
+                await _window.Host.RenameNoteAsync(definition.Id, noteId, acceptedName);
+                _window.InvalidateActiveSortCriterion();
+                if (!_window.IsClosing)
+                {
+                    _window.ShowExpandedToast(
+                        MainWindow.LocalizeToast($"已重命名为“{acceptedName}”", $"Renamed to \"{acceptedName}\"", $"「{acceptedName}」に名前を変更しました"),
+                        InfoBarSeverity.Success);
+                }
+            }
         }
         catch (Exception ex)
         {
@@ -570,25 +804,32 @@ internal sealed class OrganizerCatalogController
         }
         finally
         {
+            _activeDialogCount = Math.Max(0, _activeDialogCount - 1);
             _window.AdjustOverlayCount(-1);
             if (!_window.IsClosing)
             {
-                if (station) _window.DesktopLayer?.SetInputActivation(false);
+                _window.DesktopLayer?.SetInputActivation(_window.IsContextMenuActivated || IsAddingItem);
                 _window.ResetStationDelay();
+                _window.ResumeOutsideClickAfterOverlay();
             }
         }
     }
 
     public async Task ShowDeleteNoteDialogAsync(Guid noteId)
     {
+        if (_window.IsClosing || _activeDialogCount > 0) return;
         OrganizerDefinition definition = _window.Definition;
         NoteDefinition? note = definition.Notes.FirstOrDefault(item => item.Id == noteId);
         if (note is null) return;
-        bool station = definition.PlacementMode == OrganizerPlacementMode.Station;
+        _activeDialogCount++;
         _window.AdjustOverlayCount(+1);
-        if (station) _window.DesktopLayer?.SetInputActivation(true);
+        _window.PauseOutsideClickForOverlay();
         try
         {
+            await YieldForMenuDismissAsync();
+            if (_window.IsClosing) return;
+            _window.DesktopLayer?.SetInputActivation(true);
+            _window.ResetStationDelay();
             DisplayInfo display = DisplayPlacementService.GetDisplay(definition.Position?.MonitorDevice);
             bool accepted = await OwnedDialogWindow.ShowConfirmationAsync(
                 _window.Hwnd,
@@ -598,7 +839,16 @@ internal sealed class OrganizerCatalogController
                 AppStrings.Format("NoteDeleteMessageFormat", note.Name),
                 AppStrings.Get("Delete"),
                 AppStrings.Get("Cancel"));
-            if (accepted) await _window.Host.DeleteNoteAsync(definition.Id, noteId);
+            if (accepted)
+            {
+                await _window.Host.DeleteNoteAsync(definition.Id, noteId);
+                if (!_window.IsClosing)
+                {
+                    _window.ShowExpandedToast(
+                        MainWindow.LocalizeToast($"已删除便签“{note.Name}”", $"Deleted note \"{note.Name}\"", $"付箋「{note.Name}」を削除しました"),
+                        InfoBarSeverity.Success);
+                }
+            }
         }
         catch (Exception ex)
         {
@@ -607,11 +857,13 @@ internal sealed class OrganizerCatalogController
         }
         finally
         {
+            _activeDialogCount = Math.Max(0, _activeDialogCount - 1);
             _window.AdjustOverlayCount(-1);
             if (!_window.IsClosing)
             {
-                if (station) _window.DesktopLayer?.SetInputActivation(false);
+                _window.DesktopLayer?.SetInputActivation(_window.IsContextMenuActivated || IsAddingItem);
                 _window.ResetStationDelay();
+                _window.ResumeOutsideClickAfterOverlay();
             }
         }
     }
@@ -689,8 +941,10 @@ internal sealed class OrganizerCatalogController
             else diagnostic.Fail(new IOException());
             RebindMovedPortableWindows(outcomes);
             if (_window.IsClosing) return;
+            if (outcomes.Any(outcome => outcome.Status is TransferStatus.Moved or TransferStatus.Copied or TransferStatus.ShortcutCreated))
+                _window.InvalidateActiveSortCriterion();
             StartWatcher();
-            await RefreshCatalogAsync(notifyUnsupported: false);
+            await RefreshCatalogAsync(notifyUnsupported: false, allowDuringReceivingDrop: true);
             if (!_window.ConsumeDropPositionedInPlace())
                 await _window.ScrollToEndAfterRenderAsync();
 
@@ -729,6 +983,7 @@ internal sealed class OrganizerCatalogController
     public async Task PasteClipboardAsync(NativeMethods.POINT contextMenuScreenPoint)
     {
         _window.AdjustOverlayCount(+1);
+        _window.PauseOutsideClickForOverlay();
         _window.ResetStationDelay();
         bool catalogRefreshed = false;
         try
@@ -755,13 +1010,21 @@ internal sealed class OrganizerCatalogController
                     paths = nativePaths;
                     move = nativeMove;
                 }
-                if (paths.Length == 0) return;
+                if (paths.Length == 0)
+                {
+                    _window.ShowExpandedToast(
+                        MainWindow.LocalizeToast("剪贴板暂无可粘贴内容", "Clipboard is empty", "クリップボードに貼り付け可能な内容がありません"),
+                        InfoBarSeverity.Informational);
+                    return;
+                }
 
                 IProgress<TransferProgress>? progress = null;
                 IReadOnlyList<TransferOutcome> outcomes = await _window.Host.TransferQueue.RunAsync(token => move
                     ? _window.Storage.ImportBatchAsync(paths, progress, token)
                     : _window.Storage.CopyBatchAsync(paths, progress, token));
                 RebindMovedPortableWindows(outcomes);
+                if (outcomes.Any(outcome => outcome.Status is TransferStatus.Moved or TransferStatus.Copied or TransferStatus.ShortcutCreated))
+                    _window.InvalidateActiveSortCriterion();
                 StartWatcher();
                 await RefreshCatalogAsync(notifyUnsupported: false);
                 await _window.ScrollToEndAfterRenderAsync();
@@ -776,7 +1039,9 @@ internal sealed class OrganizerCatalogController
 
                 if (outcomes.Any(outcome => outcome.Status == TransferStatus.Cancelled))
                 {
-                    _window.Host.LogStatus("TuckPane", AppStrings.Get("PasteCancelled"));
+                    string cancelled = AppStrings.Get("PasteCancelled");
+                    _window.Host.LogStatus("TuckPane", cancelled);
+                    _window.ShowExpandedToast(cancelled, InfoBarSeverity.Informational);
                     return;
                 }
 
@@ -784,26 +1049,44 @@ internal sealed class OrganizerCatalogController
                     ? DataPackageOperation.Move
                     : DataPackageOperation.Copy;
                 data.ReportOperationCompleted(completed);
-                _window.ShowOrganizerMessage(AppStrings.Format(move ? "MovedItemsFormat" : "CopiedItemsFormat", AppStrings.FormatItemCount(outcomes.Count)), InfoBarSeverity.Success);
+                string message = AppStrings.Format(move ? "MovedItemsFormat" : "CopiedItemsFormat", AppStrings.FormatItemCount(outcomes.Count));
+                _window.ShowOrganizerMessage(message, InfoBarSeverity.Success);
+                _window.ShowExpandedToast(message, InfoBarSeverity.Success);
             }
             else if (data.Contains(StandardDataFormats.Bitmap))
             {
                 string path = await SaveClipboardBitmapAsync(data);
+                _window.InvalidateActiveSortCriterion();
                 data.ReportOperationCompleted(DataPackageOperation.Copy);
-                _window.ShowOrganizerMessage(AppStrings.Format("PastedImageFormat", Path.GetFileName(path)), InfoBarSeverity.Success);
+                string message = AppStrings.Format("PastedImageFormat", Path.GetFileName(path));
+                _window.ShowOrganizerMessage(message, InfoBarSeverity.Success);
+                _window.ShowExpandedToast(message, InfoBarSeverity.Success);
             }
             else if (data.Contains(StandardDataFormats.Text))
             {
                 string text = await data.GetTextAsync();
-                if (string.IsNullOrWhiteSpace(text)) return;
+                if (string.IsNullOrWhiteSpace(text))
+                {
+                    _window.ShowExpandedToast(
+                        MainWindow.LocalizeToast("剪贴板暂无可粘贴内容", "Clipboard is empty", "クリップボードに貼り付け可能な内容がありません"),
+                        InfoBarSeverity.Informational);
+                    return;
+                }
                 string notePath = await _window.Host.CreateNoteAsync(_window.OrganizerId, text, contextMenuScreenPoint);
+                _window.InvalidateActiveSortCriterion();
                 await _window.Host.OpenExternalNoteAsync(notePath);
                 data.ReportOperationCompleted(DataPackageOperation.Copy);
                 await _window.ScrollToEndAfterRenderAsync();
+                _window.ShowExpandedToast(
+                    MainWindow.LocalizeToast("已从剪贴板新建便签", "Created note from clipboard", "クリップボードから付箋を作成しました"),
+                    InfoBarSeverity.Success);
                 return;
             }
             else
             {
+                _window.ShowExpandedToast(
+                    MainWindow.LocalizeToast("剪贴板暂无可粘贴内容", "Clipboard is empty", "クリップボードに貼り付け可能な内容がありません"),
+                    InfoBarSeverity.Informational);
                 return;
             }
 
@@ -816,7 +1099,9 @@ internal sealed class OrganizerCatalogController
         }
         catch (OperationCanceledException)
         {
-            _window.ShowOrganizerMessage(AppStrings.Get("PasteCancelled"), InfoBarSeverity.Informational);
+            string cancelled = AppStrings.Get("PasteCancelled");
+            _window.ShowOrganizerMessage(cancelled, InfoBarSeverity.Informational);
+            _window.ShowExpandedToast(cancelled, InfoBarSeverity.Informational);
         }
         catch (Exception ex)
         {
@@ -826,7 +1111,11 @@ internal sealed class OrganizerCatalogController
         finally
         {
             _window.AdjustOverlayCount(-1);
-            if (!_window.IsClosing) _window.ResetStationDelay();
+            if (!_window.IsClosing)
+            {
+                _window.ResetStationDelay();
+                _window.ResumeOutsideClickAfterOverlay();
+            }
         }
     }
 
@@ -884,18 +1173,19 @@ internal sealed class OrganizerCatalogController
 
     public async Task CreateNewFolderWithDialogAsync()
     {
+        if (_window.IsClosing || _activeDialogCount > 0) return;
         OrganizerDefinition definition = _window.Definition;
-        bool station = definition.PlacementMode == OrganizerPlacementMode.Station;
+        _activeDialogCount++;
         _window.AdjustOverlayCount(+1);
-        if (station)
-        {
-            _window.DesktopLayer?.SetInputActivation(true);
-            _window.ResetStationDelay();
-        }
+        _window.PauseOutsideClickForOverlay();
         string defaultName = AppStrings.Get("NewFolderDefaultName");
         string? createdPath = null;
         try
         {
+            await YieldForMenuDismissAsync();
+            if (_window.IsClosing) return;
+            _window.DesktopLayer?.SetInputActivation(true);
+            _window.ResetStationDelay();
             DisplayInfo display = DisplayPlacementService.GetDisplay(definition.Position?.MonitorDevice);
             bool accepted = await OwnedDialogWindow.ShowTextInputAsync(
                 _window.Hwnd,
@@ -919,9 +1209,12 @@ internal sealed class OrganizerCatalogController
                 });
             if (!accepted || createdPath is null) return;
             StartWatcher();
+            _window.InvalidateActiveSortCriterion();
             await RefreshCatalogAsync(notifyUnsupported: false);
             await _window.ScrollToEndAfterRenderAsync();
-            _window.ShowOrganizerMessage(AppStrings.Format("FolderCreatedFormat", Path.GetFileName(createdPath)), InfoBarSeverity.Success);
+            string message = AppStrings.Format("FolderCreatedFormat", Path.GetFileName(createdPath));
+            _window.ShowOrganizerMessage(message, InfoBarSeverity.Success);
+            _window.ShowExpandedToast(message, InfoBarSeverity.Success);
         }
         catch (Exception ex)
         {
@@ -930,35 +1223,39 @@ internal sealed class OrganizerCatalogController
         }
         finally
         {
+            _activeDialogCount = Math.Max(0, _activeDialogCount - 1);
             if (!_window.IsClosing)
             {
-                if (station)
-                {
-                    _window.DesktopLayer?.SetInputActivation(false);
-                }
+                _window.DesktopLayer?.SetInputActivation(_window.IsContextMenuActivated || IsAddingItem);
                 _window.ResetStationDelay();
             }
             _window.AdjustOverlayCount(-1);
+            if (!_window.IsClosing) _window.ResumeOutsideClickAfterOverlay();
         }
     }
 
     public async Task ShowDeleteOrganizerDialogAsync()
     {
-        if (_window.IsClosing) return;
-        if (!_window.IsExpandedCore) await _window.ExpandOrganizerAsync();
-        if (_window.IsClosing) return;
-        if (_window.Host.TransferQueue.IsActive)
-        {
-            _window.ShowOrganizerMessage(AppStrings.Get("TransferBeforeDelete"), InfoBarSeverity.Warning);
-            return;
-        }
-
-        OrganizerDefinition definition = _window.Definition;
+        if (_window.IsClosing || _activeDialogCount > 0) return;
+        _activeDialogCount++;
         _window.AdjustOverlayCount(+1);
-        _window.DesktopLayer?.SetInputActivation(true);
-        string storagePath = AppPaths.ResolveStoragePath(definition);
+        _window.PauseOutsideClickForOverlay();
         try
         {
+            if (!_window.IsExpandedCore) await _window.ExpandOrganizerAsync();
+            if (_window.IsClosing) return;
+            if (_window.Host.TransferQueue.IsActive)
+            {
+                _window.ShowOrganizerMessage(AppStrings.Get("TransferBeforeDelete"), InfoBarSeverity.Warning);
+                return;
+            }
+
+            await YieldForMenuDismissAsync();
+            if (_window.IsClosing) return;
+            OrganizerDefinition definition = _window.Definition;
+            _window.DesktopLayer?.SetInputActivation(true);
+            _window.ResetStationDelay();
+            string storagePath = AppPaths.ResolveStoragePath(definition);
             DisplayInfo display = _window.TryGetWindowRect(out NativeMethods.RECT dialogBounds)
                 ? DisplayPlacementService.ForBounds(dialogBounds)
                 : DisplayPlacementService.GetDisplay(definition.Position?.MonitorDevice);
@@ -978,29 +1275,36 @@ internal sealed class OrganizerCatalogController
         }
         finally
         {
+            _activeDialogCount = Math.Max(0, _activeDialogCount - 1);
             if (!_window.IsClosing)
             {
-                _window.DesktopLayer?.SetInputActivation(false);
+                _window.DesktopLayer?.SetInputActivation(_window.IsContextMenuActivated || IsAddingItem);
                 _window.ResetStationDelay();
             }
             _window.AdjustOverlayCount(-1);
+            if (!_window.IsClosing) _window.ResumeOutsideClickAfterOverlay();
         }
     }
 
     public async Task ShowRenameOrganizerDialogAsync()
     {
-        if (_window.IsClosing) return;
-        if (!_window.IsExpandedCore)
-        {
-            await _window.ExpandOrganizerAsync();
-        }
-        if (_window.IsClosing) return;
-        OrganizerDefinition definition = _window.Definition;
+        if (_window.IsClosing || _activeDialogCount > 0) return;
+        _activeDialogCount++;
         _window.AdjustOverlayCount(+1);
-        _window.DesktopLayer?.SetInputActivation(true);
-        string acceptedName = definition.Name;
+        _window.PauseOutsideClickForOverlay();
         try
         {
+            if (!_window.IsExpandedCore)
+            {
+                await _window.ExpandOrganizerAsync();
+            }
+            if (_window.IsClosing) return;
+            await YieldForMenuDismissAsync();
+            if (_window.IsClosing) return;
+            OrganizerDefinition definition = _window.Definition;
+            _window.DesktopLayer?.SetInputActivation(true);
+            _window.ResetStationDelay();
+            string acceptedName = definition.Name;
             DisplayInfo display = _window.ResolveRenameDialogDisplay();
             bool accepted = await OwnedDialogWindow.ShowTextInputAsync(
                 _window.Hwnd,
@@ -1020,6 +1324,12 @@ internal sealed class OrganizerCatalogController
             if (!_window.IsClosing && accepted && acceptedName.Length > 0)
             {
                 await _window.Host.RenameOrganizerAsync(definition.Id, acceptedName);
+                if (!_window.IsClosing)
+                {
+                    _window.ShowExpandedToast(
+                        MainWindow.LocalizeToast($"已重命名为“{acceptedName}”", $"Renamed to \"{acceptedName}\"", $"「{acceptedName}」に名前を変更しました"),
+                        InfoBarSeverity.Success);
+                }
             }
         }
         catch (Exception ex)
@@ -1029,12 +1339,14 @@ internal sealed class OrganizerCatalogController
         }
         finally
         {
+            _activeDialogCount = Math.Max(0, _activeDialogCount - 1);
             if (!_window.IsClosing)
             {
-                _window.DesktopLayer?.SetInputActivation(false);
+                _window.DesktopLayer?.SetInputActivation(_window.IsContextMenuActivated || IsAddingItem);
                 _window.ResetStationDelay();
             }
             _window.AdjustOverlayCount(-1);
+            if (!_window.IsClosing) _window.ResumeOutsideClickAfterOverlay();
         }
     }
 
@@ -1043,6 +1355,7 @@ internal sealed class OrganizerCatalogController
         try
         {
             _window.Storage.EnsureCreated();
+            if (_window.Host.IsPeekActive) _window.Host.ExitPeekMode();
             Process.Start(new ProcessStartInfo(_window.Storage.ItemsRoot) { UseShellExecute = true });
         }
         catch (Exception ex)
@@ -1061,6 +1374,7 @@ internal sealed class OrganizerCatalogController
         if (moved)
         {
             StartWatcher();
+            _window.InvalidateActiveSortCriterion();
             await RefreshCatalogAsync(notifyUnsupported: false);
         }
         return moved;

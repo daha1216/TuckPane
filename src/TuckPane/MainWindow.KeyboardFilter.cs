@@ -14,8 +14,40 @@ public sealed partial class MainWindow
     private string _activeFilterQuery = string.Empty;
     private int _keyboardFocusedIndex = -1;
     private bool _filterBoxInputActive;
+    private bool _keyboardItemsInputActive;
 
     private bool HasActiveFilter => !string.IsNullOrWhiteSpace(_activeFilterQuery);
+
+    internal void FocusExpandedItemsForKeyboardInput()
+    {
+        if (_closing || !_expanded || IsDock || _definition.PlacementMode == OrganizerPlacementMode.Station || _organizerTitleEdit.IsBusy)
+            return;
+        if (ExpandedFilterBox.FocusState != FocusState.Unfocused)
+            return;
+        if (!_keyboardItemsInputActive)
+        {
+            _keyboardItemsInputActive = true;
+            _desktopLayer?.SetInputActivation(true);
+        }
+        if (ItemsScrollView.FocusState == FocusState.Unfocused)
+            ItemsScrollView.Focus(FocusState.Programmatic);
+    }
+
+    internal void ReleaseKeyboardItemsInputActivation()
+    {
+        if (!_keyboardItemsInputActive) return;
+        _keyboardItemsInputActive = false;
+        if (!_filterBoxInputActive && !_organizerTitleEdit.IsEditing)
+            _desktopLayer?.SetInputActivation(false);
+    }
+
+    internal void SyncKeyboardFocusToItem(string relativeName, bool updateVisuals = true)
+    {
+        int index = IndexOfItem(relativeName);
+        if (index < 0) return;
+        _keyboardFocusedIndex = index;
+        if (updateVisuals) UpdateKeyboardSelectionVisuals();
+    }
 
     private void ApplyFilteredCatalogItems(IReadOnlyList<WidgetItem> ordered, bool refreshIcons)
     {
@@ -37,6 +69,7 @@ public sealed partial class MainWindow
     {
         if (_closing || !_expanded || IsDock || _definition.PlacementMode == OrganizerPlacementMode.Station) return;
         ExpandedFilterBar.Visibility = Visibility.Visible;
+        UpdateExpandedTopOverlayOffsets();
         ExpandedFilterBox.PlaceholderText = AppStrings.Get("OrganizerFilterPlaceholder");
         if (!_filterBoxInputActive)
         {
@@ -58,10 +91,11 @@ public sealed partial class MainWindow
         _activeFilterQuery = string.Empty;
         if (ExpandedFilterBox.Text.Length > 0) ExpandedFilterBox.Text = string.Empty;
         ExpandedFilterBar.Visibility = Visibility.Collapsed;
+        UpdateExpandedTopOverlayOffsets();
         if (releaseInputActivation && _filterBoxInputActive)
         {
             _filterBoxInputActive = false;
-            if (!_organizerTitleEdit.IsEditing)
+            if (!_organizerTitleEdit.IsEditing && !_keyboardItemsInputActive)
                 _desktopLayer?.SetInputActivation(false);
         }
         if (hadFilter && _allCatalogItems.Count > 0)
@@ -131,11 +165,14 @@ public sealed partial class MainWindow
         if (_filterBoxInputActive)
         {
             _filterBoxInputActive = false;
-            if (!_organizerTitleEdit.IsEditing)
+            if (!_organizerTitleEdit.IsEditing && !_keyboardItemsInputActive)
                 _desktopLayer?.SetInputActivation(false);
         }
         if (!HasActiveFilter)
+        {
             ExpandedFilterBar.Visibility = Visibility.Collapsed;
+            UpdateExpandedTopOverlayOffsets();
+        }
     }
 
     private void ExpandedFilterClearButton_Click(object sender, RoutedEventArgs e) =>
@@ -206,24 +243,14 @@ public sealed partial class MainWindow
             return;
         }
 
-        int columns = IsCompactList ? 1 : Math.Max(1, GetItemLayoutColumnCount());
         switch (e.Key)
         {
             case VirtualKey.Right:
-                e.Handled = true;
-                MoveKeyboardFocus(1);
-                return;
             case VirtualKey.Left:
-                e.Handled = true;
-                MoveKeyboardFocus(-1);
-                return;
             case VirtualKey.Down:
-                e.Handled = true;
-                MoveKeyboardFocus(columns);
-                return;
             case VirtualKey.Up:
                 e.Handled = true;
-                MoveKeyboardFocus(-columns);
+                MoveKeyboardFocusDirectional(e.Key);
                 return;
             case VirtualKey.Enter:
                 if (TryGetKeyboardFocusedItem(out WidgetItem? enterItem))
@@ -291,19 +318,163 @@ public sealed partial class MainWindow
         }
     }
 
-    private void MoveKeyboardFocus(int delta)
+    private void MoveKeyboardFocusDirectional(VirtualKey direction)
     {
         if (_items.Count == 0)
         {
             _keyboardFocusedIndex = -1;
             return;
         }
-        if (_keyboardFocusedIndex < 0)
-            _keyboardFocusedIndex = delta >= 0 ? 0 : _items.Count - 1;
-        else
-            _keyboardFocusedIndex = Math.Clamp(_keyboardFocusedIndex + delta, 0, _items.Count - 1);
 
+        int columns = IsCompactList ? 1 : Math.Max(1, GetItemLayoutColumnCount());
+        if (!IsFreeGridLayoutActive || _resolvedItemSlots.Length != _items.Count)
+        {
+            int delta = direction switch
+            {
+                VirtualKey.Right => 1,
+                VirtualKey.Left => -1,
+                VirtualKey.Down => columns,
+                VirtualKey.Up => -columns,
+                _ => 0
+            };
+            MoveKeyboardFocus(delta, syncSelection: true);
+            return;
+        }
+
+        // True 2D spatial (row, col) navigation across sparse FreeGrid slots.
+        int currentIndex = _keyboardFocusedIndex is >= 0 && _keyboardFocusedIndex < _items.Count
+            ? _keyboardFocusedIndex
+            : TryResolveSingleSelectedIndex();
+        if (currentIndex < 0)
+        {
+            IReadOnlyList<WidgetItem> visual = GetItemsInVisualReadingOrder();
+            WidgetItem seed = direction is VirtualKey.Left or VirtualKey.Up ? visual[^1] : visual[0];
+            SelectAndFocusKeyboardIndex(IndexOfItem(seed.RelativeName));
+            return;
+        }
+
+        int currentSlot = _resolvedItemSlots[currentIndex];
+        int curRow = currentSlot / columns;
+        int curCol = currentSlot % columns;
+
+        int bestIndex = -1;
+        double bestScore = double.MaxValue;
+        for (int i = 0; i < _items.Count; i++)
+        {
+            if (i == currentIndex) continue;
+            int slot = _resolvedItemSlots[i];
+            int row = slot / columns;
+            int col = slot % columns;
+
+            int primaryDelta;
+            int secondaryDelta;
+            switch (direction)
+            {
+                case VirtualKey.Right:
+                    if (col <= curCol) continue;
+                    primaryDelta = col - curCol;
+                    secondaryDelta = Math.Abs(row - curRow);
+                    break;
+                case VirtualKey.Left:
+                    if (col >= curCol) continue;
+                    primaryDelta = curCol - col;
+                    secondaryDelta = Math.Abs(row - curRow);
+                    break;
+                case VirtualKey.Down:
+                    if (row <= curRow) continue;
+                    primaryDelta = row - curRow;
+                    secondaryDelta = Math.Abs(col - curCol);
+                    break;
+                case VirtualKey.Up:
+                    if (row >= curRow) continue;
+                    primaryDelta = curRow - row;
+                    secondaryDelta = Math.Abs(col - curCol);
+                    break;
+                default:
+                    continue;
+            }
+
+            // Strongly prefer same-row / same-column neighbors before stepping across rows/columns.
+            double score = secondaryDelta == 0
+                ? primaryDelta
+                : 1000.0 + secondaryDelta * 25.0 + primaryDelta;
+            if (score < bestScore)
+            {
+                bestScore = score;
+                bestIndex = i;
+            }
+        }
+
+        // For Left/Right at row edges, gracefully wrap to the previous/next item in visual reading order.
+        if (bestIndex < 0 && direction is VirtualKey.Left or VirtualKey.Right)
+        {
+            IReadOnlyList<WidgetItem> visual = GetItemsInVisualReadingOrder();
+            int visualIdx = IndexOfItemInVisualOrder(_items[currentIndex].RelativeName);
+            if (visualIdx >= 0)
+            {
+                int nextVisual = direction == VirtualKey.Right
+                    ? Math.Min(visual.Count - 1, visualIdx + 1)
+                    : Math.Max(0, visualIdx - 1);
+                bestIndex = IndexOfItem(visual[nextVisual].RelativeName);
+            }
+        }
+
+        if (bestIndex >= 0)
+            SelectAndFocusKeyboardIndex(bestIndex);
+    }
+
+    private void MoveKeyboardFocus(int delta, bool syncSelection = false)
+    {
+        if (_items.Count == 0)
+        {
+            _keyboardFocusedIndex = -1;
+            return;
+        }
+        int current = _keyboardFocusedIndex is >= 0 && _keyboardFocusedIndex < _items.Count
+            ? _keyboardFocusedIndex
+            : TryResolveSingleSelectedIndex();
+        int next = current < 0
+            ? (delta >= 0 ? 0 : _items.Count - 1)
+            : Math.Clamp(current + delta, 0, _items.Count - 1);
+
+        if (syncSelection)
+            SelectAndFocusKeyboardIndex(next);
+        else
+        {
+            _keyboardFocusedIndex = next;
+            UpdateKeyboardSelectionVisuals();
+            BringKeyboardFocusedItemIntoView();
+        }
+    }
+
+    private void SelectAndFocusKeyboardIndex(int index)
+    {
+        if (index < 0 || index >= _items.Count) return;
+        _keyboardFocusedIndex = index;
+        string rel = _items[index].RelativeName;
+        _itemSelection.SelectSingle(rel, IndexOfItemInVisualOrder(rel));
+        RefreshItemSelectionVisuals();
         UpdateKeyboardSelectionVisuals();
+        BringKeyboardFocusedItemIntoView();
+    }
+
+    private void BringKeyboardFocusedItemIntoView()
+    {
+        if (_keyboardFocusedIndex >= 0 && TryGetRealizedItemHost(_keyboardFocusedIndex, out Border host))
+        {
+            try { host.StartBringIntoView(); } catch { }
+        }
+    }
+
+    private int TryResolveSingleSelectedIndex()
+    {
+        if (_itemSelection.Count != 1) return -1;
+        for (int i = 0; i < _items.Count; i++)
+        {
+            if (_itemSelection.Contains(_items[i].RelativeName))
+                return i;
+        }
+        return -1;
     }
 
     private void ClampKeyboardFocusIndex()
@@ -317,6 +488,13 @@ public sealed partial class MainWindow
         if (_keyboardFocusedIndex >= 0 && _keyboardFocusedIndex < _items.Count)
         {
             item = _items[_keyboardFocusedIndex];
+            return true;
+        }
+        int selectedIndex = TryResolveSingleSelectedIndex();
+        if (selectedIndex >= 0)
+        {
+            _keyboardFocusedIndex = selectedIndex;
+            item = _items[selectedIndex];
             return true;
         }
         item = null;

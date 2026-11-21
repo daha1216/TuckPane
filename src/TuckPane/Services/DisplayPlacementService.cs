@@ -616,7 +616,9 @@ internal static class DisplayPlacementService
             work = fallback.Work;
             scale = fallback.Scale;
         }
-        if (window != IntPtr.Zero)
+        if (window != IntPtr.Zero &&
+            monitor != IntPtr.Zero &&
+            NativeMethods.MonitorFromWindow(window, NativeMethods.MONITOR_DEFAULTTONEAREST) == monitor)
         {
             uint windowDpi = NativeMethods.GetDpiForWindow(window);
             if (windowDpi > 0) scale = Math.Max(1, windowDpi / 96d);

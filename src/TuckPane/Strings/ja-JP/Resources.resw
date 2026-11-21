@@ -524,4 +524,9 @@
   <data name="ContextCompactGridGaps" xml:space="preserve"><value>空きマスを詰めて整列</value></data>
   <data name="FreeGridPlacementTitle" xml:space="preserve"><value>展開時の自由グリッド配置（iOS 風の空白配置）</value></data>
   <data name="FreeGridPreferDirectSwapTitle" xml:space="preserve"><value>既存アイコン上へのドロップ時は直接入れ替え（Shift で一時切替）</value></data>
+  <data name="AutoOrganizeExtensionsLabel" xml:space="preserve"><value>拡張子</value></data>
+  <data name="AutoOrganizePatternsLabel" xml:space="preserve"><value>ファイル名パターン</value></data>
+  <data name="DeleteStation" xml:space="preserve"><value>ステーションを削除</value></data>
+  <data name="DeleteDock" xml:space="preserve"><value>Dock を削除</value></data>
+  <data name="DesktopGridAlignNow" xml:space="preserve"><value>今すぐ揃える</value></data>
 </root>

@@ -29,6 +29,7 @@ public sealed partial class MainWindow
 
     private readonly FreeSlotGridLayout _freeSlotGridLayout = new();
     private int[] _resolvedItemSlots = [];
+    private readonly Dictionary<string, int> _resolvedSlotByRelativeName = new(StringComparer.OrdinalIgnoreCase);
     private FreeGridReorderEngine? _freeGridEngine;
     private readonly List<Border> _freeGridGuideCells = [];
     private readonly Dictionary<Border, int> _dragHostIndexLookup = new(ReferenceEqualityComparer.Instance);
@@ -43,7 +44,10 @@ public sealed partial class MainWindow
     private float _dragTiltVelocity;
     private double _dragWiggleClockSeconds;
     private int? _pendingExternalDropSlot;
+    private HashSet<string>? _pendingExternalDropExistingNames;
+    private bool _pendingSlotMapSave;
     private bool _dropPositionedInPlace;
+    private int[]? _pendingInternalOleFreeGridSlots;
     private int[] _dragStackIndices = [];
     private Border? _swapHighlightHost;
 
@@ -62,6 +66,67 @@ public sealed partial class MainWindow
         return positioned;
     }
 
+    internal bool ConsumePendingSlotMapSave()
+    {
+        bool dirty = _pendingSlotMapSave;
+        _pendingSlotMapSave = false;
+        return dirty;
+    }
+
+    internal void ClearPendingExternalDropSlot()
+    {
+        _pendingExternalDropSlot = null;
+        _pendingExternalDropExistingNames = null;
+    }
+
+    internal IReadOnlyList<WidgetItem> GetItemsInVisualReadingOrder()
+    {
+        int count = _items.Count;
+        if (count == 0) return [];
+        if (IsDock || IsCompactList || !_host.State.GlobalSettings.FreeGridPlacementEnabled)
+            return _items;
+
+        int[] slots = IsFreeGridLayoutActive && _resolvedItemSlots.Length == count
+            ? _resolvedItemSlots
+            : _definition.ItemSlots is { Count: > 0 }
+                ? FreeGridSlotMap.ResolveSlots(_items.Select(i => i.RelativeName).ToArray(), _definition.ItemSlots)
+                : [];
+        if (slots.Length != count) return _items;
+
+        bool alreadyOrdered = true;
+        for (int i = 1; i < count; i++)
+        {
+            if (slots[i] < slots[i - 1])
+            {
+                alreadyOrdered = false;
+                break;
+            }
+        }
+        if (alreadyOrdered) return _items;
+
+        var indices = new int[count];
+        for (int i = 0; i < count; i++) indices[i] = i;
+        Array.Sort(indices, (a, b) =>
+        {
+            int cmp = slots[a].CompareTo(slots[b]);
+            return cmp != 0 ? cmp : a.CompareTo(b);
+        });
+        var ordered = new WidgetItem[count];
+        for (int i = 0; i < count; i++) ordered[i] = _items[indices[i]];
+        return ordered;
+    }
+
+    internal int IndexOfItemInVisualOrder(string relativeName)
+    {
+        IReadOnlyList<WidgetItem> visualItems = GetItemsInVisualReadingOrder();
+        for (int i = 0; i < visualItems.Count; i++)
+        {
+            if (visualItems[i].RelativeName.Equals(relativeName, StringComparison.OrdinalIgnoreCase))
+                return i;
+        }
+        return -1;
+    }
+
     internal void RefreshFreeGridLayoutMode()
     {
         if (_closing) return;
@@ -69,26 +134,66 @@ public sealed partial class MainWindow
         ConfigureItemsLayout(updateItems: true);
     }
 
+    private void RebuildResolvedSlotLookup()
+    {
+        _resolvedSlotByRelativeName.Clear();
+        int count = Math.Min(_items.Count, _resolvedItemSlots.Length);
+        for (int i = 0; i < count; i++)
+        {
+            string rel = _items[i].RelativeName;
+            if (!string.IsNullOrEmpty(rel))
+                _resolvedSlotByRelativeName[rel] = _resolvedItemSlots[i];
+        }
+    }
+
     private void SyncResolvedItemSlots()
     {
         if (_items.Count == 0)
         {
             _resolvedItemSlots = [];
+            _resolvedSlotByRelativeName.Clear();
             return;
         }
 
         string[] names = _items.Select(i => i.RelativeName).ToArray();
 
-        // If external files were just dropped onto a specific free-grid cell, bind new items there first.
+        // If external files were just dropped onto a specific free-grid cell, bind ONLY newly added items there
+        // while preserving all pre-existing items' resolved slots so nothing ever teleports.
         if (IsFreeGridLayoutActive && _pendingExternalDropSlot is int preferredSlot)
         {
             _pendingExternalDropSlot = null;
+            HashSet<string>? existingBeforeDrop = _pendingExternalDropExistingNames;
+            _pendingExternalDropExistingNames = null;
             _definition.ItemSlots ??= new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+
             var existingOccupied = new HashSet<int>();
             foreach (string name in names)
             {
-                if (_definition.ItemSlots.TryGetValue(name, out int slot) && slot >= 0)
-                    existingOccupied.Add(slot);
+                bool isExisting = existingBeforeDrop is null || existingBeforeDrop.Contains(name);
+                if (!isExisting) continue;
+                if (_definition.ItemSlots.TryGetValue(name, out int savedSlot) && savedSlot >= 0)
+                {
+                    existingOccupied.Add(savedSlot);
+                }
+                else if (_resolvedSlotByRelativeName.TryGetValue(name, out int resolvedSlot) && resolvedSlot >= 0)
+                {
+                    _definition.ItemSlots[name] = resolvedSlot;
+                    existingOccupied.Add(resolvedSlot);
+                }
+            }
+
+            // Seed any remaining pre-existing unslotted items into their natural first-free cells BEFORE placing drops.
+            if (existingBeforeDrop is not null)
+            {
+                int nextNatural = 0;
+                foreach (string name in names)
+                {
+                    if (!existingBeforeDrop.Contains(name) || _definition.ItemSlots.ContainsKey(name)) continue;
+                    while (existingOccupied.Contains(nextNatural)) nextNatural++;
+                    _definition.ItemSlots[name] = nextNatural;
+                    existingOccupied.Add(nextNatural);
+                    nextNatural++;
+                }
             }
 
             int cols = Math.Max(1, GetItemLayoutColumnCount());
@@ -99,7 +204,11 @@ public sealed partial class MainWindow
             int cursorSlot = preferredSlot;
             foreach (string name in names)
             {
-                if (_definition.ItemSlots.ContainsKey(name)) continue;
+                bool isNewItem = existingBeforeDrop is not null
+                    ? !existingBeforeDrop.Contains(name)
+                    : !_definition.ItemSlots.ContainsKey(name);
+                if (!isNewItem) continue;
+                maxSlotBound = Math.Max(maxSlotBound, cursorSlot + cols + 1);
                 int chosen = FreeGridSlotMap.FindNearestFreeSlot(cursorSlot, existingOccupied, maxSlotBound);
                 _definition.ItemSlots[name] = chosen;
                 existingOccupied.Add(chosen);
@@ -109,9 +218,10 @@ public sealed partial class MainWindow
             if (assignedAny)
             {
                 _dropPositionedInPlace = true;
+                _pendingSlotMapSave = true;
                 _resolvedItemSlots = FreeGridSlotMap.ResolveSlots(names, _definition.ItemSlots);
+                RebuildResolvedSlotLookup();
                 _definition.ItemOrder = FreeGridSlotMap.BuildReadingOrder(names, _resolvedItemSlots);
-                DispatcherQueue.TryEnqueue(() => { if (!_closing) _ = SaveStateAsync(); });
                 _freeSlotGridLayout.InvalidateSlots();
                 return;
             }
@@ -120,6 +230,7 @@ public sealed partial class MainWindow
         _resolvedItemSlots = IsFreeGridLayoutActive
             ? FreeGridSlotMap.ResolveSlots(names, _definition.ItemSlots)
             : Enumerable.Range(0, names.Length).ToArray();
+        RebuildResolvedSlotLookup();
         _freeSlotGridLayout.InvalidateSlots();
     }
 
@@ -128,6 +239,21 @@ public sealed partial class MainWindow
         if (itemIndex >= 0 && itemIndex < _resolvedItemSlots.Length)
             return _resolvedItemSlots[itemIndex];
         return itemIndex;
+    }
+
+    private int ResolveFreeGridElementSlotForLayout(UIElement element, int fallbackIndex)
+    {
+        if (element is FrameworkElement fe)
+        {
+            if (fe.Tag is string tag && _resolvedSlotByRelativeName.TryGetValue(tag, out int slotByTag))
+                return slotByTag;
+            if (fe.DataContext is WidgetItem item && _resolvedSlotByRelativeName.TryGetValue(item.RelativeName, out int slotByItem))
+                return slotByItem;
+        }
+        int repeaterIndex = ItemsRepeater.GetElementIndex(element);
+        if (repeaterIndex >= 0 && repeaterIndex < _resolvedItemSlots.Length)
+            return _resolvedItemSlots[repeaterIndex];
+        return ResolveFreeGridSlotForLayout(fallbackIndex);
     }
 
     private bool TryConfigureFreeSlotGridLayout(double width, double height, double cellWidth, double cellHeight)
@@ -140,18 +266,28 @@ public sealed partial class MainWindow
         _freeSlotGridLayout.Columns = GetItemLayoutColumnCount();
         _freeSlotGridLayout.MinimumVisibleRows = Math.Max(1, _definition.Layout.Rows);
         _freeSlotGridLayout.SlotResolver = ResolveFreeGridSlotForLayout;
+        _freeSlotGridLayout.ElementSlotResolver = ResolveFreeGridElementSlotForLayout;
         if (!ReferenceEquals(ItemsRepeater.Layout, _freeSlotGridLayout))
             ItemsRepeater.Layout = _freeSlotGridLayout;
-        SyncFreeGridOverlayBounds(
-            _freeSlotGridLayout.Columns,
-            FreeGridSlotMap.TotalRowCount(
-                _resolvedItemSlots,
+        if (_freeGridEngine is not null)
+        {
+            SyncFreeGridOverlayBounds(
                 _freeSlotGridLayout.Columns,
-                _freeSlotGridLayout.MinimumVisibleRows,
-                _freeSlotGridLayout.IncludeDragBufferRow),
-            cellWidth,
-            cellHeight,
-            _freeSlotGridLayout.Gap);
+                FreeGridSlotMap.TotalRowCount(
+                    _resolvedItemSlots,
+                    _freeSlotGridLayout.Columns,
+                    _freeSlotGridLayout.MinimumVisibleRows,
+                    _freeSlotGridLayout.IncludeDragBufferRow),
+                cellWidth,
+                cellHeight,
+                _freeSlotGridLayout.Gap);
+        }
+        else if (double.IsFinite(FreeGridOverlayCanvas.Width) || double.IsFinite(FreeGridOverlayCanvas.Height))
+        {
+            FreeGridOverlayCanvas.Margin = ItemsRepeater.Margin;
+            FreeGridOverlayCanvas.Width = double.NaN;
+            FreeGridOverlayCanvas.Height = double.NaN;
+        }
         _freeSlotGridLayout.InvalidateSlots();
         return true;
     }
@@ -249,6 +385,18 @@ public sealed partial class MainWindow
         if (_dragStackIndices.Length > 1)
         {
             FreeGridDragStackBadgeText.Text = _dragStackIndices.Length.ToString();
+            Point primaryOrigin = FreeGridSlotMap.SlotOrigin(
+                _freeGridEngine.SourceSlot,
+                columns,
+                cellWidth,
+                cellHeight,
+                GetItemLayoutGapDip());
+            float initialDx = (float)(session.LatestPointerContent.X - session.PressPointerContent.X) + _hoverDragOriginOffset.X;
+            float initialDy = (float)(session.LatestPointerContent.Y - session.PressPointerContent.Y) + _hoverDragOriginOffset.Y;
+            FreeGridDragStackBadge.Translation = new Vector3(
+                (float)(primaryOrigin.X + initialDx + cellWidth - 18),
+                (float)(primaryOrigin.Y + initialDy - 6),
+                0f);
             FreeGridDragStackBadge.Visibility = Visibility.Visible;
             for (int k = 1; k < _dragStackIndices.Length; k++)
             {
@@ -581,7 +729,11 @@ public sealed partial class MainWindow
     private async Task CommitIosFluidReorderAsync(ItemReorderSession session)
     {
         FreeGridReorderEngine? engine = _freeGridEngine;
-        if (engine is null) return;
+        if (engine is null || HasActiveFilter)
+        {
+            if (ReferenceEquals(_itemReorderSession, session)) CancelItemReorder();
+            return;
+        }
 
         try
         {
@@ -630,7 +782,7 @@ public sealed partial class MainWindow
                 }
             }
 
-            if (!ReferenceEquals(_itemReorderSession, session)) return;
+            if (!ReferenceEquals(_itemReorderSession, session) || HasActiveFilter) return;
             StopItemDragInput(keepRendering: false);
 
             Dictionary<string, Point>? visualPositions = _itemReorderUsesAnimations ? CaptureRealizedItemPositions() : null;
@@ -663,8 +815,12 @@ public sealed partial class MainWindow
                 if (IsFreeGridLayoutActive)
                 {
                     _resolvedItemSlots = finalSlots;
+                    RebuildResolvedSlotLookup();
                     _freeSlotGridLayout.InvalidateSlots();
+                    ItemsRepeater.InvalidateMeasure();
+                    ItemsRepeater.InvalidateArrange();
                     ItemsRepeater.UpdateLayout();
+                    ReconcileSmoothScrollBounds();
                 }
                 else
                 {
@@ -688,26 +844,27 @@ public sealed partial class MainWindow
                             desiredList.Add(entry);
                     }
                     desiredList.AddRange(duplicates);
-                    WidgetItem[] desired = desiredList.ToArray();
-                    _itemCollectionMoveInProgress = true;
-                    try
-                    {
-                        _ = CatalogCollectionSync.ApplyReorderInPlace(_items, desired);
-                        _resolvedItemSlots = Enumerable.Range(0, _items.Count).ToArray();
-                        ItemsRepeater.UpdateLayout();
-                    }
-                    finally
-                    {
-                        _itemCollectionMoveInProgress = false;
-                    }
+                    ApplyCatalogItemsAndRender(desiredList, refreshIcons: false);
+                    SyncResolvedItemSlots();
+                    ItemsRepeater.UpdateLayout();
+                    ReconcileSmoothScrollBounds();
                 }
 
+                InvalidateActiveSortCriterion();
                 if (visualPositions is not null) ApplyFlipFromCapturedPositions(visualPositions);
+                RenderCompactPreview();
                 _host.NotifyOrganizerPreviewChanged(_definition.Id);
             }
 
             session.MarkOutcome(ItemDragState.Committed);
             FinishItemReorderSession();
+        }
+        catch (Exception ex)
+        {
+            if (ReferenceEquals(_itemReorderSession, session))
+                session.MarkOutcome(ItemDragState.Cancelled);
+            AppLogger.Error("保存自由网格项目换序失败。", ex);
+            if (!_closing) ShowMessage(AppStrings.Get("SaveConfigurationError"), InfoBarSeverity.Warning);
         }
         finally
         {
@@ -715,6 +872,162 @@ public sealed partial class MainWindow
             StopItemDragInput(keepRendering: false);
             CleanupIosFreeGridOverlays();
             _freeGridEngine = null;
+            if (ReferenceEquals(_itemReorderSession, session))
+            {
+                ResetItemDragVisuals();
+                FinishItemReorderSession();
+            }
+        }
+    }
+
+    private void UpdateInternalOleFreeGridTarget(DragEventArgs e, ItemReorderSession session)
+    {
+        if (!IsFreeGridLayoutActive || session.SourceIndex < 0 || session.SourceIndex >= _items.Count) return;
+
+        int columns = Math.Max(1, GetItemLayoutColumnCount());
+        int minRows = Math.Max(1, _definition.Layout.Rows);
+        double cellWidth = Math.Max(1, _freeSlotGridLayout.CellWidth);
+        double cellHeight = Math.Max(1, _freeSlotGridLayout.CellHeight);
+        double gap = _freeSlotGridLayout.Gap;
+
+        if (_freeGridEngine is null)
+        {
+            SyncResolvedItemSlots();
+            int initRows = FreeGridSlotMap.TotalRowCount(_resolvedItemSlots, columns, minRows, includeDragBufferRow: true);
+            int maxSlots = columns * initRows;
+            _freeGridEngine = new FreeGridReorderEngine(_resolvedItemSlots, session.SourceIndex, freeGridEnabled: true, maxSlots);
+            _dragHostIndexLookup.Clear();
+            Vector3 pivot = new((float)(cellWidth / 2.0), (float)(cellHeight / 2.0), 0f);
+            for (int index = 0; index < _items.Count; index++)
+            {
+                if (TryGetRealizedItemHost(index, out Border siblingHost))
+                {
+                    _dragHostIndexLookup[siblingHost] = index;
+                    siblingHost.CenterPoint = pivot;
+                    siblingHost.Rotation = 0f;
+                }
+            }
+            _freeSlotGridLayout.IncludeDragBufferRow = true;
+            SyncFreeGridOverlayBounds(columns, initRows, cellWidth, cellHeight, gap);
+            BuildFreeGridGuideCells(columns, initRows);
+            _dropGhostPositioned = false;
+        }
+
+        int totalRows = FreeGridSlotMap.TotalRowCount(_resolvedItemSlots, columns, minRows, includeDragBufferRow: true);
+        int slotLimit = Math.Max(_items.Count, columns * totalRows);
+        Point pointerContent = e.GetPosition(ItemsRepeater);
+        int targetSlot = FreeGridSlotMap.PointToSlot(pointerContent, cellWidth, cellHeight, gap, columns, totalRows);
+        bool shiftHeld = (NativeMethods.GetAsyncKeyState(0x10) & 0x8000) != 0;
+        bool preferDirectSwap = _host.State.GlobalSettings.FreeGridPreferDirectSwap ^ shiftHeld;
+
+        session.MarkInternalPreview();
+        bool changed = _freeGridEngine.CommitTargetSlot(targetSlot, preferDirectSwap, slotLimit);
+        if (changed || FreeGridDropSlotGhost.Visibility != Visibility.Visible)
+        {
+            ApplyIosFluidTargets(columns, cellWidth, cellHeight, gap);
+            ShowFreeGridDropGhost(_freeGridEngine.TargetSlot, _freeGridEngine.CurrentKind, immediate: !UseCustomAnimations);
+        }
+        StartNativeItemMotionRendering();
+    }
+
+    private void LeaveInternalOleFreeGridPreview()
+    {
+        if (_freeGridEngine is null) return;
+        _freeGridEngine.ResetToOriginal();
+        int columns = Math.Max(1, GetItemLayoutColumnCount());
+        ApplyIosFluidTargets(columns, Math.Max(1, _freeSlotGridLayout.CellWidth), Math.Max(1, _freeSlotGridLayout.CellHeight), _freeSlotGridLayout.Gap);
+        FreeGridDropSlotGhost.Visibility = Visibility.Collapsed;
+        StartNativeItemMotionRendering();
+    }
+
+    private void CaptureInternalOleFreeGridDropSlots(DragEventArgs e, ItemReorderSession session)
+    {
+        UpdateInternalOleFreeGridTarget(e, session);
+        _pendingInternalOleFreeGridSlots = _freeGridEngine?.SnapshotVisualSlots();
+    }
+
+    private int[]? ConsumePendingInternalOleFreeGridSlots()
+    {
+        int[]? slots = _pendingInternalOleFreeGridSlots;
+        _pendingInternalOleFreeGridSlots = null;
+        return slots;
+    }
+
+    private async Task CommitInternalOleFreeGridReorderAsync(ItemReorderSession session, int[] finalSlots)
+    {
+        if (HasActiveFilter || finalSlots.Length != _items.Count)
+        {
+            if (ReferenceEquals(_itemReorderSession, session)) CancelItemReorder();
+            return;
+        }
+
+        try
+        {
+            StopItemDragInput(keepRendering: false);
+            session.BeginCommit();
+            Dictionary<string, Point>? visualPositions = UseCustomAnimations ? CaptureRealizedItemPositions() : null;
+            CleanupIosFreeGridOverlays();
+            ResetItemDragVisuals();
+
+            bool changed = !finalSlots.AsSpan().SequenceEqual(_resolvedItemSlots);
+            if (changed)
+            {
+                string[] currentNames = _items.Select(i => i.RelativeName).ToArray();
+                List<string> previousOrder = _definition.ItemOrder.ToList();
+                var previousSlots = new Dictionary<string, int>(_definition.ItemSlots ?? [], StringComparer.OrdinalIgnoreCase);
+
+                Dictionary<string, int> nextSlotMap = FreeGridSlotMap.BuildDictionary(currentNames, finalSlots);
+                List<string> nextReadingOrder = FreeGridSlotMap.BuildReadingOrder(currentNames, finalSlots);
+
+                _definition.ItemSlots = nextSlotMap;
+                _definition.ItemOrder = nextReadingOrder;
+                try
+                {
+                    await _host.SaveStateAsync();
+                }
+                catch
+                {
+                    _definition.ItemOrder = previousOrder;
+                    _definition.ItemSlots = previousSlots;
+                    throw;
+                }
+
+                _resolvedItemSlots = finalSlots;
+                RebuildResolvedSlotLookup();
+                _freeSlotGridLayout.InvalidateSlots();
+                ItemsRepeater.InvalidateMeasure();
+                ItemsRepeater.InvalidateArrange();
+                ItemsRepeater.UpdateLayout();
+                ReconcileSmoothScrollBounds();
+
+                InvalidateActiveSortCriterion();
+                if (visualPositions is not null) ApplyFlipFromCapturedPositions(visualPositions);
+                RenderCompactPreview();
+                _host.NotifyOrganizerPreviewChanged(_definition.Id);
+            }
+
+            session.MarkOutcome(ItemDragState.Committed);
+            FinishItemReorderSession();
+        }
+        catch (Exception ex)
+        {
+            if (ReferenceEquals(_itemReorderSession, session))
+                session.MarkOutcome(ItemDragState.Cancelled);
+            AppLogger.Error("保存 OLE 回拖自由网格项目换序失败。", ex);
+            if (!_closing) ShowMessage(AppStrings.Get("SaveConfigurationError"), InfoBarSeverity.Warning);
+        }
+        finally
+        {
+            _itemDragLanding = false;
+            StopItemDragInput(keepRendering: false);
+            CleanupIosFreeGridOverlays();
+            _freeGridEngine = null;
+            _pendingInternalOleFreeGridSlots = null;
+            if (ReferenceEquals(_itemReorderSession, session))
+            {
+                ResetItemDragVisuals();
+                FinishItemReorderSession();
+            }
         }
     }
 
@@ -732,6 +1045,7 @@ public sealed partial class MainWindow
 
     private void CleanupIosFreeGridOverlays()
     {
+        bool hadBufferRow = _freeSlotGridLayout.IncludeDragBufferRow;
         _freeSlotGridLayout.IncludeDragBufferRow = false;
         FreeGridDropSlotGhost.Visibility = Visibility.Collapsed;
         FreeGridDragStackBadge.Visibility = Visibility.Collapsed;
@@ -769,6 +1083,19 @@ public sealed partial class MainWindow
         // Pool guide cells (collapse instead of destroying/rebuilding XAML tree on every drag!).
         foreach (Border cell in _freeGridGuideCells)
             cell.Visibility = Visibility.Collapsed;
+
+        // Release any explicit drag-buffer height on FreeGridOverlayCanvas so no phantom blank row or scrollbar lingers.
+        if (double.IsFinite(FreeGridOverlayCanvas.Height) || double.IsFinite(FreeGridOverlayCanvas.Width) || hadBufferRow)
+        {
+            FreeGridOverlayCanvas.Width = double.NaN;
+            FreeGridOverlayCanvas.Height = double.NaN;
+            _freeSlotGridLayout.InvalidateSlots();
+            ItemsRepeater.InvalidateMeasure();
+            ItemsRepeater.InvalidateArrange();
+            ItemsScrollHost.InvalidateMeasure();
+            ItemsScrollView.InvalidateMeasure();
+            ReconcileSmoothScrollBounds();
+        }
     }
 
     private void BuildFreeGridGuideCells(int columns, int totalRows)
@@ -880,9 +1207,14 @@ public sealed partial class MainWindow
         _dropPositionedInPlace = false;
         if (!IsFreeGridLayoutActive)
         {
-            _pendingExternalDropSlot = null;
+            ClearPendingExternalDropSlot();
             return;
         }
+        IReadOnlyList<WidgetItem> existingSource = _allCatalogItems.Count > 0 ? _allCatalogItems : _items;
+        _pendingExternalDropExistingNames = new HashSet<string>(
+            existingSource.Select(i => i.RelativeName),
+            StringComparer.OrdinalIgnoreCase);
+
         Point dropPoint = e.GetPosition(ItemsRepeater);
         int columns = Math.Max(1, GetItemLayoutColumnCount());
         int totalRows = FreeGridSlotMap.TotalRowCount(
@@ -904,15 +1236,63 @@ public sealed partial class MainWindow
 
     internal async Task CompactGridGapsAsync()
     {
-        if (_closing || _items.Count == 0) return;
+        if (_closing) return;
+        if (IsCompactList || !_host.State.GlobalSettings.FreeGridPlacementEnabled)
+        {
+            ShowExpandedToast(
+                LocalizeToast("当前视图无需整理方格空位", "Grid compaction is only available in free-grid icon view", "空き詰めはフリーグリッドアイコン表示時のみ利用できます"),
+                InfoBarSeverity.Informational);
+            return;
+        }
+
+        IReadOnlyList<WidgetItem> source = _allCatalogItems.Count > 0 ? _allCatalogItems : _items.ToArray();
+        if (source.Count == 0)
+        {
+            ShowExpandedToast(
+                LocalizeToast("当前收纳窗暂无项目", "No items in this organizer", "このボックスには項目がありません"),
+                InfoBarSeverity.Informational);
+            return;
+        }
+
+        string[] names = source.Select(i => i.RelativeName).ToArray();
+        int[] priorSlots = FreeGridSlotMap.ResolveSlots(names, _definition.ItemSlots);
+        List<string> readingOrder = FreeGridSlotMap.BuildReadingOrder(names, priorSlots);
+        Dictionary<string, int> denseSlots = FreeGridSlotMap.CompactToDense(readingOrder);
+        bool slotsChanged = false;
+        for (int i = 0; i < names.Length; i++)
+        {
+            if (!denseSlots.TryGetValue(names[i], out int denseSlot) || priorSlots[i] != denseSlot)
+            {
+                slotsChanged = true;
+                break;
+            }
+        }
+        if (!slotsChanged)
+        {
+            for (int i = 0; i < names.Length && i < readingOrder.Count; i++)
+            {
+                if (!string.Equals(names[i], readingOrder[i], StringComparison.OrdinalIgnoreCase))
+                {
+                    slotsChanged = true;
+                    break;
+                }
+            }
+        }
+
+        if (!slotsChanged)
+        {
+            ShowExpandedToast(
+                LocalizeToast("当前已是紧凑排布，无空位可整理", "Grid is already compact", "すでに隙間なく整列されています"),
+                InfoBarSeverity.Informational);
+            return;
+        }
+
         Dictionary<string, Point>? before = UseCustomAnimations && _expanded ? CaptureRealizedItemPositions() : null;
 
-        string[] names = _items.Select(i => i.RelativeName).ToArray();
-        List<string> readingOrder = FreeGridSlotMap.BuildReadingOrder(names, _resolvedItemSlots);
         List<string> previousOrder = _definition.ItemOrder.ToList();
         var previousSlots = new Dictionary<string, int>(_definition.ItemSlots ?? [], StringComparer.OrdinalIgnoreCase);
         _definition.ItemOrder = readingOrder;
-        _definition.ItemSlots = FreeGridSlotMap.CompactToDense(readingOrder);
+        _definition.ItemSlots = denseSlots;
         try
         {
             await _host.SaveStateAsync();
@@ -924,30 +1304,39 @@ public sealed partial class MainWindow
             throw;
         }
 
-        var lookup = new Dictionary<string, WidgetItem>(_items.Count, StringComparer.OrdinalIgnoreCase);
+        var lookup = new Dictionary<string, WidgetItem>(source.Count, StringComparer.OrdinalIgnoreCase);
         var duplicates = new List<WidgetItem>();
-        foreach (WidgetItem entry in _items)
+        foreach (WidgetItem entry in source)
         {
             if (!lookup.TryAdd(entry.RelativeName, entry))
                 duplicates.Add(entry);
         }
-        var orderedList = new List<WidgetItem>(_items.Count);
+        var orderedList = new List<WidgetItem>(source.Count);
         var emitted = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (string n in readingOrder)
         {
             if (lookup.TryGetValue(n, out WidgetItem? matched) && emitted.Add(n))
                 orderedList.Add(matched);
         }
-        foreach (WidgetItem entry in _items)
+        foreach (WidgetItem entry in source)
         {
             if (!emitted.Contains(entry.RelativeName))
                 orderedList.Add(entry);
         }
         orderedList.AddRange(duplicates);
+        NormalizeItemMotionsToLayout("CompactGridGaps");
         ApplyCatalogItemsAndRender(orderedList, refreshIcons: false);
         SyncResolvedItemSlots();
+        _freeSlotGridLayout.InvalidateSlots();
+        ItemsRepeater.InvalidateMeasure();
+        ItemsRepeater.InvalidateArrange();
         ItemsRepeater.UpdateLayout();
+        ReconcileSmoothScrollBounds();
         if (before is not null) ApplyFlipFromCapturedPositions(before);
+        RenderCompactPreview();
         _host.NotifyOrganizerPreviewChanged(_definition.Id);
+        ShowExpandedToast(
+            LocalizeToast("已紧凑排布方格空位", "Compacted grid gaps", "グリッドの空きを詰めました"),
+            InfoBarSeverity.Success);
     }
 }

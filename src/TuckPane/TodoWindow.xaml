@@ -186,7 +186,7 @@
                                     KeyDown="TaskEditor_KeyDown"
                                     LostFocus="TaskEditor_LostFocus"
                                     Tag="{Binding}"
-                                    Text="{Binding EditText, Mode=TwoWay}"
+                                    Text="{Binding EditText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                                     TextAlignment="Left"
                                     TextWrapping="Wrap"
                                     Visibility="{Binding EditorVisibility}" />

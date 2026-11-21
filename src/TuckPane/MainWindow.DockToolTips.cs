@@ -2,6 +2,7 @@ using System.Numerics;
 using System.Runtime.InteropServices;
 using Microsoft.UI.Xaml.Controls;
 using TuckPane.Core;
+using TuckPane.Models;
 using TuckPane.Services;
 using Windows.Foundation;
 
@@ -79,11 +80,17 @@ public sealed partial class MainWindow
             Left = (int)pixels.X, Top = (int)pixels.Y, Right = (int)pixels.Right, Bottom = (int)pixels.Bottom
         });
         _visibleDockToolTip ??= new DockTipWindow(_hwnd);
+        _visibleDockToolTip.SetTheme(_host.State.GlobalSettings.GetTheme(OrganizerKinds.ThemeFor(_definition.PlacementMode)));
         _visibleDockToolTip.Present(tipText, pixels, display.Work, horizontal, scale);
         _lastDockTipText = tipText;
         _lastDockTipPixels = pixels;
         _lastDockTipScale = scale;
         _lastDockTipHorizontal = horizontal;
+    }
+
+    internal void UpdateDockToolTipTheme(ThemeValues theme)
+    {
+        _visibleDockToolTip?.SetTheme(theme);
     }
 
     private void CloseDockToolTip()

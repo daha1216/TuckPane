@@ -44,6 +44,7 @@ internal sealed class AppUpdateService : IDisposable
             string path = Path.Combine(_root, "check.json");
             if (File.Exists(path)) _cache = JsonSerializer.Deserialize<UpdateCheckCache>(File.ReadAllText(path));
             if (_cache?.ReleaseJson is { } json) Available = ReleaseRules.Parse(json, CurrentVersion, _installed);
+            if (Available is not null) StatusKey = "UpdateAvailable";
             path = Path.Combine(_root, "result.json");
             if (File.Exists(path))
             {

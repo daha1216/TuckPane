@@ -20,16 +20,19 @@ namespace TuckPane;
 
 internal readonly record struct PortableDocumentResolvedTheme(
     bool HighContrast,
+    bool IsDarkSurface,
     Color Surface,
     Color Editor,
     Color Accent,
     Color Text,
+    Color Muted,
     Color Border);
 
 internal sealed class PortableDocumentWindowChrome : IDisposable
 {
     internal const double MinimumWidthDip = 280;
     internal const double MinimumHeightDip = 340;
+    internal const double NoteMinimumHeightDip = 220;
     internal const double MaximumWidthDip = 1600;
     internal const double MaximumHeightDip = 1200;
     private const double DefaultWidthDip = 360;
@@ -50,17 +53,23 @@ internal sealed class PortableDocumentWindowChrome : IDisposable
     private readonly Func<Task> _hideWindowAsync;
     private readonly Func<string, Task> _commitRenameAsync;
     private readonly Action<NoteTheme> _onThemeSelected;
+    private readonly double _minimumHeightDip;
+    private readonly double _defaultHeightDip;
 
     private AppWindow _appWindow = null!;
     private InputNonClientPointerSource? _titleInput;
     private NativeWindowChromeController? _chrome;
+    private XamlRoot? _observedXamlRoot;
     private IntPtr _hwnd;
+    private uint _lastDpi;
+    private double _lastRasterizationScale;
     private bool _initialized;
     private bool _permanentClose;
     private bool _visibleValue;
     private bool _restoringPlacement;
     private bool _renaming;
     private bool _renameCommitInProgress;
+    private bool _focusLostDuringRenameCommit;
 
     internal PortableDocumentWindowChrome(
         Window window,
@@ -74,7 +83,9 @@ internal sealed class PortableDocumentWindowChrome : IDisposable
         Action<PortableNotePlacement> setPlacement,
         Func<Task> hideWindowAsync,
         Func<string, Task> commitRenameAsync,
-        Action<NoteTheme> onThemeSelected)
+        Action<NoteTheme> onThemeSelected,
+        double minimumHeightDip = MinimumHeightDip,
+        double defaultHeightDip = DefaultHeightDip)
     {
         _window = window;
         _host = host;
@@ -88,17 +99,22 @@ internal sealed class PortableDocumentWindowChrome : IDisposable
         _hideWindowAsync = hideWindowAsync;
         _commitRenameAsync = commitRenameAsync;
         _onThemeSelected = onThemeSelected;
+        _minimumHeightDip = Math.Clamp(minimumHeightDip, 1, MaximumHeightDip);
+        _defaultHeightDip = Math.Clamp(defaultHeightDip, _minimumHeightDip, MaximumHeightDip);
 
         _window.ExtendsContentIntoTitleBar = true;
         _window.SetTitleBar(_titleBar.TitleDragSurface);
         _window.SystemBackdrop = new TransparentTintBackdrop(Colors.Transparent);
 
+        _windowRoot.Loaded += WindowRoot_Loaded;
+        _titleBar.DragTitleBar.SizeChanged += TitleDragSurface_SizeChanged;
         _titleBar.TitleDragSurface.SizeChanged += TitleDragSurface_SizeChanged;
         _titleBar.TitleText.SizeChanged += TitleDragSurface_SizeChanged;
         _titleBar.TitleText.Tapped += TitleText_Tapped;
         _titleBar.TitleEditor.KeyDown += TitleEditor_KeyDown;
         _titleBar.TitleEditor.LostFocus += TitleEditor_LostFocus;
         _titleBar.CloseButton.Click += CloseButton_Click;
+        AttachXamlRootObserver();
     }
 
     internal IntPtr Hwnd => _hwnd;
@@ -141,6 +157,8 @@ internal sealed class PortableDocumentWindowChrome : IDisposable
             NativeMethods.SWP_NOMOVE | NativeMethods.SWP_NOSIZE | NativeMethods.SWP_NOZORDER |
             NativeMethods.SWP_NOACTIVATE | NativeMethods.SWP_FRAMECHANGED);
         _chrome = new NativeWindowChromeController(_hwnd, _window.DispatcherQueue);
+        _lastDpi = NativeMethods.GetDpiForWindow(_hwnd);
+        AttachXamlRootObserver();
         RestorePlacement();
         _appWindow.Changed += AppWindow_Changed;
         _appWindow.Closing += AppWindow_Closing;
@@ -169,6 +187,7 @@ internal sealed class PortableDocumentWindowChrome : IDisposable
         _ = NativeMethods.SetForegroundWindow(_hwnd);
         _ = _window.DispatcherQueue.TryEnqueue(() =>
         {
+            AttachXamlRootObserver();
             UpdateTitlePassthrough();
             afterShowEnqueued?.Invoke();
         });
@@ -299,37 +318,75 @@ internal sealed class PortableDocumentWindowChrome : IDisposable
         flyout.ShowAt(_titleBar.ColorButton);
     }
 
-    internal PortableDocumentResolvedTheme ApplyChromeTheme(NoteTheme theme, bool showFrameBorder)
+    internal PortableDocumentResolvedTheme ResolveTheme(NoteTheme theme)
     {
         bool highContrast = _accessibility.HighContrast;
-        Color surface;
-        Color editor;
-        Color accent;
-        Color text;
-        Color border;
         if (highContrast)
         {
-            surface = _uiSettings.GetColorValue(UIColorType.Background);
-            editor = surface;
-            accent = _uiSettings.GetColorValue(UIColorType.Accent);
-            text = _uiSettings.GetColorValue(UIColorType.Foreground);
-            border = text;
+            Color surface = _uiSettings.GetColorValue(UIColorType.Background);
+            Color accent = _uiSettings.GetColorValue(UIColorType.Accent);
+            Color text = _uiSettings.GetColorValue(UIColorType.Foreground);
+            return new PortableDocumentResolvedTheme(
+                HighContrast: true,
+                IsDarkSurface: IsDark(surface),
+                Surface: surface,
+                Editor: surface,
+                Accent: accent,
+                Text: text,
+                Muted: text,
+                Border: text);
         }
-        else
-        {
-            NoteThemeColors palette = NoteThemePalette.Get(theme);
-            surface = palette.SurfaceColor;
-            editor = palette.EditorColor;
-            accent = palette.AccentColor;
-            text = palette.TextColor;
-            border = palette.BorderColor;
-        }
+
+        NoteThemeColors palette = NoteThemePalette.Get(theme);
+        return new PortableDocumentResolvedTheme(
+            HighContrast: false,
+            IsDarkSurface: IsDark(palette.SurfaceColor),
+            Surface: palette.SurfaceColor,
+            Editor: palette.EditorColor,
+            Accent: palette.AccentColor,
+            Text: palette.TextColor,
+            Muted: palette.MutedColor,
+            Border: palette.BorderColor);
+    }
+
+    internal PortableDocumentResolvedTheme ApplyChromeTheme(NoteTheme theme, bool showFrameBorder)
+    {
+        PortableDocumentResolvedTheme resolved = ResolveTheme(theme);
+        bool highContrast = resolved.HighContrast;
+        Color surface = resolved.Surface;
+        Color editor = resolved.Editor;
+        Color accent = resolved.Accent;
+        Color text = resolved.Text;
+        Color muted = resolved.Muted;
+        Color border = resolved.Border;
+
+        ElementTheme targetTheme = highContrast
+            ? ElementTheme.Default
+            : resolved.IsDarkSurface ? ElementTheme.Dark : ElementTheme.Light;
+        if (_windowRoot.RequestedTheme != targetTheme)
+            _windowRoot.RequestedTheme = targetTheme;
 
         _windowFrame.Background = new SolidColorBrush(editor);
         if (showFrameBorder) _windowFrame.BorderBrush = new SolidColorBrush(border);
         _titleBar.DragTitleBar.Background = new SolidColorBrush(surface);
         _titleBar.TitleText.Foreground = new SolidColorBrush(text);
+
         _titleBar.TitleEditor.Foreground = new SolidColorBrush(text);
+        _titleBar.TitleEditor.Background = new SolidColorBrush(editor);
+        _titleBar.TitleEditor.BorderBrush = new SolidColorBrush(border);
+        _themeBrushes.Set(_titleBar.TitleEditor.Resources, "TextControlForeground", text);
+        _themeBrushes.Set(_titleBar.TitleEditor.Resources, "TextControlForegroundPointerOver", text);
+        _themeBrushes.Set(_titleBar.TitleEditor.Resources, "TextControlForegroundFocused", text);
+        _themeBrushes.Set(_titleBar.TitleEditor.Resources, "TextControlBackground", editor);
+        _themeBrushes.Set(_titleBar.TitleEditor.Resources, "TextControlBackgroundPointerOver", editor);
+        _themeBrushes.Set(_titleBar.TitleEditor.Resources, "TextControlBackgroundFocused", editor);
+        _themeBrushes.Set(_titleBar.TitleEditor.Resources, "TextControlBorderBrush", border);
+        _themeBrushes.Set(_titleBar.TitleEditor.Resources, "TextControlBorderBrushPointerOver", border);
+        _themeBrushes.Set(_titleBar.TitleEditor.Resources, "TextControlBorderBrushFocused", accent);
+        _themeBrushes.Set(_titleBar.TitleEditor.Resources, "TextControlPlaceholderForeground", muted);
+        _themeBrushes.Set(_titleBar.TitleEditor.Resources, "TextControlPlaceholderForegroundPointerOver", muted);
+        _themeBrushes.Set(_titleBar.TitleEditor.Resources, "TextControlPlaceholderForegroundFocused", muted);
+
         _titleBar.ColorButton.Foreground = new SolidColorBrush(accent);
         _themeBrushes.Set(_titleBar.ColorButton.Resources, "ButtonBackgroundPointerOver",
             ColorHelper.FromArgb(30, accent.R, accent.G, accent.B));
@@ -365,7 +422,7 @@ internal sealed class PortableDocumentWindowChrome : IDisposable
         _themeBrushes.Set(_titleBar.CloseButton.Resources, "ButtonForegroundPointerOver", closeForeground);
         _themeBrushes.Set(_titleBar.CloseButton.Resources, "ButtonForegroundPressed", closeForeground);
 
-        return new PortableDocumentResolvedTheme(highContrast, surface, editor, accent, text, border);
+        return resolved;
     }
 
     internal IReadOnlyDictionary<string, string> BuildEditorCssPalette(NoteTheme theme)
@@ -410,18 +467,65 @@ internal sealed class PortableDocumentWindowChrome : IDisposable
 
     internal void UpdateTitlePassthrough()
     {
-        FrameworkElement target = _renaming ? _titleBar.TitleDragSurface : _titleBar.TitleText;
-        if (_titleInput is null || _hwnd == IntPtr.Zero || target.ActualWidth <= 0 || target.ActualHeight <= 0) return;
-        Rect bounds = target.TransformToVisual(_windowRoot)
-            .TransformBounds(new Rect(0, 0, target.ActualWidth, target.ActualHeight));
-        double scale = Math.Max(1, NativeMethods.GetDpiForWindow(_hwnd) / 96d);
-        _titleInput.SetRegionRects(
-            NonClientRegionKind.Passthrough,
-            [new RectInt32(
-                (int)Math.Floor(bounds.X * scale),
-                (int)Math.Floor(bounds.Y * scale),
-                Math.Max(1, (int)Math.Ceiling(bounds.Width * scale)),
-                Math.Max(1, (int)Math.Ceiling(bounds.Height * scale)))]);
+        if (_titleInput is null || _hwnd == IntPtr.Zero || _windowFrame.XamlRoot is null) return;
+        uint dpi = NativeMethods.GetDpiForWindow(_hwnd);
+        double rasterScale = _windowRoot.XamlRoot?.RasterizationScale ?? 0;
+        double scale = rasterScale > 0 ? rasterScale : Math.Max(1, dpi / 96d);
+        _lastDpi = dpi;
+        _lastRasterizationScale = scale;
+
+        FrameworkElement titleTarget = _renaming ? _titleBar.TitleDragSurface : _titleBar.TitleText;
+        var rects = new List<RectInt32>(4);
+        TryAddPassthroughRect(rects, titleTarget, scale);
+        TryAddPassthroughRect(rects, _titleBar.ColorButton, scale);
+        TryAddPassthroughRect(rects, _titleBar.OptionToggleButton, scale);
+        TryAddPassthroughRect(rects, _titleBar.CloseButton, scale);
+        if (rects.Count == 0) return;
+        _titleInput.SetRegionRects(NonClientRegionKind.Passthrough, rects.ToArray());
+    }
+
+    private void TryAddPassthroughRect(List<RectInt32> rects, FrameworkElement element, double scale)
+    {
+        if (element.Visibility != Visibility.Visible || element.ActualWidth <= 0 || element.ActualHeight <= 0 ||
+            element.XamlRoot is null) return;
+        Rect bounds = element.TransformToVisual(_windowFrame)
+            .TransformBounds(new Rect(0, 0, element.ActualWidth, element.ActualHeight));
+        rects.Add(new RectInt32(
+            (int)Math.Floor(bounds.X * scale),
+            (int)Math.Floor(bounds.Y * scale),
+            Math.Max(1, (int)Math.Ceiling(bounds.Width * scale)),
+            Math.Max(1, (int)Math.Ceiling(bounds.Height * scale))));
+    }
+
+    private void WindowRoot_Loaded(object sender, RoutedEventArgs e)
+    {
+        AttachXamlRootObserver();
+        UpdateTitlePassthrough();
+    }
+
+    private void AttachXamlRootObserver()
+    {
+        XamlRoot? current = _windowRoot.XamlRoot;
+        if (current is null || ReferenceEquals(_observedXamlRoot, current)) return;
+        if (_observedXamlRoot is not null)
+            _observedXamlRoot.Changed -= XamlRoot_Changed;
+        _observedXamlRoot = current;
+        _lastRasterizationScale = current.RasterizationScale;
+        _observedXamlRoot.Changed += XamlRoot_Changed;
+    }
+
+    private void XamlRoot_Changed(XamlRoot sender, XamlRootChangedEventArgs args)
+    {
+        if (_permanentClose) return;
+        double currentScale = sender.RasterizationScale;
+        if (Math.Abs(currentScale - _lastRasterizationScale) > 0.001)
+        {
+            _lastRasterizationScale = currentScale;
+            UpdateTitlePassthrough();
+            _ = _window.DispatcherQueue.TryEnqueue(UpdateTitlePassthrough);
+            return;
+        }
+        UpdateTitlePassthrough();
     }
 
     internal static PortableNotePlacement? ToPortablePlacement(NoteWindowPlacement? placement) => placement is null
@@ -469,6 +573,7 @@ internal sealed class PortableDocumentWindowChrome : IDisposable
     {
         if (_renaming) return;
         _renaming = true;
+        _focusLostDuringRenameCommit = false;
         _errorBar.IsOpen = false;
         _titleBar.TitleEditor.Text = _getTitle();
         _titleBar.TitleText.Visibility = Visibility.Collapsed;
@@ -488,29 +593,50 @@ internal sealed class PortableDocumentWindowChrome : IDisposable
         else if (e.Key == Windows.System.VirtualKey.Enter)
         {
             e.Handled = true;
-            await CommitRenameCoreAsync();
+            await CommitRenameCoreAsync(exitOnFailure: false);
         }
     }
 
-    private async void TitleEditor_LostFocus(object sender, RoutedEventArgs e) => await CommitRenameCoreAsync();
+    private async void TitleEditor_LostFocus(object sender, RoutedEventArgs e)
+    {
+        if (_renameCommitInProgress)
+        {
+            _focusLostDuringRenameCommit = true;
+            return;
+        }
+        await CommitRenameCoreAsync(exitOnFailure: true);
+    }
 
-    private async Task CommitRenameCoreAsync()
+    private async Task CommitRenameCoreAsync(bool exitOnFailure)
     {
         if (!_renaming || _renameCommitInProgress) return;
         _renameCommitInProgress = true;
+        _focusLostDuringRenameCommit = false;
+        bool shouldRefocus = false;
         try
         {
             await _commitRenameAsync(_titleBar.TitleEditor.Text);
+            _errorBar.IsOpen = false;
             EndRename();
         }
         catch (Exception ex)
         {
             ShowError(ex.Message);
+            if (exitOnFailure || _focusLostDuringRenameCommit)
+            {
+                _titleBar.TitleEditor.Text = _getTitle();
+                EndRename();
+            }
+            else
+            {
+                shouldRefocus = true;
+            }
         }
         finally
         {
             _renameCommitInProgress = false;
-            if (_renaming)
+            _focusLostDuringRenameCommit = false;
+            if (shouldRefocus && _renaming)
             {
                 _titleBar.TitleEditor.Focus(FocusState.Programmatic);
                 _titleBar.TitleEditor.SelectAll();
@@ -539,11 +665,11 @@ internal sealed class PortableDocumentWindowChrome : IDisposable
         PortableNotePlacement placement = _getPlacement() ?? new PortableNotePlacement
         {
             WidthDip = DefaultWidthDip,
-            HeightDip = DefaultHeightDip
+            HeightDip = _defaultHeightDip
         };
         DisplayInfo display = DisplayPlacementService.GetDisplay(placement.MonitorDevice);
         double clampedWidthDip = Math.Clamp(placement.WidthDip, MinimumWidthDip, MaximumWidthDip);
-        double clampedHeightDip = Math.Clamp(placement.HeightDip, MinimumHeightDip, MaximumHeightDip);
+        double clampedHeightDip = Math.Clamp(placement.HeightDip, _minimumHeightDip, MaximumHeightDip);
         int width = Math.Max(1, (int)Math.Round(clampedWidthDip * display.Scale));
         int height = Math.Max(1, (int)Math.Round(clampedHeightDip * display.Scale));
         int left = string.IsNullOrWhiteSpace(placement.MonitorDevice)
@@ -573,6 +699,12 @@ internal sealed class PortableDocumentWindowChrome : IDisposable
     private void AppWindow_Changed(AppWindow sender, AppWindowChangedEventArgs args)
     {
         if (_restoringPlacement || (!args.DidPositionChange && !args.DidSizeChange)) return;
+        uint currentDpi = _hwnd != IntPtr.Zero ? NativeMethods.GetDpiForWindow(_hwnd) : 0;
+        if (currentDpi != 0 && currentDpi != _lastDpi)
+        {
+            _lastDpi = currentDpi;
+            _ = _window.DispatcherQueue.TryEnqueue(UpdateTitlePassthrough);
+        }
         if (args.DidSizeChange)
         {
             DisplayInfo currentDisplay = DisplayPlacementService.ForBounds(new NativeMethods.RECT
@@ -586,7 +718,7 @@ internal sealed class PortableDocumentWindowChrome : IDisposable
                 (int)Math.Round(MinimumWidthDip * currentDisplay.Scale),
                 (int)Math.Round(MaximumWidthDip * currentDisplay.Scale));
             int height = Math.Clamp(sender.Size.Height,
-                (int)Math.Round(MinimumHeightDip * currentDisplay.Scale),
+                (int)Math.Round(_minimumHeightDip * currentDisplay.Scale),
                 (int)Math.Round(MaximumHeightDip * currentDisplay.Scale));
             if (width != sender.Size.Width || height != sender.Size.Height)
             {
@@ -622,6 +754,13 @@ internal sealed class PortableDocumentWindowChrome : IDisposable
 
     public void Dispose()
     {
+        _windowRoot.Loaded -= WindowRoot_Loaded;
+        if (_observedXamlRoot is not null)
+        {
+            _observedXamlRoot.Changed -= XamlRoot_Changed;
+            _observedXamlRoot = null;
+        }
+        _titleBar.DragTitleBar.SizeChanged -= TitleDragSurface_SizeChanged;
         _titleBar.TitleDragSurface.SizeChanged -= TitleDragSurface_SizeChanged;
         _titleBar.TitleText.SizeChanged -= TitleDragSurface_SizeChanged;
         _titleBar.TitleText.Tapped -= TitleText_Tapped;

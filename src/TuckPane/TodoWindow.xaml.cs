@@ -31,6 +31,7 @@ public sealed partial class TodoWindow : Window, IPortableDocumentWindow
     private string _externalPath;
     private bool _syncingTaskCheckBox;
     private bool _isDraggingTask;
+    private Control? _pendingFocusTarget;
 
     internal TodoWindow(AppHost host, NoteStore store, string path, PortableTodoDocument document)
     {
@@ -111,7 +112,7 @@ public sealed partial class TodoWindow : Window, IPortableDocumentWindow
     void IPortableDocumentWindow.ApplyAlwaysOnTopSetting() => ApplyAlwaysOnTopSetting();
 
     internal void InitializeHostWindow() => _windowChrome.InitializeHostWindow();
-    internal void ShowAndActivate() => _windowChrome.ShowAndActivate();
+    internal void ShowAndActivate() => _windowChrome.ShowAndActivate(FocusInitialControl);
     internal void ApplyAlwaysOnTopSetting() => _windowChrome.ApplyAlwaysOnTopSetting();
 
     internal async Task ApplyGlobalThemeAsync(NoteTheme theme)
@@ -165,9 +166,11 @@ public sealed partial class TodoWindow : Window, IPortableDocumentWindow
             optionKey: "TodoSeparators",
             closeKey: "CloseTodo");
         AutomationProperties.SetAutomationId(HeaderBar.OptionToggleButton, $"TodoSeparators-{idSuffix}");
-        AutomationProperties.SetName(NewTaskBox, AppStrings.Get("TodoAddPlaceholder"));
+        string addPlaceholder = AppStrings.Get("TodoAddPlaceholder");
+        NewTaskBox.PlaceholderText = addPlaceholder;
+        AutomationProperties.SetName(NewTaskBox, addPlaceholder);
         AutomationProperties.SetAutomationId(NewTaskBox, $"TodoNewTaskBox-{idSuffix}");
-        AutomationProperties.SetName(AddTaskButton, AppStrings.Get("TodoAddPlaceholder"));
+        AutomationProperties.SetName(AddTaskButton, addPlaceholder);
         AutomationProperties.SetAutomationId(AddTaskButton, $"TodoAddTask-{idSuffix}");
         foreach (TodoRow row in _rows) row.ApplyLanguage();
     }
@@ -312,6 +315,68 @@ public sealed partial class TodoWindow : Window, IPortableDocumentWindow
         if (focusAdd) AddTaskButton.Focus(FocusState.Programmatic);
     }
 
+    private void FocusInitialControl()
+    {
+        if (_windowChrome.IsPermanentClose || _rows.Any(row => row.IsEditing)) return;
+        if (_composer.IsEditing)
+        {
+            FocusTargetWhenReady(NewTaskBox);
+            return;
+        }
+        if (_rows.Count == 0)
+        {
+            _composer.Begin();
+            RefreshComposer();
+            FocusTargetWhenReady(NewTaskBox);
+            return;
+        }
+        FocusTargetWhenReady(AddTaskButton);
+    }
+
+    private void FocusTargetWhenReady(Control target)
+    {
+        DetachPendingFocusTarget();
+        if (target.IsLoaded && target.Visibility == Visibility.Visible)
+        {
+            if (TryFocusControl(target)) return;
+            _ = DispatcherQueue.TryEnqueue(() =>
+            {
+                if (!_windowChrome.IsPermanentClose && target.Visibility == Visibility.Visible)
+                    _ = TryFocusControl(target);
+            });
+            return;
+        }
+
+        _pendingFocusTarget = target;
+        target.Loaded += PendingFocusTarget_Loaded;
+    }
+
+    private void PendingFocusTarget_Loaded(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Control target) return;
+        DetachPendingFocusTarget();
+        _ = DispatcherQueue.TryEnqueue(() =>
+        {
+            if (!_windowChrome.IsPermanentClose && target.Visibility == Visibility.Visible)
+                _ = TryFocusControl(target);
+        });
+    }
+
+    private void DetachPendingFocusTarget()
+    {
+        if (_pendingFocusTarget is null) return;
+        _pendingFocusTarget.Loaded -= PendingFocusTarget_Loaded;
+        _pendingFocusTarget = null;
+    }
+
+    private static bool TryFocusControl(Control target)
+    {
+        bool focused = target.Focus(FocusState.Programmatic);
+        if (focused && target is TextBox box)
+            box.SelectionStart = box.Text.Length;
+        return focused;
+    }
+
     private void UpdateComposerMetrics()
     {
         NewTaskBox.FontSize = _document.FontSize;
@@ -408,7 +473,7 @@ public sealed partial class TodoWindow : Window, IPortableDocumentWindow
 
     private void TaskEditor_KeyDown(object sender, KeyRoutedEventArgs e)
     {
-        if (sender is not TextBox { Tag: TodoRow row }) return;
+        if (sender is not TextBox { Tag: TodoRow row } editor) return;
         if (e.Key == Windows.System.VirtualKey.Escape)
         {
             row.CancelEdit();
@@ -416,19 +481,20 @@ public sealed partial class TodoWindow : Window, IPortableDocumentWindow
         }
         else if (e.Key == Windows.System.VirtualKey.Enter)
         {
-            CommitTaskEdit(row);
+            CommitTaskEdit(row, editor.Text);
             e.Handled = true;
         }
     }
 
     private void TaskEditor_LostFocus(object sender, RoutedEventArgs e)
     {
-        if (sender is TextBox { Tag: TodoRow row }) CommitTaskEdit(row);
+        if (sender is TextBox { Tag: TodoRow row } editor) CommitTaskEdit(row, editor.Text);
     }
 
-    private void CommitTaskEdit(TodoRow row)
+    private void CommitTaskEdit(TodoRow row, string? editedText = null)
     {
         if (!row.IsEditing) return;
+        if (editedText is not null) row.EditText = editedText;
         if (TodoRules.UpdateText(row.Task, row.EditText)) ScheduleSave();
         row.EndEdit();
     }
@@ -534,9 +600,11 @@ public sealed partial class TodoWindow : Window, IPortableDocumentWindow
     private void ApplyTheme()
     {
         PortableDocumentResolvedTheme resolved = _windowChrome.ApplyChromeTheme(_document.Theme, showFrameBorder: true);
-        WindowRoot.RequestedTheme = resolved.HighContrast
+        ElementTheme targetTheme = resolved.HighContrast
             ? ElementTheme.Default
-            : resolved.Text.R > 128 ? ElementTheme.Dark : ElementTheme.Light;
+            : resolved.IsDarkSurface ? ElementTheme.Dark : ElementTheme.Light;
+        if (WindowRoot.RequestedTheme != targetTheme)
+            WindowRoot.RequestedTheme = targetTheme;
 
         var text = (SolidColorBrush)WindowRoot.Resources["TodoTextBrush"];
         var input = (SolidColorBrush)WindowRoot.Resources["TodoInputBrush"];
@@ -568,6 +636,12 @@ public sealed partial class TodoWindow : Window, IPortableDocumentWindow
         ((SolidColorBrush)WindowRoot.Resources["TodoAddBorderBrush"]).Color = addBorder;
         themeBrushes.Set(NewTaskBox.Resources, "TextControlBackgroundPointerOver", addColor);
         themeBrushes.Set(NewTaskBox.Resources, "TextControlBackgroundFocused", addColor);
+        themeBrushes.Set(NewTaskBox.Resources, "TextControlForeground", text.Color);
+        themeBrushes.Set(NewTaskBox.Resources, "TextControlForegroundPointerOver", text.Color);
+        themeBrushes.Set(NewTaskBox.Resources, "TextControlForegroundFocused", text.Color);
+        themeBrushes.Set(NewTaskBox.Resources, "TextControlPlaceholderForeground", resolved.Muted);
+        themeBrushes.Set(NewTaskBox.Resources, "TextControlPlaceholderForegroundPointerOver", resolved.Muted);
+        themeBrushes.Set(NewTaskBox.Resources, "TextControlPlaceholderForegroundFocused", resolved.Muted);
         themeBrushes.Set(NewTaskBox.Resources, "TextControlBorderBrushPointerOver", addBorder);
         themeBrushes.Set(NewTaskBox.Resources, "TextControlBorderBrushFocused", resolved.Accent);
         themeBrushes.Set(AddTaskButton.Resources, "ButtonBackgroundPointerOver",
@@ -602,6 +676,7 @@ public sealed partial class TodoWindow : Window, IPortableDocumentWindow
     private void TodoWindow_Closed(object sender, WindowEventArgs args)
     {
         Closed -= TodoWindow_Closed;
+        DetachPendingFocusTarget();
         WindowRoot.RemoveHandler(UIElement.PointerWheelChangedEvent, _pointerWheelHandler);
         WindowRoot.ActualThemeChanged -= WindowRoot_ActualThemeChanged;
         HeaderBar.ColorButton.Click -= ColorButton_Click;

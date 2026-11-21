@@ -524,4 +524,9 @@ Storage path: {2}</value></data>
   <data name="ContextCompactGridGaps" xml:space="preserve"><value>Compact empty grid slots</value></data>
   <data name="FreeGridPlacementTitle" xml:space="preserve"><value>Free grid slot placement in expanded organizers (iOS-style gaps)</value></data>
   <data name="FreeGridPreferDirectSwapTitle" xml:space="preserve"><value>Direct 1-to-1 swap on occupied slots by default (hold Shift to toggle)</value></data>
+  <data name="AutoOrganizeExtensionsLabel" xml:space="preserve"><value>File extensions</value></data>
+  <data name="AutoOrganizePatternsLabel" xml:space="preserve"><value>Filename patterns</value></data>
+  <data name="DeleteStation" xml:space="preserve"><value>Delete station</value></data>
+  <data name="DeleteDock" xml:space="preserve"><value>Delete dock</value></data>
+  <data name="DesktopGridAlignNow" xml:space="preserve"><value>Align now</value></data>
 </root>

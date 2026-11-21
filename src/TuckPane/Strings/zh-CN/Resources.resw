@@ -524,4 +524,9 @@
   <data name="ContextCompactGridGaps" xml:space="preserve"><value>紧凑排布空位</value></data>
   <data name="FreeGridPlacementTitle" xml:space="preserve"><value>展开窗自由方格摆放（iOS 风格留白）</value></data>
   <data name="FreeGridPreferDirectSwapTitle" xml:space="preserve"><value>拖到已有图标时默认直接互换（按住 Shift 临时切换）</value></data>
+  <data name="AutoOrganizeExtensionsLabel" xml:space="preserve"><value>文件扩展名</value></data>
+  <data name="AutoOrganizePatternsLabel" xml:space="preserve"><value>文件名通配符</value></data>
+  <data name="DeleteStation" xml:space="preserve"><value>删除中转站</value></data>
+  <data name="DeleteDock" xml:space="preserve"><value>删除 Dock 栏</value></data>
+  <data name="DesktopGridAlignNow" xml:space="preserve"><value>立即对齐</value></data>
 </root>

@@ -78,7 +78,7 @@ public sealed class ReleaseClient(HttpClient http)
             if (assembly.GetName().Version is { } v && (v.Major != 1 || v.Minor != 0 || v.Build > 0))
                 return $"TuckPane-Updater/{v.Major}.{v.Minor}.{Math.Max(0, v.Build)}";
         }
-        return "TuckPane-Updater/4.3.1";
+        return "TuckPane-Updater/4.3.2";
     }
 
     private static HttpRequestMessage Request(string url)

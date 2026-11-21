@@ -79,7 +79,8 @@ internal readonly record struct OrganizerInteractionSnapshot(OrganizerBusyFlags 
         OrganizerBusyFlags.ShellDropFinalizing |
         OrganizerBusyFlags.ItemDragLanding |
         OrganizerBusyFlags.ItemCollectionMoving |
-        OrganizerBusyFlags.NativeItemMotionRendering;
+        OrganizerBusyFlags.NativeItemMotionRendering |
+        OrganizerBusyFlags.ReceivingDrop;
 
     private const OrganizerBusyFlags DesktopLayerBusyMask =
         OrganizerBusyFlags.WidgetDragging |
@@ -123,6 +124,9 @@ internal readonly record struct OrganizerInteractionSnapshot(OrganizerBusyFlags 
     public bool BlocksExpansionModeSwitch => (Flags & ExpansionModeBusyMask) != 0;
 
     public bool BlocksCatalogRefresh => (Flags & CatalogRefreshBusyMask) != 0;
+
+    public bool BlocksCatalogRefreshDuringDropFinalization =>
+        (Flags & (CatalogRefreshBusyMask & ~OrganizerBusyFlags.ReceivingDrop)) != 0;
 
     public bool BlocksDesktopLayerRepair => (Flags & DesktopLayerBusyMask) != 0;
 

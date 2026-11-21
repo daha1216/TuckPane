@@ -78,7 +78,9 @@ public sealed partial class NoteWindow : Window, IPortableDocumentWindow
             },
             HideAsync,
             CommitTitleRenameAsync,
-            OnThemeSelected);
+            OnThemeSelected,
+            minimumHeightDip: PortableDocumentWindowChrome.NoteMinimumHeightDip,
+            defaultHeightDip: 300);
 
         HeaderBar.OptionToggleButton.IsChecked = definition.ShowRuledLines;
         HeaderBar.ColorButton.Click += ColorButton_Click;
@@ -208,6 +210,7 @@ public sealed partial class NoteWindow : Window, IPortableDocumentWindow
         _editorInitializing = true;
         try
         {
+            Editor.DefaultBackgroundColor = _windowChrome.ResolveTheme(_definition.Theme).Editor;
             await EnsureDocumentLoadedAsync();
             await Editor.EnsureCoreWebView2Async();
             if (Editor.CoreWebView2 is not { } core) throw new InvalidOperationException("WebView2 did not initialize.");
@@ -476,7 +479,16 @@ public sealed partial class NoteWindow : Window, IPortableDocumentWindow
         else await FlushAsync(readEditor: false);
     }
 
-    private void ApplyTheme() => _ = _windowChrome.ApplyChromeTheme(_definition.Theme, showFrameBorder: false);
+    private void ApplyTheme()
+    {
+        PortableDocumentResolvedTheme resolved = _windowChrome.ApplyChromeTheme(_definition.Theme, showFrameBorder: true);
+        ElementTheme targetTheme = resolved.HighContrast
+            ? ElementTheme.Default
+            : resolved.IsDarkSurface ? ElementTheme.Dark : ElementTheme.Light;
+        if (WindowRoot.RequestedTheme != targetTheme)
+            WindowRoot.RequestedTheme = targetTheme;
+        Editor.DefaultBackgroundColor = resolved.Editor;
+    }
 
     private async void WindowRoot_ActualThemeChanged(FrameworkElement sender, object args)
     {

@@ -34,8 +34,18 @@ internal static class ThemePalette
     internal const float OrganizerGlassOuterEdgeThicknessDip = 1.25f;
     internal const float OrganizerGlassInnerEdgeThicknessDip = .75f;
     internal const float OrganizerGlassInnerEdgeInsetDip = 1.5f;
-    internal const float GlassEdgeHighlightThicknessDip = 2.75f;
-    internal const float GlassEdgeTextureThicknessDip = 1.25f;
+    internal const float GlassEdgeOuterPureThicknessDip = 1.0f;
+    internal const float GlassEdgeHighlightThicknessDip = 1.35f;
+    internal const float GlassEdgeHighlightInsetDip = 0.0f;
+    internal const float GlassEdgeCounterArcThicknessDip = 1.10f;
+    internal const float GlassEdgeCounterArcInsetDip = 0.0f;
+    internal const float GlassEdgeTextureThicknessDip = 0.75f;
+    internal const float GlassEdgeTextureInsetDip = 0.25f;
+    internal const float GlassEdgeLightMeniscusThicknessDip = 0.65f;
+    internal const float GlassEdgeLightMeniscusInsetDip = 0.0f;
+    internal const float GlassEdgeLightInnerInsetDip = 0.60f;
+    internal const float GlassEdgePointerRimThicknessDip = 1.55f;
+    internal const float GlassEdgePointerRimInsetDip = 0.0f;
     internal const float GlassEdgeMinimumOpacity = .92f;
 
     private const float GlassBlurAmount = 18f;
@@ -189,27 +199,52 @@ internal static class ThemePalette
         (1f, Color.FromArgb(32, 0, 0, 0))
     ];
 
+    internal static IReadOnlyList<(float Offset, Color Color)> GlassEdgePureBaseStops { get; } =
+    [
+        (0f, Color.FromArgb(150, 255, 255, 255)),
+        (.48f, Color.FromArgb(44, 255, 255, 255)),
+        (1f, Color.FromArgb(96, 248, 252, 255))
+    ];
+
+    // High-luminance cool ice-crystal outer refraction hairline for light surfaces (>62% luminance, never dark/muddy).
+    internal static IReadOnlyList<(float Offset, Color Color)> GlassEdgeLightMeniscusStops { get; } =
+    [
+        (0f, Color.FromArgb(50, 152, 174, 200)),
+        (.50f, Color.FromArgb(56, 144, 166, 192)),
+        (1f, Color.FromArgb(60, 138, 160, 186))
+    ];
+
     internal static IReadOnlyList<(float Offset, Color Color)> GlassEdgeHighlightStops { get; } =
     [
-        (0f, Color.FromArgb(0, 255, 255, 255)),
-        (.18f, Color.FromArgb(28, 255, 255, 255)),
-        (.38f, Color.FromArgb(42, 255, 255, 255)),
-        (.56f, Color.FromArgb(12, 255, 255, 255)),
-        (.82f, Color.FromArgb(4, 255, 255, 255)),
+        (0f, Color.FromArgb(245, 255, 255, 255)),
+        (.18f, Color.FromArgb(165, 255, 255, 255)),
+        (.42f, Color.FromArgb(45, 248, 252, 255)),
+        (.70f, Color.FromArgb(0, 255, 255, 255)),
+        (1f, Color.FromArgb(0, 255, 255, 255))
+    ];
+
+    internal static IReadOnlyList<(float Offset, Color Color)> GlassEdgeCounterArcStops { get; } =
+    [
+        (0f, Color.FromArgb(155, 246, 251, 255)),
+        (.24f, Color.FromArgb(68, 242, 249, 255)),
+        (.55f, Color.FromArgb(0, 255, 255, 255)),
         (1f, Color.FromArgb(0, 255, 255, 255))
     ];
 
     internal static IReadOnlyList<(float Offset, Color Color)> GlassEdgeTextureStops { get; } =
     [
-        (0f, Color.FromArgb(0, 255, 255, 255)),
-        (.08f, Color.FromArgb(6, 255, 255, 255)),
-        (.16f, Color.FromArgb(0, 255, 255, 255)),
-        (.27f, Color.FromArgb(5, 255, 255, 255)),
-        (.39f, Color.FromArgb(0, 255, 255, 255)),
-        (.52f, Color.FromArgb(4, 255, 255, 255)),
-        (.65f, Color.FromArgb(0, 255, 255, 255)),
-        (.78f, Color.FromArgb(5, 255, 255, 255)),
-        (.91f, Color.FromArgb(0, 255, 255, 255)),
+        (0f, Color.FromArgb(88, 255, 255, 255)),
+        (.25f, Color.FromArgb(32, 232, 246, 255)),
+        (.50f, Color.FromArgb(18, 255, 255, 255)),
+        (.75f, Color.FromArgb(36, 244, 240, 255)),
+        (1f, Color.FromArgb(72, 255, 255, 255))
+    ];
+
+    internal static IReadOnlyList<(float Offset, Color Color)> GlassEdgePointerRimStops { get; } =
+    [
+        (0f, Color.FromArgb(248, 255, 255, 255)),
+        (.28f, Color.FromArgb(148, 235, 247, 255)),
+        (.60f, Color.FromArgb(36, 255, 255, 255)),
         (1f, Color.FromArgb(0, 255, 255, 255))
     ];
 

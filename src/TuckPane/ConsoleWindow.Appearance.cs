@@ -100,6 +100,8 @@ public sealed partial class ConsoleWindow
         ["ToggleButtonForegroundCheckedPointerOver"] = 0xFFFFFFFF,
         ["ToggleButtonForegroundCheckedPressed"] = 0xFFFFFFFF,
         ["ToggleButtonForegroundCheckedDisabled"] = 0xFFFFFFFF,
+        ["NavigationViewItemBackgroundPointerOver"] = 0xFFEAEAEF,
+        ["NavigationViewItemBackgroundPressed"] = 0xFFE1E1E8,
         ["NavigationViewItemBackgroundSelected"] = 0xFFEAF3FF,
         ["NavigationViewItemBackgroundSelectedPointerOver"] = 0xFFDEECFF,
         ["NavigationViewItemBackgroundSelectedPressed"] = 0xFFD1E4FF,

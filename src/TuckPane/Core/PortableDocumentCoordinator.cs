@@ -151,8 +151,36 @@ internal sealed class PortableDocumentCoordinator
             Path.GetFullPath(AppPaths.ResolveStoragePath(item)).TrimEnd(Path.DirectorySeparatorChar)
                 .Equals(directory.TrimEnd(Path.DirectorySeparatorChar), StringComparison.OrdinalIgnoreCase));
         string oldFileName = Path.GetFileName(fullPath);
+        string newFileName = Path.GetFileName(targetPath);
         int orderIndex = organizer?.ItemOrder.FindIndex(item =>
             item.Equals(oldFileName, StringComparison.OrdinalIgnoreCase)) ?? -1;
+
+        string? oldSlotKey = null;
+        int oldSlot = 0;
+        bool hadSlot = false;
+        string? collidedTargetKey = null;
+        int collidedTargetSlot = 0;
+        bool hadTargetSlotCollision = false;
+        if (organizer?.ItemSlots is { Count: > 0 } existingSlots)
+        {
+            foreach (KeyValuePair<string, int> pair in existingSlots)
+            {
+                if (!hadSlot && pair.Key.Equals(oldFileName, StringComparison.OrdinalIgnoreCase))
+                {
+                    oldSlotKey = pair.Key;
+                    oldSlot = pair.Value;
+                    hadSlot = true;
+                }
+                else if (!hadTargetSlotCollision &&
+                         !oldFileName.Equals(newFileName, StringComparison.OrdinalIgnoreCase) &&
+                         pair.Key.Equals(newFileName, StringComparison.OrdinalIgnoreCase))
+                {
+                    collidedTargetKey = pair.Key;
+                    collidedTargetSlot = pair.Value;
+                    hadTargetSlotCollision = true;
+                }
+            }
+        }
 
         Dictionary<string, IPortableDocumentWindow> windows = GetWindows(kind);
         HashSet<string> trayHidden = GetTrayHidden(kind);
@@ -172,10 +200,28 @@ internal sealed class PortableDocumentCoordinator
                     trayHidden.Remove(oldPath);
                     if (window is not null) windows[newPath] = window;
                     if (wasHidden) trayHidden.Add(newPath);
-                    if (orderIndex >= 0) organizer!.ItemOrder[orderIndex] = Path.GetFileName(newPath);
+                    string mappedName = Path.GetFileName(newPath);
+                    if (orderIndex >= 0) organizer!.ItemOrder[orderIndex] = mappedName;
+                    if (hadSlot && organizer?.ItemSlots is { } slotMap)
+                    {
+                        bool isRollback = newPath.Equals(fullPath, StringComparison.Ordinal);
+                        if (isRollback)
+                        {
+                            RemoveSlotKeysCaseInsensitive(slotMap, newFileName);
+                            if (hadTargetSlotCollision && collidedTargetKey is not null)
+                                slotMap[collidedTargetKey] = collidedTargetSlot;
+                            slotMap[oldSlotKey ?? oldFileName] = oldSlot;
+                        }
+                        else
+                        {
+                            RemoveSlotKeysCaseInsensitive(slotMap, oldFileName);
+                            RemoveSlotKeysCaseInsensitive(slotMap, newFileName);
+                            slotMap[mappedName] = oldSlot;
+                        }
+                    }
                 },
                 newPath => window?.RebindExternalPath(newPath),
-                () => orderIndex >= 0 ? saveStateAsync() : Task.CompletedTask);
+                () => orderIndex >= 0 || hadSlot ? saveStateAsync() : Task.CompletedTask);
         }
         finally
         {
@@ -183,6 +229,20 @@ internal sealed class PortableDocumentCoordinator
             if (organizer is not null) await refreshOwnerAsync(organizer.Id, targetPath);
         }
         return targetPath;
+    }
+
+    private static void RemoveSlotKeysCaseInsensitive(Dictionary<string, int> slotMap, string relativeName)
+    {
+        if (ReferenceEquals(slotMap.Comparer, StringComparer.OrdinalIgnoreCase))
+        {
+            slotMap.Remove(relativeName);
+            return;
+        }
+        string[] matches = slotMap.Keys
+            .Where(key => key.Equals(relativeName, StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+        foreach (string key in matches)
+            slotMap.Remove(key);
     }
 
     internal void MarkHiddenForTray(PortableDocumentKind kind, string path) =>

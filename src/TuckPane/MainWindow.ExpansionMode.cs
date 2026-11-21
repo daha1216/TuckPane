@@ -110,8 +110,7 @@ public sealed partial class MainWindow : IExpansionModeView
         _activeTransitionCanvas = null;
         if (!_runtimeVisible || IsContained || _hwnd == IntPtr.Zero)
         {
-            _collapseTransitionGeometry = null;
-            RestoreExpandedViewDefaultLayout();
+            CleanupAbortedTransitionVisuals();
             _pendingExpansionModeApply = true;
             return;
         }
@@ -133,6 +132,7 @@ public sealed partial class MainWindow : IExpansionModeView
         ApplyBounds(_expanded ? bounds : _compactBounds, show: true, preserveZOrder: true);
         WindowRoot.UpdateLayout();
         UpdateSurfaceClips();
+        ForceRestoreUncloakedState();
         _desktopLayer?.SetExpanded(_expanded, showWindow: false);
         UpdateCanvasResizeEdgeWindows(show: _expanded);
         if (_expanded)
@@ -150,7 +150,8 @@ public sealed partial class MainWindow : IExpansionModeView
     {
         _changingExpansionMode = false;
         if (_closing) return;
-        if (!_animating && (_dwmTransitionRunning || _activeTransitionCanvas is not null || _dwmTransitionExpressionsBound))
+        if (!_animating && (_dwmTransitionRunning || _activeTransitionCanvas is not null || _dwmTransitionExpressionsBound ||
+            _transitionWindowCloaked || _transitionBridge is { IsVisible: true }))
         {
             CleanupAbortedTransitionVisuals();
         }

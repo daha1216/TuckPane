@@ -17,20 +17,32 @@ internal sealed class ThemeEdgeSurface : IDisposable
     private readonly FrameworkElement _host;
     private readonly FrameworkElement _geometryHost;
     private readonly ShapeVisual _visual;
+    private readonly ShapeVisual _pointerRimVisual;
+    private readonly CompositionRoundedRectangleGeometry _meniscusGeometry;
     private readonly CompositionRoundedRectangleGeometry _outerGeometry;
-    private readonly CompositionRoundedRectangleGeometry _innerGeometry;
     private readonly CompositionRoundedRectangleGeometry _highlightGeometry;
+    private readonly CompositionRoundedRectangleGeometry _counterArcGeometry;
     private readonly CompositionRoundedRectangleGeometry _textureGeometry;
+    private readonly CompositionRoundedRectangleGeometry _pointerRimGeometry;
+    private readonly CompositionSpriteShape _meniscusShape;
     private readonly CompositionSpriteShape _outerShape;
-    private readonly CompositionSpriteShape _innerShape;
     private readonly CompositionSpriteShape _highlightShape;
+    private readonly CompositionSpriteShape _counterArcShape;
     private readonly CompositionSpriteShape _textureShape;
+    private readonly CompositionSpriteShape _pointerRimShape;
+    private readonly CompositionLinearGradientBrush _meniscusBrush;
     private readonly CompositionLinearGradientBrush _outerBrush;
-    private readonly CompositionLinearGradientBrush _innerBrush;
     private readonly CompositionLinearGradientBrush _highlightBrush;
+    private readonly CompositionLinearGradientBrush _counterArcBrush;
     private readonly CompositionLinearGradientBrush _textureBrush;
+    private readonly CompositionRadialGradientBrush _pointerRimBrush;
+    private readonly ImplicitAnimationCollection _pointerRimImplicitAnims;
+    private readonly ScalarKeyFrameAnimation _pointerRimOpacityAnim;
     private XamlRoot? _xamlRoot;
     private double _cornerRadius;
+    private bool _isLightTheme;
+    private RoundedSurfaceGeometry _lastSurface;
+    private bool _hasLastSurface;
     private bool _disposed;
 
     internal ThemeEdgeSurface(FrameworkElement host, FrameworkElement? geometryHost = null)
@@ -42,40 +54,79 @@ internal sealed class ThemeEdgeSurface : IDisposable
         _visual = compositor.CreateShapeVisual();
         _visual.BorderMode = CompositionBorderMode.Soft;
 
+        _meniscusGeometry = compositor.CreateRoundedRectangleGeometry();
         _outerGeometry = compositor.CreateRoundedRectangleGeometry();
-        _innerGeometry = compositor.CreateRoundedRectangleGeometry();
         _highlightGeometry = compositor.CreateRoundedRectangleGeometry();
+        _counterArcGeometry = compositor.CreateRoundedRectangleGeometry();
         _textureGeometry = compositor.CreateRoundedRectangleGeometry();
+        _pointerRimGeometry = compositor.CreateRoundedRectangleGeometry();
+
+        _meniscusShape = compositor.CreateSpriteShape(_meniscusGeometry);
         _outerShape = compositor.CreateSpriteShape(_outerGeometry);
-        _innerShape = compositor.CreateSpriteShape(_innerGeometry);
         _highlightShape = compositor.CreateSpriteShape(_highlightGeometry);
+        _counterArcShape = compositor.CreateSpriteShape(_counterArcGeometry);
         _textureShape = compositor.CreateSpriteShape(_textureGeometry);
+        _pointerRimShape = compositor.CreateSpriteShape(_pointerRimGeometry);
 
-        _outerBrush = CreateBrush(ThemePalette.OrganizerGlassOuterEdgeStops, new(0, 0), new(1, 1));
-        _innerBrush = CreateBrush(ThemePalette.OrganizerGlassInnerEdgeStops, new(1, 0), new(0, 1));
-        _highlightBrush = CreateBrush(ThemePalette.GlassEdgeHighlightStops, new(0, 0), new(1, 0));
-        _textureBrush = CreateBrush(ThemePalette.GlassEdgeTextureStops, new(0, 0), new(1, 0));
+        _meniscusBrush = CreateBrush(ThemePalette.GlassEdgeLightMeniscusStops, new(0f, 0f), new(1f, 1f));
+        _outerBrush = CreateBrush(ThemePalette.GlassEdgePureBaseStops, new(0f, 0f), new(1f, 1f));
+        _highlightBrush = CreateBrush(ThemePalette.GlassEdgeHighlightStops, new(0f, 0f), new(0.52f, 0.52f));
+        _counterArcBrush = CreateBrush(ThemePalette.GlassEdgeCounterArcStops, new(1f, 1f), new(0.48f, 0.48f));
+        _textureBrush = CreateBrush(ThemePalette.GlassEdgeTextureStops, new(0f, 0f), new(1f, 1f));
 
+        _pointerRimBrush = compositor.CreateRadialGradientBrush();
+        _pointerRimBrush.MappingMode = CompositionMappingMode.Absolute;
+        _pointerRimBrush.EllipseCenter = Vector2.Zero;
+        _pointerRimBrush.EllipseRadius = new Vector2(72f, 72f);
+        _pointerRimBrush.GradientOriginOffset = Vector2.Zero;
+        foreach ((float offset, Color color) in ThemePalette.GlassEdgePointerRimStops)
+            _pointerRimBrush.ColorStops.Add(compositor.CreateColorGradientStop(offset, color));
+
+        _meniscusShape.StrokeBrush = null;
         _outerShape.StrokeBrush = _outerBrush;
-        _innerShape.StrokeBrush = _innerBrush;
         _highlightShape.StrokeBrush = _highlightBrush;
+        _counterArcShape.StrokeBrush = _counterArcBrush;
         _textureShape.StrokeBrush = _textureBrush;
-        _outerShape.StrokeThickness = ThemePalette.OrganizerGlassOuterEdgeThicknessDip;
-        _innerShape.StrokeThickness = ThemePalette.OrganizerGlassInnerEdgeThicknessDip;
+        _pointerRimShape.StrokeBrush = _pointerRimBrush;
+
+        _meniscusShape.StrokeThickness = ThemePalette.GlassEdgeLightMeniscusThicknessDip;
+        _outerShape.StrokeThickness = ThemePalette.GlassEdgeOuterPureThicknessDip;
         _highlightShape.StrokeThickness = ThemePalette.GlassEdgeHighlightThicknessDip;
+        _counterArcShape.StrokeThickness = ThemePalette.GlassEdgeCounterArcThicknessDip;
         _textureShape.StrokeThickness = ThemePalette.GlassEdgeTextureThicknessDip;
+        _pointerRimShape.StrokeThickness = ThemePalette.GlassEdgePointerRimThicknessDip;
+
+        _meniscusShape.StrokeLineJoin = CompositionStrokeLineJoin.Round;
         _outerShape.StrokeLineJoin = CompositionStrokeLineJoin.Round;
-        _innerShape.StrokeLineJoin = CompositionStrokeLineJoin.Round;
         _highlightShape.StrokeLineJoin = CompositionStrokeLineJoin.Round;
+        _counterArcShape.StrokeLineJoin = CompositionStrokeLineJoin.Round;
         _textureShape.StrokeLineJoin = CompositionStrokeLineJoin.Round;
+        _pointerRimShape.StrokeLineJoin = CompositionStrokeLineJoin.Round;
+
+        // Authoritative single-stack crystal rim: optional light-theme outer crystal meniscus,
+        // pure luminous base ring, prismatic dispersion rim, bottom-right caustic bounce arc,
+        // and primary top-left Fresnel caustic arc.
+        _visual.Shapes.Add(_meniscusShape);
         _visual.Shapes.Add(_outerShape);
-        _visual.Shapes.Add(_innerShape);
-        // Keep the wider highlight and fine texture above the base rings so
-        // their middle gradient stops remain visible rather than being
-        // covered by the later base shapes.
         _visual.Shapes.Add(_textureShape);
+        _visual.Shapes.Add(_counterArcShape);
         _visual.Shapes.Add(_highlightShape);
         _visual.Opacity = ThemePalette.GlassEdgeMinimumOpacity;
+
+        _pointerRimOpacityAnim = compositor.CreateScalarKeyFrameAnimation();
+        _pointerRimOpacityAnim.Target = "Opacity";
+        _pointerRimOpacityAnim.InsertExpressionKeyFrame(1f, "this.FinalValue");
+        _pointerRimOpacityAnim.Duration = TimeSpan.FromMilliseconds(180);
+
+        _pointerRimImplicitAnims = compositor.CreateImplicitAnimationCollection();
+        _pointerRimImplicitAnims["Opacity"] = _pointerRimOpacityAnim;
+
+        _pointerRimVisual = compositor.CreateShapeVisual();
+        _pointerRimVisual.BorderMode = CompositionBorderMode.Soft;
+        _pointerRimVisual.Opacity = 0f;
+        _pointerRimVisual.Shapes.Add(_pointerRimShape);
+        _pointerRimVisual.ImplicitAnimations = _pointerRimImplicitAnims;
+        _visual.Children.InsertAtTop(_pointerRimVisual);
 
         ElementCompositionPreview.SetElementChildVisual(host, _visual);
         _geometryHost.Loaded += Host_Loaded;
@@ -86,15 +137,44 @@ internal sealed class ThemeEdgeSurface : IDisposable
 
     internal void SetTheme(ThemeValues theme, bool useEffects)
     {
-        // These brushes intentionally never read theme colour, opacity or
-        // blur settings. A non-zero floor keeps the neutral edge visible in
-        // transparent, solid-colour, zero-blur and fallback states.
-        if (!_disposed) _visual.Opacity = ThemePalette.EdgeOpacity(theme);
+        if (_disposed) return;
+        _visual.Opacity = ThemePalette.EdgeOpacity(theme);
+        bool isLight = !ThemePalette.IsDark(theme) && !theme.FullyTransparent;
+        if (_isLightTheme != isLight)
+        {
+            _isLightTheme = isLight;
+            _meniscusShape.StrokeBrush = _isLightTheme ? _meniscusBrush : null;
+            if (_hasLastSurface) ApplyGeometry(_lastSurface);
+        }
     }
 
     internal void SetEnabled(bool enabled)
     {
-        if (!_disposed) _visual.IsVisible = enabled;
+        if (!_disposed)
+        {
+            _visual.IsVisible = enabled;
+            if (!enabled && _pointerRimVisual.Opacity > 0.001f)
+                _pointerRimVisual.Opacity = 0f;
+        }
+    }
+
+    internal void UpdatePointerRim(double xDip, double yDip)
+    {
+        if (_disposed || !_visual.IsVisible) return;
+        float minDim = Math.Min(_visual.Size.X, _visual.Size.Y);
+        float radius = Math.Clamp(minDim * 0.48f, 18f, 180f);
+        _pointerRimBrush.EllipseCenter = new Vector2((float)xDip, (float)yDip);
+        _pointerRimBrush.EllipseRadius = new Vector2(radius, radius);
+        _pointerRimBrush.GradientOriginOffset = Vector2.Zero;
+        if (_pointerRimVisual.Opacity < 0.99f)
+            _pointerRimVisual.Opacity = 1f;
+    }
+
+    internal void ClearPointerRim()
+    {
+        if (_disposed) return;
+        if (_pointerRimVisual.Opacity > 0.001f)
+            _pointerRimVisual.Opacity = 0f;
     }
 
     internal void SetCornerRadius(double radius)
@@ -120,17 +200,30 @@ internal sealed class ThemeEdgeSurface : IDisposable
     private void ApplyGeometry(RoundedSurfaceGeometry surface)
     {
         if (_disposed) return;
+        _lastSurface = surface;
+        _hasLastSurface = true;
         if (surface.Width <= 0 || surface.Height <= 0)
         {
             _visual.Size = Vector2.Zero;
+            _pointerRimVisual.Size = Vector2.Zero;
             return;
         }
-        _visual.Size = new Vector2(surface.Width, surface.Height);
-        ConfigureGeometry(_outerGeometry, surface.InsetStroke(ThemePalette.OrganizerGlassOuterEdgeThicknessDip));
-        ConfigureGeometry(_innerGeometry, surface.InsetStroke(
-            ThemePalette.OrganizerGlassInnerEdgeThicknessDip, ThemePalette.OrganizerGlassInnerEdgeInsetDip));
-        ConfigureGeometry(_highlightGeometry, surface.InsetStroke(ThemePalette.GlassEdgeHighlightThicknessDip));
-        ConfigureGeometry(_textureGeometry, surface.InsetStroke(ThemePalette.GlassEdgeTextureThicknessDip));
+        Vector2 surfaceSize = new(surface.Width, surface.Height);
+        _visual.Size = surfaceSize;
+        _pointerRimVisual.Size = surfaceSize;
+        float fresnelInset = _isLightTheme ? ThemePalette.GlassEdgeLightInnerInsetDip : 0.0f;
+        ConfigureGeometry(_meniscusGeometry, surface.InsetStroke(
+            ThemePalette.GlassEdgeLightMeniscusThicknessDip, ThemePalette.GlassEdgeLightMeniscusInsetDip));
+        ConfigureGeometry(_outerGeometry, surface.InsetStroke(
+            ThemePalette.GlassEdgeOuterPureThicknessDip, fresnelInset));
+        ConfigureGeometry(_textureGeometry, surface.InsetStroke(
+            ThemePalette.GlassEdgeTextureThicknessDip, fresnelInset + ThemePalette.GlassEdgeTextureInsetDip));
+        ConfigureGeometry(_counterArcGeometry, surface.InsetStroke(
+            ThemePalette.GlassEdgeCounterArcThicknessDip, fresnelInset + ThemePalette.GlassEdgeCounterArcInsetDip));
+        ConfigureGeometry(_highlightGeometry, surface.InsetStroke(
+            ThemePalette.GlassEdgeHighlightThicknessDip, fresnelInset + ThemePalette.GlassEdgeHighlightInsetDip));
+        ConfigureGeometry(_pointerRimGeometry, surface.InsetStroke(
+            ThemePalette.GlassEdgePointerRimThicknessDip, fresnelInset + ThemePalette.GlassEdgePointerRimInsetDip));
     }
 
     public void Dispose()
@@ -141,18 +234,31 @@ internal sealed class ThemeEdgeSurface : IDisposable
         _geometryHost.SizeChanged -= Host_SizeChanged;
         AttachXamlRoot(null);
         ElementCompositionPreview.SetElementChildVisual(_host, null);
+        _pointerRimVisual.ImplicitAnimations = null;
+        _pointerRimVisual.Shapes.Clear();
+        _visual.Children.RemoveAll();
+        _visual.Shapes.Clear();
+        _pointerRimImplicitAnims.Dispose();
+        _pointerRimOpacityAnim.Dispose();
+        _pointerRimBrush.Dispose();
+        _counterArcBrush.Dispose();
+        _meniscusBrush.Dispose();
         _outerBrush.Dispose();
-        _innerBrush.Dispose();
         _highlightBrush.Dispose();
         _textureBrush.Dispose();
+        _pointerRimShape.Dispose();
+        _counterArcShape.Dispose();
+        _meniscusShape.Dispose();
         _outerShape.Dispose();
-        _innerShape.Dispose();
         _highlightShape.Dispose();
         _textureShape.Dispose();
+        _pointerRimGeometry.Dispose();
+        _counterArcGeometry.Dispose();
+        _meniscusGeometry.Dispose();
         _outerGeometry.Dispose();
-        _innerGeometry.Dispose();
         _highlightGeometry.Dispose();
         _textureGeometry.Dispose();
+        _pointerRimVisual.Dispose();
         _visual.Dispose();
     }
 

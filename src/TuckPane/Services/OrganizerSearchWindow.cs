@@ -14,6 +14,7 @@ using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Imaging;
 using TuckPane.Core;
 using TuckPane.Models;
+using Windows.Foundation;
 using Windows.System;
 using Windows.UI;
 using Windows.UI.ViewManagement;
@@ -41,7 +42,7 @@ internal sealed class OrganizerSearchWindow : Window
     private readonly StackPanel _emptyStatePanel;
     private readonly FontIcon _emptyStateIcon;
     private readonly TextBlock _statusText;
-    private readonly StackPanel _footerPanel;
+    private readonly HintWrapPanel _footerPanel;
     private readonly Border _cardBorder;
     private readonly List<OrganizerSearchEntry> _index = [];
 
@@ -59,8 +60,16 @@ internal sealed class OrganizerSearchWindow : Window
     private readonly SolidColorBrush _kbdBackgroundBrush = new(Color.FromArgb(230, 255, 255, 255));
     private readonly SolidColorBrush _kbdBorderBrush = new(Color.FromArgb(36, 0, 0, 0));
     private readonly SolidColorBrush _kbdTextBrush = new(Color.FromArgb(255, 64, 68, 78));
+    private readonly SolidColorBrush _clearForegroundBrush = new(Color.FromArgb(255, 104, 108, 118));
+    private readonly SolidColorBrush _clearHoverForegroundBrush = new(Color.FromArgb(255, 24, 26, 30));
+    private readonly SolidColorBrush _clearPressedForegroundBrush = new(Color.FromArgb(255, 24, 26, 30));
+    private readonly SolidColorBrush _clearBorderBrush = new(Colors.Transparent);
     private readonly SolidColorBrush _clearHoverBrush = new(Color.FromArgb(18, 0, 0, 0));
     private readonly SolidColorBrush _clearPressedBrush = new(Color.FromArgb(32, 0, 0, 0));
+    private readonly SolidColorBrush _listItemHoverBrush = new(Color.FromArgb(14, 0, 0, 0));
+    private readonly SolidColorBrush _listItemSelectedBrush = new(Color.FromArgb(24, 0, 103, 192));
+    private readonly SolidColorBrush _listItemSelectedHoverBrush = new(Color.FromArgb(34, 0, 103, 192));
+    private readonly SolidColorBrush _listItemPressedBrush = new(Color.FromArgb(42, 0, 103, 192));
 
     private BitmapImage? _noteAssetIcon;
     private BitmapImage? _todoAssetIcon;
@@ -73,6 +82,9 @@ internal sealed class OrganizerSearchWindow : Window
     private bool _initialized;
     private bool _closed;
     private bool _isIndexing;
+    private bool _queryBoxLoaded;
+    private bool _focusPendingAfterLoad;
+    private bool _focusPendingOnActivate;
     private int _indexVersion;
     private int _renderVersion;
     private long _lastOpenedTimestamp;
@@ -111,6 +123,7 @@ internal sealed class OrganizerSearchWindow : Window
             VerticalAlignment = VerticalAlignment.Center
         };
         ConfigureBorderlessQueryBoxResources(_queryBox);
+        _queryBox.Loaded += QueryBox_Loaded;
         _queryBox.TextChanged += (_, _) =>
         {
             UpdateClearButtonVisibility();
@@ -125,26 +138,30 @@ internal sealed class OrganizerSearchWindow : Window
             Padding = new Thickness(0),
             CornerRadius = new CornerRadius(13),
             Background = _transparentBrush,
-            BorderThickness = new Thickness(0),
+            Foreground = _clearForegroundBrush,
+            BorderThickness = new Thickness(1),
+            BorderBrush = _clearBorderBrush,
             VerticalAlignment = VerticalAlignment.Center,
             Visibility = Visibility.Collapsed,
             Content = new FontIcon
             {
                 Glyph = "\uE711",
-                FontSize = 10,
-                Foreground = _secondaryTextBrush
+                FontSize = 10
             }
         };
         _clearButton.Resources["ButtonBackground"] = _transparentBrush;
         _clearButton.Resources["ButtonBackgroundPointerOver"] = _clearHoverBrush;
         _clearButton.Resources["ButtonBackgroundPressed"] = _clearPressedBrush;
-        _clearButton.Resources["ButtonBorderBrush"] = _transparentBrush;
-        _clearButton.Resources["ButtonBorderBrushPointerOver"] = _transparentBrush;
-        _clearButton.Resources["ButtonBorderBrushPressed"] = _transparentBrush;
+        _clearButton.Resources["ButtonForeground"] = _clearForegroundBrush;
+        _clearButton.Resources["ButtonForegroundPointerOver"] = _clearHoverForegroundBrush;
+        _clearButton.Resources["ButtonForegroundPressed"] = _clearPressedForegroundBrush;
+        _clearButton.Resources["ButtonBorderBrush"] = _clearBorderBrush;
+        _clearButton.Resources["ButtonBorderBrushPointerOver"] = _clearBorderBrush;
+        _clearButton.Resources["ButtonBorderBrushPressed"] = _clearBorderBrush;
         _clearButton.Click += (_, _) =>
         {
             _queryBox.Text = string.Empty;
-            _queryBox.Focus(FocusState.Programmatic);
+            RequestQueryBoxFocus();
         };
 
         _countBadgeText = new TextBlock
@@ -201,12 +218,30 @@ internal sealed class OrganizerSearchWindow : Window
             Child = headerGrid
         };
 
+        var itemContainerStyle = new Style(typeof(ListViewItem));
+        itemContainerStyle.Setters.Add(new Setter(Control.HorizontalContentAlignmentProperty, HorizontalAlignment.Stretch));
+        itemContainerStyle.Setters.Add(new Setter(Control.VerticalContentAlignmentProperty, VerticalAlignment.Center));
+        itemContainerStyle.Setters.Add(new Setter(Control.PaddingProperty, new Thickness(0)));
+        itemContainerStyle.Setters.Add(new Setter(FrameworkElement.MarginProperty, new Thickness(2, 2, 2, 2)));
+        itemContainerStyle.Setters.Add(new Setter(FrameworkElement.MinHeightProperty, 38.0));
+        itemContainerStyle.Setters.Add(new Setter(Control.CornerRadiusProperty, new CornerRadius(8)));
+
         _resultsList = new ListView
         {
             SelectionMode = ListViewSelectionMode.Single,
             IsItemClickEnabled = true,
-            Padding = new Thickness(8, 6, 8, 6)
+            Padding = new Thickness(8, 6, 8, 6),
+            ItemContainerStyle = itemContainerStyle
         };
+        _resultsList.Resources["ListViewItemCornerRadius"] = new CornerRadius(8);
+        _resultsList.Resources["ListViewItemBackgroundPointerOver"] = _listItemHoverBrush;
+        _resultsList.Resources["ListViewItemBackgroundPressed"] = _listItemPressedBrush;
+        _resultsList.Resources["ListViewItemBackgroundSelected"] = _listItemSelectedBrush;
+        _resultsList.Resources["ListViewItemBackgroundSelectedPointerOver"] = _listItemSelectedHoverBrush;
+        _resultsList.Resources["ListViewItemBackgroundSelectedPressed"] = _listItemPressedBrush;
+        _resultsList.Resources["ListViewItemSelectionIndicatorBrush"] = _accentBrush;
+        _resultsList.Resources["ListViewItemSelectionIndicatorPointerOverBrush"] = _accentBrush;
+        _resultsList.Resources["ListViewItemSelectionIndicatorPressedBrush"] = _accentBrush;
         _resultsList.ItemClick += async (_, e) =>
         {
             if (e.ClickedItem is FrameworkElement { Tag: OrganizerSearchHit hit })
@@ -245,10 +280,10 @@ internal sealed class OrganizerSearchWindow : Window
             Children = { _resultsList, _emptyStatePanel }
         };
 
-        _footerPanel = new StackPanel
+        _footerPanel = new HintWrapPanel
         {
-            Orientation = Orientation.Horizontal,
-            Spacing = 10,
+            HorizontalSpacing = 10,
+            VerticalSpacing = 6,
             VerticalAlignment = VerticalAlignment.Center
         };
         var footerBorder = new Border
@@ -284,12 +319,17 @@ internal sealed class OrganizerSearchWindow : Window
             Background = _cardBackgroundBrush,
             Child = rootGrid
         };
+        _cardBorder.PreviewKeyDown += CardBorder_PreviewKeyDown;
 
         Content = _cardBorder;
         Activated += OrganizerSearchWindow_Activated;
         Closed += (_, _) =>
         {
             _closed = true;
+            _focusPendingAfterLoad = false;
+            _focusPendingOnActivate = false;
+            _queryBox.Loaded -= QueryBox_Loaded;
+            _cardBorder.PreviewKeyDown -= CardBorder_PreviewKeyDown;
             ++_renderVersion;
             CancelEntranceAnimation();
         };
@@ -305,17 +345,23 @@ internal sealed class OrganizerSearchWindow : Window
         UpdateClearButtonVisibility();
         _lastOpenedTimestamp = Stopwatch.GetTimestamp();
         _hasBeenActivatedSinceOpen = false;
-        _appWindow?.Show();
+        _focusPendingOnActivate = true;
+
+        bool shouldAnimate = PrepareEntranceAnimationState();
+        _appWindow?.Show(activateWindow: true);
         Activate();
         _ = NativeMethods.SetForegroundWindow(_hwnd);
-        StartEntranceAnimation();
-        _queryBox.Focus(FocusState.Programmatic);
+        if (shouldAnimate)
+            StartEntranceAnimation();
+        RequestQueryBoxFocus();
         _ = RefreshIndexAsync(++_indexVersion);
     }
 
     internal void Dismiss()
     {
         if (_closed) return;
+        _focusPendingAfterLoad = false;
+        _focusPendingOnActivate = false;
         ++_renderVersion;
         CancelEntranceAnimation();
         _appWindow?.Hide();
@@ -393,7 +439,9 @@ internal sealed class OrganizerSearchWindow : Window
         bool highContrast = _accessibilitySettings.HighContrast;
         Color systemBg = _uiSettings.GetColorValue(UIColorType.Background);
         bool dark = (0.299 * systemBg.R + 0.587 * systemBg.G + 0.114 * systemBg.B) < 128.0;
-        _cardBorder.RequestedTheme = dark ? ElementTheme.Dark : ElementTheme.Light;
+        _cardBorder.RequestedTheme = highContrast
+            ? ElementTheme.Default
+            : dark ? ElementTheme.Dark : ElementTheme.Light;
 
         if (highContrast)
         {
@@ -415,8 +463,16 @@ internal sealed class OrganizerSearchWindow : Window
             _kbdBackgroundBrush.Color = windowBg;
             _kbdBorderBrush.Color = windowText;
             _kbdTextBrush.Color = windowText;
+            _clearForegroundBrush.Color = windowText;
+            _clearHoverForegroundBrush.Color = highlightText;
+            _clearPressedForegroundBrush.Color = highlightText;
+            _clearBorderBrush.Color = windowText;
             _clearHoverBrush.Color = accent;
             _clearPressedBrush.Color = accent;
+            _listItemHoverBrush.Color = Color.FromArgb(36, accent.R, accent.G, accent.B);
+            _listItemSelectedBrush.Color = Color.FromArgb(56, accent.R, accent.G, accent.B);
+            _listItemSelectedHoverBrush.Color = Color.FromArgb(72, accent.R, accent.G, accent.B);
+            _listItemPressedBrush.Color = Color.FromArgb(88, accent.R, accent.G, accent.B);
         }
         else if (dark)
         {
@@ -434,8 +490,16 @@ internal sealed class OrganizerSearchWindow : Window
             _kbdBackgroundBrush.Color = Color.FromArgb(26, 255, 255, 255);
             _kbdBorderBrush.Color = Color.FromArgb(48, 255, 255, 255);
             _kbdTextBrush.Color = Color.FromArgb(255, 212, 217, 226);
+            _clearForegroundBrush.Color = _secondaryTextBrush.Color;
+            _clearHoverForegroundBrush.Color = _primaryTextBrush.Color;
+            _clearPressedForegroundBrush.Color = _primaryTextBrush.Color;
+            _clearBorderBrush.Color = Colors.Transparent;
             _clearHoverBrush.Color = Color.FromArgb(28, 255, 255, 255);
             _clearPressedBrush.Color = Color.FromArgb(46, 255, 255, 255);
+            _listItemHoverBrush.Color = Color.FromArgb(20, 255, 255, 255);
+            _listItemSelectedBrush.Color = Color.FromArgb(36, 96, 178, 255);
+            _listItemSelectedHoverBrush.Color = Color.FromArgb(48, 96, 178, 255);
+            _listItemPressedBrush.Color = Color.FromArgb(56, 96, 178, 255);
         }
         else
         {
@@ -453,8 +517,16 @@ internal sealed class OrganizerSearchWindow : Window
             _kbdBackgroundBrush.Color = Color.FromArgb(236, 255, 255, 255);
             _kbdBorderBrush.Color = Color.FromArgb(34, 0, 0, 0);
             _kbdTextBrush.Color = Color.FromArgb(255, 64, 68, 78);
+            _clearForegroundBrush.Color = _secondaryTextBrush.Color;
+            _clearHoverForegroundBrush.Color = _primaryTextBrush.Color;
+            _clearPressedForegroundBrush.Color = _primaryTextBrush.Color;
+            _clearBorderBrush.Color = Colors.Transparent;
             _clearHoverBrush.Color = Color.FromArgb(16, 0, 0, 0);
             _clearPressedBrush.Color = Color.FromArgb(30, 0, 0, 0);
+            _listItemHoverBrush.Color = Color.FromArgb(14, 0, 0, 0);
+            _listItemSelectedBrush.Color = Color.FromArgb(24, 0, 103, 192);
+            _listItemSelectedHoverBrush.Color = Color.FromArgb(34, 0, 103, 192);
+            _listItemPressedBrush.Color = Color.FromArgb(42, 0, 103, 192);
         }
 
         RebuildFooterKeycaps();
@@ -518,7 +590,7 @@ internal sealed class OrganizerSearchWindow : Window
         }
     }
 
-    private void StartEntranceAnimation()
+    private bool PrepareEntranceAnimationState()
     {
         CancelEntranceAnimation();
         Visual visual = ElementCompositionPreview.GetElementVisual(_cardBorder);
@@ -529,7 +601,7 @@ internal sealed class OrganizerSearchWindow : Window
         {
             visual.Scale = Vector3.One;
             visual.Opacity = 1f;
-            return;
+            return false;
         }
 
         float width = (float)(_cardBorder.ActualWidth > 0 ? _cardBorder.ActualWidth : WindowWidthDip);
@@ -537,7 +609,13 @@ internal sealed class OrganizerSearchWindow : Window
         visual.CenterPoint = new Vector3(width * 0.5f, height * 0.35f, 0f);
         visual.Scale = new Vector3(0.96f, 0.96f, 1f);
         visual.Opacity = 0f;
+        return true;
+    }
 
+    private void StartEntranceAnimation()
+    {
+        CancelEntranceAnimation();
+        Visual visual = ElementCompositionPreview.GetElementVisual(_cardBorder);
         Compositor compositor = visual.Compositor;
         _entranceBoost = CompositorClockBoost.Acquire();
         CompositionScopedBatch batch = compositor.CreateScopedBatch(CompositionBatchTypes.Animation);
@@ -560,6 +638,37 @@ internal sealed class OrganizerSearchWindow : Window
         visual.StartAnimation("Opacity", opacityAnim);
 
         batch.End();
+    }
+
+    private void QueryBox_Loaded(object sender, RoutedEventArgs e)
+    {
+        _queryBoxLoaded = true;
+        if (!_focusPendingAfterLoad || _closed) return;
+        _focusPendingAfterLoad = false;
+        _ = DispatcherQueue.TryEnqueue(FocusQueryBoxNow);
+    }
+
+    private void RequestQueryBoxFocus()
+    {
+        if (_closed) return;
+        if (!_queryBoxLoaded && !_queryBox.IsLoaded)
+        {
+            _focusPendingAfterLoad = true;
+            return;
+        }
+        _queryBoxLoaded = true;
+        _focusPendingAfterLoad = false;
+        if (!_queryBox.Focus(FocusState.Programmatic))
+            _ = DispatcherQueue.TryEnqueue(FocusQueryBoxNow);
+        else
+            _queryBox.SelectionStart = _queryBox.Text.Length;
+    }
+
+    private void FocusQueryBoxNow()
+    {
+        if (_closed || _appWindow is null || !_appWindow.IsVisible) return;
+        _ = _queryBox.Focus(FocusState.Programmatic);
+        _queryBox.SelectionStart = _queryBox.Text.Length;
     }
 
     private void EntranceBatch_Completed(object sender, CompositionBatchCompletedEventArgs args)
@@ -602,7 +711,7 @@ internal sealed class OrganizerSearchWindow : Window
             top,
             width,
             height,
-            NativeMethods.SWP_SHOWWINDOW);
+            NativeMethods.SWP_NOACTIVATE | NativeMethods.SWP_NOOWNERZORDER);
     }
 
     private void UpdateClearButtonVisibility()
@@ -686,7 +795,7 @@ internal sealed class OrganizerSearchWindow : Window
         {
             var row = new Grid
             {
-                Padding = new Thickness(8, 6, 8, 6),
+                Padding = new Thickness(10, 7, 10, 7),
                 ColumnSpacing = 12,
                 Tag = hit,
                 ColumnDefinitions =
@@ -706,14 +815,19 @@ internal sealed class OrganizerSearchWindow : Window
                 Padding = new Thickness(8, 2, 8, 2),
                 Background = _badgeBackgroundBrush,
                 VerticalAlignment = VerticalAlignment.Center,
+                MaxWidth = 160,
                 Child = new TextBlock
                 {
                     Text = hit.Entry.OrganizerName,
                     FontSize = 11,
                     FontWeight = FontWeights.Medium,
-                    Foreground = _badgeTextBrush
+                    Foreground = _badgeTextBrush,
+                    TextTrimming = TextTrimming.CharacterEllipsis,
+                    MaxLines = 1
                 }
             };
+            if (hit.Entry.OrganizerName.Length > 12)
+                ToolTipService.SetToolTip(badge, hit.Entry.OrganizerName);
 
             Grid.SetColumn(iconHost, 0);
             Grid.SetColumn(title, 1);
@@ -878,12 +992,13 @@ internal sealed class OrganizerSearchWindow : Window
         return title;
     }
 
-    private async void QueryBox_PreviewKeyDown(object sender, KeyRoutedEventArgs e)
+    private void CardBorder_PreviewKeyDown(object sender, KeyRoutedEventArgs e)
     {
         if (e.Key == VirtualKey.Escape)
         {
             e.Handled = true;
-            if (!string.IsNullOrEmpty(_queryBox.Text))
+            if (IsDescendantOrSelf(e.OriginalSource as DependencyObject, _queryBox) &&
+                !string.IsNullOrEmpty(_queryBox.Text))
             {
                 _queryBox.Text = string.Empty;
                 return;
@@ -891,6 +1006,47 @@ internal sealed class OrganizerSearchWindow : Window
             Dismiss();
             return;
         }
+        if (e.Key == VirtualKey.C &&
+            (NativeMethods.GetAsyncKeyState(NativeMethods.VK_CONTROL) & 0x8000) != 0 &&
+            (NativeMethods.GetAsyncKeyState(0x10) & 0x8000) != 0)
+        {
+            if (TryCopySelectedPath())
+            {
+                e.Handled = true;
+            }
+        }
+    }
+
+    private bool TryCopySelectedPath()
+    {
+        int index = _resultsList.SelectedIndex;
+        if (index < 0 || index >= _currentHits.Count || _currentHits[index].Entry.Kind == WidgetItemKind.Note)
+            return false;
+        try
+        {
+            ShellItemCommands.CopyPathToClipboard(_currentHits[index].Entry.FullPath);
+            Dismiss();
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Error($"全局搜索复制路径到剪贴板失败：{_currentHits[index].Entry.FullPath}", ex);
+            _host.ReportOperationError(AppStrings.Get("SearchWindowTitle"), ex.Message);
+        }
+        return true;
+    }
+
+    private static bool IsDescendantOrSelf(DependencyObject? element, DependencyObject ancestor)
+    {
+        while (element is not null)
+        {
+            if (ReferenceEquals(element, ancestor)) return true;
+            element = VisualTreeHelper.GetParent(element);
+        }
+        return false;
+    }
+
+    private async void QueryBox_PreviewKeyDown(object sender, KeyRoutedEventArgs e)
+    {
         if (e.Key == VirtualKey.Down && _resultsList.Items.Count > 0)
         {
             e.Handled = true;
@@ -911,38 +1067,12 @@ internal sealed class OrganizerSearchWindow : Window
         {
             e.Handled = true;
             await LaunchCurrentSelectionAsync();
-            return;
-        }
-        if (e.Key == VirtualKey.C &&
-            (NativeMethods.GetAsyncKeyState(NativeMethods.VK_CONTROL) & 0x8000) != 0 &&
-            (NativeMethods.GetAsyncKeyState(0x10) & 0x8000) != 0)
-        {
-            int index = _resultsList.SelectedIndex;
-            if (index >= 0 && index < _currentHits.Count && _currentHits[index].Entry.Kind != WidgetItemKind.Note)
-            {
-                e.Handled = true;
-                try
-                {
-                    ShellItemCommands.CopyPathToClipboard(_currentHits[index].Entry.FullPath);
-                    Dismiss();
-                }
-                catch (Exception ex)
-                {
-                    AppLogger.Error($"全局搜索复制路径到剪贴板失败：{_currentHits[index].Entry.FullPath}", ex);
-                    _host.ReportOperationError(AppStrings.Get("SearchWindowTitle"), ex.Message);
-                }
-            }
         }
     }
 
     private async void ResultsList_KeyDown(object sender, KeyRoutedEventArgs e)
     {
-        if (e.Key == VirtualKey.Escape)
-        {
-            e.Handled = true;
-            Dismiss();
-        }
-        else if (e.Key == VirtualKey.Enter)
+        if (e.Key == VirtualKey.Enter)
         {
             e.Handled = true;
             await LaunchCurrentSelectionAsync();
@@ -1002,6 +1132,11 @@ internal sealed class OrganizerSearchWindow : Window
         if (args.WindowActivationState != WindowActivationState.Deactivated)
         {
             _hasBeenActivatedSinceOpen = true;
+            if (_focusPendingOnActivate)
+            {
+                _focusPendingOnActivate = false;
+                RequestQueryBoxFocus();
+            }
             return;
         }
         if (!_hasBeenActivatedSinceOpen ||
@@ -1021,4 +1156,67 @@ internal sealed class OrganizerSearchWindow : Window
         WidgetItemKind.Organizer => "\uE8F1",
         _ => "\uE8A5"
     };
+
+    private sealed class HintWrapPanel : Panel
+    {
+        public double HorizontalSpacing { get; set; } = 10;
+        public double VerticalSpacing { get; set; } = 6;
+
+        protected override Size MeasureOverride(Size availableSize)
+        {
+            double maxWidth = double.IsInfinity(availableSize.Width) ? double.MaxValue : availableSize.Width;
+            double currentX = 0;
+            double currentY = 0;
+            double lineHeight = 0;
+            double totalWidth = 0;
+
+            foreach (UIElement child in Children)
+            {
+                child.Measure(new Size(maxWidth, double.PositiveInfinity));
+                Size desired = child.DesiredSize;
+                if (currentX > 0 && currentX + HorizontalSpacing + desired.Width > maxWidth)
+                {
+                    totalWidth = Math.Max(totalWidth, currentX);
+                    currentY += lineHeight + VerticalSpacing;
+                    currentX = 0;
+                    lineHeight = 0;
+                }
+                if (currentX > 0) currentX += HorizontalSpacing;
+                currentX += desired.Width;
+                lineHeight = Math.Max(lineHeight, desired.Height);
+            }
+
+            totalWidth = Math.Max(totalWidth, currentX);
+            double totalHeight = currentY + lineHeight;
+            return new Size(
+                double.IsInfinity(availableSize.Width) ? totalWidth : Math.Min(totalWidth, availableSize.Width),
+                double.IsInfinity(availableSize.Height) ? totalHeight : Math.Min(totalHeight, availableSize.Height));
+        }
+
+        protected override Size ArrangeOverride(Size finalSize)
+        {
+            double maxWidth = finalSize.Width;
+            double currentX = 0;
+            double currentY = 0;
+            double lineHeight = 0;
+
+            foreach (UIElement child in Children)
+            {
+                Size desired = child.DesiredSize;
+                if (currentX > 0 && currentX + HorizontalSpacing + desired.Width > maxWidth)
+                {
+                    currentY += lineHeight + VerticalSpacing;
+                    currentX = 0;
+                    lineHeight = 0;
+                }
+                if (currentX > 0) currentX += HorizontalSpacing;
+                double arrangeWidth = Math.Max(0, Math.Min(desired.Width, maxWidth - currentX));
+                child.Arrange(new Rect(currentX, currentY, arrangeWidth, desired.Height));
+                currentX += arrangeWidth;
+                lineHeight = Math.Max(lineHeight, desired.Height);
+            }
+
+            return new Size(finalSize.Width, Math.Max(finalSize.Height, currentY + lineHeight));
+        }
+    }
 }

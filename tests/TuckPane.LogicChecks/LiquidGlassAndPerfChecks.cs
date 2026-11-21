@@ -1,9 +1,12 @@
+using System.Runtime.InteropServices;
 using TuckPane.Core;
 using TuckPane.Services;
 using Microsoft.UI.Text;
 
 internal static class LiquidGlassAndPerfChecks
 {
+    [DllImport("shlwapi.dll", CharSet = CharSet.Unicode, ExactSpelling = true)]
+    private static extern int StrCmpLogicalW(string x, string y);
     internal static Task RunAsync()
     {
         static void Require(bool condition, string message)
@@ -15,6 +18,7 @@ internal static class LiquidGlassAndPerfChecks
         CheckDedicatedHookThreadArchitecture(Require);
         CheckLiquidGlassAndNativeDesktopContract(Require);
         CheckZeroStutterReorderAndSelectionPerf(Require);
+        CheckV432RetinaMenuAndSettingsContracts(Require);
 
         Console.WriteLine("LiquidGlassAndPerfChecks: all assertions passed.");
         return Task.CompletedTask;
@@ -55,6 +59,17 @@ internal static class LiquidGlassAndPerfChecks
         var (glass200Size, _) = DesktopTypographyService.ResolveCompactLabelTypography(
             CompactVisualStyle.GlassTile, compactScale: 2.0, compactNameScale: 1.2, positioned: false);
         require(glass200Size <= 14.0, $"GlassTile 放大上限保护失效：{glass200Size} DIP。");
+
+        // CompactNameScale slider (60%-100%) must smoothly shrink GlassTile & NativeDesktop labels instead of locking at 12 DIP.
+        var (glass60Size, _) = DesktopTypographyService.ResolveCompactLabelTypography(
+            CompactVisualStyle.GlassTile, compactScale: 1.0, compactNameScale: 0.6, positioned: false);
+        require(glass60Size >= 8.0 && glass60Size < 10.0 && glass60Size < glass156Size - 2.0,
+            $"GlassTile 收起名称缩放 60% 未生效：{glass60Size} DIP（100%={glass156Size} DIP）。");
+
+        var (native60Size, _) = DesktopTypographyService.ResolveCompactLabelTypography(
+            CompactVisualStyle.NativeDesktop, compactScale: 1.0, compactNameScale: 0.6, positioned: false);
+        require(native60Size >= 7.5 && native60Size < native156Size - 2.0,
+            $"NativeDesktop 收起名称缩放 60% 未生效：{native60Size} DIP（100%={native156Size} DIP）。");
     }
 
     private static void CheckDedicatedHookThreadArchitecture(Action<bool, string> require)
@@ -216,5 +231,157 @@ internal static class LiquidGlassAndPerfChecks
                 transitionsCs.Contains("CloakForAtomicRelocation", StringComparison.Ordinal) &&
                 transitionsCs.Contains("CommitCompactHandoffAsync", StringComparison.Ordinal),
             "展开/收起必须通过 TransitionBridgeOverlay + DWMWA_CLOAK 实现零瞬移、零闪烁原子交接。");
+    }
+
+    private static void CheckV432RetinaMenuAndSettingsContracts(Action<bool, string> require)
+    {
+        // 1. Retina supersampled compact mini-icons
+        require(IconCacheService.NormalizeCompactPreviewPixelSize(0) == 12 &&
+                IconCacheService.NormalizeCompactPreviewPixelSize(40) == 40 &&
+                IconCacheService.NormalizeCompactPreviewPixelSize(512) == 128,
+            "IconCacheService.NormalizeCompactPreviewPixelSize 物理像素夹紧区间异常。");
+
+        string srcRoot = Path.Combine(RepoSourceSnapshot.RepoRoot(), "src", "TuckPane");
+        string iconCacheCs = File.ReadAllText(Path.Combine(srcRoot, "Services", "IconCacheService.cs"));
+        string mainCs = File.ReadAllText(Path.Combine(srcRoot, "MainWindow.xaml.cs"));
+        string transCs = File.ReadAllText(Path.Combine(srcRoot, "MainWindow.TransitionsAndResize.cs"));
+        string mainXaml = File.ReadAllText(Path.Combine(srcRoot, "MainWindow.xaml"));
+        string menuCs = File.ReadAllText(Path.Combine(srcRoot, "MainWindow.OrganizerMenu.cs"));
+        string catalogCs = File.ReadAllText(Path.Combine(srcRoot, "OrganizerCatalogController.cs"));
+        string styleCs = File.ReadAllText(Path.Combine(srcRoot, "MainWindow.NativeDesktopStyle.cs"));
+        string hostDesktopCs = File.ReadAllText(Path.Combine(srcRoot, "AppHost.NativeDesktop.cs"));
+        string consoleXaml = File.ReadAllText(Path.Combine(srcRoot, "ConsoleWindow.xaml"));
+        string formXaml = File.ReadAllText(Path.Combine(srcRoot, "Controls", "OrganizerSettingsForm.xaml"));
+
+        require(iconCacheCs.Contains("GetCompactPreviewIconAsync(", StringComparison.Ordinal) &&
+                iconCacheCs.Contains("BitmapInterpolationMode.Fant", StringComparison.Ordinal) &&
+                iconCacheCs.Contains("DecodePixelType.Physical", StringComparison.Ordinal) &&
+                iconCacheCs.Contains("ApplyAlphaSafeMicroUnsharpMask(", StringComparison.Ordinal),
+            "IconCacheService 缺少 Fant 面积超采样、Alpha 安全微锐化或 1:1 物理像素解码链路。");
+
+        require(mainCs.Contains("EnsureCompactPreviewReadyAsync(", StringComparison.Ordinal) &&
+                mainCs.Contains("IsCompactPreviewUpToDate(", StringComparison.Ordinal) &&
+                mainCs.Contains("BuildCompactPreviewSignature(", StringComparison.Ordinal),
+            "MainWindow.xaml.cs 缺少紧凑预览零重载守卫或签名比对，收起后可能异步覆盖导致闪烁。");
+
+        // 2. Post-enlarge collapse zero-flash dead-zone & pre-cloak preview sync
+        require(transCs.Contains("EnsureCompactPreviewReadyAsync(", StringComparison.Ordinal) &&
+                transCs.Contains("GetPixelSnappedCompactTranslation(", StringComparison.Ordinal) &&
+                transCs.Contains("0.06", StringComparison.Ordinal),
+            "MainWindow.TransitionsAndResize.cs 缺少收起前预览同步、物理像素对齐或 0.06 收起静定死区。");
+
+        // 3. Expanded context menu reliability, outside-click pause & floating Toast HUD
+        require(mainXaml.Contains("x:Name=\"ExpandedToastPill\"", StringComparison.Ordinal) &&
+                menuCs.Contains("PauseOutsideClickForOverlay(", StringComparison.Ordinal) &&
+                menuCs.Contains("ResumeOutsideClickAfterOverlay(", StringComparison.Ordinal) &&
+                menuCs.Contains("ShowExpandedToast(", StringComparison.Ordinal),
+            "展开态右键菜单缺少外部点击钩子暂停保护或浮动 Toast 反馈胶囊。");
+
+        require(catalogCs.Contains("YieldForMenuDismissAsync(", StringComparison.Ordinal) &&
+                catalogCs.Contains("IsDialogActive", StringComparison.Ordinal),
+            "OrganizerCatalogController 缺少菜单关闭后安全让步或模态框激活态保护。");
+
+        int alignMethodStart = hostDesktopCs.IndexOf("AlignFloatingToDesktopGridAsync(", StringComparison.Ordinal);
+        require(alignMethodStart > 0, "找不到 AlignFloatingToDesktopGridAsync 方法。");
+        string alignBody = hostDesktopCs[alignMethodStart..Math.Min(hostDesktopCs.Length, alignMethodStart + 1400)];
+        require(!alignBody.Contains("IsEligibleForDesktopMultiSelect", StringComparison.Ordinal),
+            "AlignFloatingToDesktopGridAsync 不应再跳过展开中的悬浮窗。");
+
+        // 4. Settings EdgeGlow wiring & Swiss-grid layout spine
+        require(styleCs.Contains("EdgeGlowEnabled", StringComparison.Ordinal) &&
+                styleCs.Contains("ExpandedLiquidSheen", StringComparison.Ordinal) &&
+                consoleXaml.Contains("Width=\"228\"", StringComparison.Ordinal) &&
+                formXaml.Contains("Width=\"208\"", StringComparison.Ordinal),
+            "设置页缺少边缘弧光开关实时联动或 Swiss-Grid 右列对齐规格。");
+
+        // 5. Zero-overlap submenu templates & Windows Explorer StrCmpLogicalW natural mixed sorting
+        require(mainXaml.Contains("x:Key=\"OrganizerMenuItemStyle\"", StringComparison.Ordinal) &&
+                mainXaml.Contains("x:Key=\"OrganizerMenuSubItemStyle\"", StringComparison.Ordinal),
+            "MainWindow.xaml 缺少防止子菜单图标与文字重叠的显式列布局样式。");
+
+        DateTimeOffset now = DateTimeOffset.UtcNow;
+        var mixedGameShortcuts = new SortableItemMetadata[]
+        {
+            new("鸣潮.lnk", "鸣潮", TuckPane.Models.WidgetItemKind.Shortcut, ".lnk", now, 1551),
+            new("三角洲行动.lnk", "三角洲行动", TuckPane.Models.WidgetItemKind.Shortcut, ".lnk", now, 848),
+            new("NVIDIA App.lnk", "NVIDIA App", TuckPane.Models.WidgetItemKind.Shortcut, ".lnk", now, 1430),
+            new("Steam.lnk", "Steam", TuckPane.Models.WidgetItemKind.Shortcut, ".lnk", now, 550),
+            new("UU加速器.lnk", "UU加速器", TuckPane.Models.WidgetItemKind.Shortcut, ".lnk", now, 499),
+            new("Wallpaper Engine.url", "Wallpaper Engine", TuckPane.Models.WidgetItemKind.InternetShortcut, ".url", now, 202)
+        };
+        IReadOnlyList<string> explorerSorted = OrganizerSortOrder.Sort(mixedGameShortcuts, OrganizerSortCriterion.NameAscending);
+        int cjkOrder = StrCmpLogicalW("鸣潮", "三角洲行动");
+        string firstCjk = cjkOrder <= 0 ? "鸣潮.lnk" : "三角洲行动.lnk";
+        string secondCjk = cjkOrder <= 0 ? "三角洲行动.lnk" : "鸣潮.lnk";
+        IReadOnlyList<string> numericSorted = OrganizerSortOrder.Sort(
+        [
+            new("Item 10.txt", "Item 10", TuckPane.Models.WidgetItemKind.File, ".txt", now, 10),
+            new("Item 2.txt", "Item 2", TuckPane.Models.WidgetItemKind.File, ".txt", now, 2)
+        ], OrganizerSortCriterion.NameAscending);
+        require(explorerSorted[0] == "NVIDIA App.lnk" &&
+                explorerSorted[1] == "Steam.lnk" &&
+                explorerSorted[2] == "UU加速器.lnk" &&
+                explorerSorted[3] == "Wallpaper Engine.url" &&
+                explorerSorted[4] == firstCjk &&
+                explorerSorted[5] == secondCjk &&
+                numericSorted[0] == "Item 2.txt" &&
+                numericSorted[1] == "Item 10.txt",
+            $"按名称（A→Z）未遵循 Windows 资源管理器 StrCmpLogicalW 中英自然顺序：{string.Join(" -> ", explorerSorted)}");
+
+        // 6. Optical Liquid Glass Edge Rim & Pre-Uncloak DComp Commit & Element-Identity FreeGrid Slot Resolution
+        string edgeSurfaceCs = File.ReadAllText(Path.Combine(srcRoot, "Services", "ThemeEdgeSurface.cs"));
+        string freeGridLayoutCs = File.ReadAllText(Path.Combine(srcRoot, "Controls", "FreeSlotGridLayout.cs"));
+        string freeGridReorderCs = File.ReadAllText(Path.Combine(srcRoot, "MainWindow.FreeGridReorder.cs"));
+        require(edgeSurfaceCs.Contains("UpdatePointerRim(", StringComparison.Ordinal) &&
+                edgeSurfaceCs.Contains("ClearPointerRim(", StringComparison.Ordinal) &&
+                edgeSurfaceCs.Contains("_counterArcShape", StringComparison.Ordinal) &&
+                edgeSurfaceCs.Contains("_pointerRimVisual", StringComparison.Ordinal) &&
+                edgeSurfaceCs.Contains("GlassEdgePureBaseStops", StringComparison.Ordinal),
+            "ThemeEdgeSurface 缺少纯晶白零泛黑基底、双极菲涅尔圆角焦散弧或 120Hz 鼠标跟随流光边缘。");
+
+        require(!mainXaml.Contains("#14000000", StringComparison.OrdinalIgnoreCase) &&
+                !mainXaml.Contains("#22000000", StringComparison.OrdinalIgnoreCase),
+            "MainWindow.xaml 的 CompactLiquidSheen 仍残留会导致边缘泛黑的黑色渐变色标。");
+
+        require(freeGridLayoutCs.Contains("ElementSlotResolver", StringComparison.Ordinal) &&
+                freeGridReorderCs.Contains("_resolvedSlotByRelativeName", StringComparison.Ordinal) &&
+                freeGridReorderCs.Contains("RebuildResolvedSlotLookup(", StringComparison.Ordinal) &&
+                freeGridReorderCs.Contains("ResolveFreeGridElementSlotForLayout", StringComparison.Ordinal),
+            "FreeSlotGridLayout 缺少按 UIElement 真实身份（RelativeName）解析槽位的机制，排序或筛选后拖拽会导致错位乱跳。");
+
+        require(mainCs.Contains("NativeMethods.SWP_NOCOPYBITS", StringComparison.Ordinal) &&
+                transCs.Contains("NativeMethods.DwmFlush()", StringComparison.Ordinal) &&
+                styleCs.Contains("ResetCompactHoverSpringToRestIfIdle(", StringComparison.Ordinal),
+            "悬停展开缺少 SWP_NOCOPYBITS、DwmFlush 预提交护航或紧凑态悬停弹簧防抖锁。");
+
+        // 7. End-to-end 46-item polish contracts (ACP .lnk resolution, straight-alpha icon fix,
+        //    8-dir resize layout sync, zero-leak hover reset, clamped spring, Todo Enter commit, 2D arrow nav)
+        string sortOrderCs = File.ReadAllText(Path.Combine(srcRoot, "Core", "OrganizerSortOrder.cs"));
+        string canvasResizeCs = File.ReadAllText(Path.Combine(srcRoot, "MainWindow.CanvasResize.cs"));
+        string keyboardCs = File.ReadAllText(Path.Combine(srcRoot, "MainWindow.KeyboardFilter.cs"));
+        string dragDropCs = File.ReadAllText(Path.Combine(srcRoot, "MainWindow.ItemDragAndDrop.cs"));
+        string selectionCs = File.ReadAllText(Path.Combine(srcRoot, "MainWindow.ItemSelection.cs"));
+        string todoXaml = File.ReadAllText(Path.Combine(srcRoot, "TodoWindow.xaml"));
+        string noteTitleCs = File.ReadAllText(Path.Combine(srcRoot, "MainWindow.OrganizerTitle.cs"));
+
+        require(sortOrderCs.Contains("MultiByteToWideChar", StringComparison.Ordinal) &&
+                !sortOrderCs.Contains("Encoding.Default.GetString", StringComparison.Ordinal),
+            "OrganizerSortOrder 必须通过 Win32 CP_ACP 解析 ANSI .lnk 路径，避免 .NET 10 UTF-8 Encoding.Default 造成中文路径乱码。");
+        require(iconCacheCs.Contains("PremultiplyAlpha(pixels)", StringComparison.Ordinal) &&
+                iconCacheCs.Contains("StrictUtf8", StringComparison.Ordinal),
+            "IconCacheService 必须对 IShellItemImageFactory 输出执行 PremultiplyAlpha 并支持 UTF-8 .url 路径解析，避免文件夹/文档泛白光晕或丢图。");
+        require(canvasResizeCs.Contains("WindowRoot.UpdateLayout();", StringComparison.Ordinal) &&
+                mainCs.Contains("ExpandedContentLayer.SizeChanged += SurfaceHost_SizeChanged;", StringComparison.Ordinal),
+            "8 向画布缩放收尾缺少同步布局刷新或 ExpandedContentLayer.SizeChanged 裁剪订阅。");
+        require(styleCs.Contains("ForceResetCompactHoverVisuals()", StringComparison.Ordinal) &&
+                mainCs.Contains("ExpandedView_PointerExited", StringComparison.Ordinal) &&
+                transCs.Contains("Clamp(props.Progress, 0.0, 1.0)", StringComparison.Ordinal),
+            "缺少无条件悬停弹簧复位、展开态指针离窗流光熄灭或 DWM 表达式进度钳位。");
+        require(keyboardCs.Contains("MoveKeyboardFocusDirectional(", StringComparison.Ordinal) &&
+                dragDropCs.Contains("ClearPendingExternalDropSlot();", StringComparison.Ordinal) &&
+                selectionCs.Contains("UpdateExpandedTopOverlayOffsets()", StringComparison.Ordinal) &&
+                todoXaml.Contains("UpdateSourceTrigger=PropertyChanged", StringComparison.Ordinal) &&
+                noteTitleCs.Contains("ExpandedNameEditorCapsule.Visibility = Visibility.Visible;", StringComparison.Ordinal),
+            "缺少 2D 自由网格方向键导航、外部拖入 finally 落格清理、过滤栏/多选徽章避让、待办回车即时绑定更新或内联标题编辑高对比度磨砂胶囊。");
     }
 }

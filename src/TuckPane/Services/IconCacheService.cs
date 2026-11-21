@@ -14,9 +14,11 @@ namespace TuckPane.Services;
 public sealed class IconCacheService
 {
     private const int JumboSize = 256;
+    private const int ExtraLargeSize = 48;
     private const int FallbackSize = 32;
+    private const int ShIlExtraLarge = 2;
     private const int MaximumShortcutIconDepth = 4;
-    private const string CacheVersion = "v8-resource-icon-bounds";
+    private const string CacheVersion = "v9-premul-utf8-url-retina";
 
     internal const int MaximumMemoryCachedIcons = 2048;
     internal const int MaximumCachedIcons = 4096;
@@ -105,6 +107,225 @@ public sealed class IconCacheService
 
     internal Task<BitmapImage?> GetDockIconAsync(string path, bool refresh = false) =>
         GetIconCoreAsync(path, refresh, dockPresentation: true);
+
+    internal bool TryGetCachedCompactPreviewIcon(string path, int physicalPixelSize, out BitmapImage? image)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            image = null;
+            return false;
+        }
+        int targetPx = NormalizeCompactPreviewPixelSize(physicalPixelSize);
+        string key = Path.GetFullPath(path);
+        string memoryKey = $"{key}|compact-px={targetPx}";
+        return TryGetMemoryCached(memoryKey, requiredIdentity: null, out image);
+    }
+
+    internal async Task<BitmapImage?> GetCompactPreviewIconAsync(string path, int physicalPixelSize, bool refresh = false)
+    {
+        int targetPx = NormalizeCompactPreviewPixelSize(physicalPixelSize);
+        string key = Path.GetFullPath(path);
+        string memoryKey = $"{key}|compact-px={targetPx}";
+        if (!refresh && TryGetMemoryCached(memoryKey, requiredIdentity: null, out BitmapImage? fastHit))
+        {
+            return fastHit;
+        }
+
+        string identity = await Task.Run(() =>
+        {
+            EnsurePathsCreated();
+            return BuildCacheIdentity(key);
+        });
+        string cacheIdentity = $"{identity}|compact-px={targetPx}";
+        if (TryGetMemoryCached(memoryKey, cacheIdentity, out BitmapImage? verifiedHit))
+        {
+            return verifiedHit;
+        }
+
+        string cachePath = Path.Combine(AppPaths.IconCacheRoot, $"{Hash(identity)}.png");
+        byte[]? pngBytes = await ReadOrCreateCacheBytesAsync(key, cachePath, dockPresentation: false);
+        if (pngBytes is not { Length: > 0 }) return null;
+
+        SupersampledPng? supersampled = await Task.Run(() => TrySupersampleCompactPngAsync(pngBytes, targetPx));
+
+        try
+        {
+            byte[] decodeBytes = supersampled is { Bytes.Length: > 0 } ? supersampled.Value.Bytes : pngBytes;
+            using var memoryStream = new MemoryStream(decodeBytes, writable: false);
+            using IRandomAccessStream randomAccess = memoryStream.AsRandomAccessStream();
+            var image = new BitmapImage
+            {
+                DecodePixelType = DecodePixelType.Physical
+            };
+            if (supersampled is { Width: > 0, Height: > 0 } sized)
+            {
+                image.DecodePixelWidth = sized.Width;
+                image.DecodePixelHeight = sized.Height;
+            }
+            else
+            {
+                image.DecodePixelWidth = targetPx;
+            }
+            await image.SetSourceAsync(randomAccess);
+            StoreMemoryCached(memoryKey, cacheIdentity, image);
+            return image;
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Error($"紧凑预览图标缓存读取失败：{cachePath}", ex);
+            return null;
+        }
+    }
+
+    internal static int NormalizeCompactPreviewPixelSize(int physicalPixelSize) =>
+        Math.Clamp(physicalPixelSize, 12, 128);
+
+    private readonly record struct SupersampledPng(byte[] Bytes, int Width, int Height);
+
+    private static async Task<SupersampledPng?> TrySupersampleCompactPngAsync(byte[] sourcePngBytes, int targetPx)
+    {
+        try
+        {
+            using var inputStream = new InMemoryRandomAccessStream();
+            await inputStream.WriteAsync(sourcePngBytes.AsBuffer()).AsTask().ConfigureAwait(false);
+            inputStream.Seek(0);
+
+            BitmapDecoder decoder = await BitmapDecoder.CreateAsync(inputStream).AsTask().ConfigureAwait(false);
+            uint srcWidth = decoder.PixelWidth;
+            uint srcHeight = decoder.PixelHeight;
+            if (srcWidth == 0 || srcHeight == 0) return null;
+
+            uint dstWidth;
+            uint dstHeight;
+            if (srcWidth >= srcHeight)
+            {
+                dstWidth = (uint)targetPx;
+                dstHeight = (uint)Math.Max(1, Math.Round((double)srcHeight * targetPx / srcWidth));
+            }
+            else
+            {
+                dstHeight = (uint)targetPx;
+                dstWidth = (uint)Math.Max(1, Math.Round((double)srcWidth * targetPx / srcHeight));
+            }
+
+            if (srcWidth <= dstWidth && srcHeight <= dstHeight)
+            {
+                return new SupersampledPng(sourcePngBytes, (int)srcWidth, (int)srcHeight);
+            }
+
+            var transform = new BitmapTransform
+            {
+                ScaledWidth = dstWidth,
+                ScaledHeight = dstHeight,
+                InterpolationMode = BitmapInterpolationMode.Fant
+            };
+
+            using SoftwareBitmap downsampled = await decoder.GetSoftwareBitmapAsync(
+                BitmapPixelFormat.Bgra8,
+                BitmapAlphaMode.Premultiplied,
+                transform,
+                ExifOrientationMode.RespectExifOrientation,
+                ColorManagementMode.DoNotColorManage).AsTask().ConfigureAwait(false);
+
+            int width = downsampled.PixelWidth;
+            int height = downsampled.PixelHeight;
+            uint byteCount = checked((uint)(width * height * 4));
+            var pixelBuffer = new Windows.Storage.Streams.Buffer(byteCount);
+            downsampled.CopyToBuffer(pixelBuffer);
+            byte[] pixels = pixelBuffer.ToArray();
+
+            ApplyAlphaSafeMicroUnsharpMask(pixels, width, height, strength: 0.20f);
+
+            using var outputStream = new InMemoryRandomAccessStream();
+            using (SoftwareBitmap sharpened = SoftwareBitmap.CreateCopyFromBuffer(
+                pixels.AsBuffer(),
+                BitmapPixelFormat.Bgra8,
+                width,
+                height,
+                BitmapAlphaMode.Premultiplied))
+            {
+                BitmapEncoder encoder = await BitmapEncoder.CreateAsync(BitmapEncoder.PngEncoderId, outputStream).AsTask().ConfigureAwait(false);
+                encoder.SetSoftwareBitmap(sharpened);
+                await encoder.FlushAsync().AsTask().ConfigureAwait(false);
+            }
+
+            outputStream.Seek(0);
+            int encodedLength = checked((int)outputStream.Size);
+            if (encodedLength <= 0) return null;
+            using Stream readStream = outputStream.AsStreamForRead();
+            byte[] encoded = new byte[encodedLength];
+            await readStream.ReadExactlyAsync(encoded).ConfigureAwait(false);
+            return new SupersampledPng(encoded, width, height);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    internal static void ApplyAlphaSafeMicroUnsharpMask(byte[] pixels, int width, int height, float strength = 0.20f)
+    {
+        if (width < 3 || height < 3 || strength <= 0f || pixels.Length < width * height * 4) return;
+        byte[] source = (byte[])pixels.Clone();
+        int stride = width * 4;
+
+        for (int y = 0; y < height; y++)
+        {
+            int yPrev = y > 0 ? y - 1 : 0;
+            int yNext = y + 1 < height ? y + 1 : height - 1;
+            int row = y * stride;
+            int rowPrev = yPrev * stride;
+            int rowNext = yNext * stride;
+
+            for (int x = 0; x < width; x++)
+            {
+                int idx = row + x * 4;
+                int a = source[idx + 3];
+                if (a < 16) continue;
+
+                int xPrev = x > 0 ? x - 1 : 0;
+                int xNext = x + 1 < width ? x + 1 : width - 1;
+
+                int i00 = rowPrev + xPrev * 4;
+                int i01 = rowPrev + x * 4;
+                int i02 = rowPrev + xNext * 4;
+                int i10 = row + xPrev * 4;
+                int i12 = row + xNext * 4;
+                int i20 = rowNext + xPrev * 4;
+                int i21 = rowNext + x * 4;
+                int i22 = rowNext + xNext * 4;
+
+                int sumA =
+                    source[i00 + 3] + (source[i01 + 3] << 1) + source[i02 + 3] +
+                    (source[i10 + 3] << 1) + (a << 2) + (source[i12 + 3] << 1) +
+                    source[i20 + 3] + (source[i21 + 3] << 1) + source[i22 + 3];
+                if (sumA <= 0) continue;
+
+                // Alpha-weighted straight-color neighborhood prevents brightening/darkening halos on transparent silhouettes.
+                float localStrength = strength * (a / 255f);
+                float invAlpha = 255f / a;
+                float invSumA = 255f / sumA;
+                float alphaScale = a / 255f;
+
+                for (int c = 0; c < 3; c++)
+                {
+                    int sumC =
+                        source[i00 + c] + (source[i01 + c] << 1) + source[i02 + c] +
+                        (source[i10 + c] << 1) + (source[idx + c] << 2) + (source[i12 + c] << 1) +
+                        source[i20 + c] + (source[i21 + c] << 1) + source[i22 + c];
+
+                    float straightCenter = source[idx + c] * invAlpha;
+                    float straightBlur = sumC * invSumA;
+                    float delta = straightCenter - straightBlur;
+                    if (MathF.Abs(delta) <= 2.0f) continue;
+
+                    float sharpenedStraight = Math.Clamp(straightCenter + delta * localStrength, 0f, 255f);
+                    int premul = (int)MathF.Round(sharpenedStraight * alphaScale);
+                    pixels[idx + c] = (byte)Math.Clamp(premul, 0, a);
+                }
+            }
+        }
+    }
 
     private async Task<BitmapImage?> GetIconCoreAsync(string path, bool refresh, bool dockPresentation)
     {
@@ -319,11 +540,13 @@ public sealed class IconCacheService
     private static async Task RefreshAsync(string path, string cachePath, bool dockPresentation)
     {
         IconSnapshot? thumbnail = await TryExtractImageThumbnailAsync(path).ConfigureAwait(false);
-        IconSnapshot snapshot = thumbnail ?? await Task.Run(() =>
-        {
-            IconSnapshot shellIcon = ExtractShellIconPixels(path);
-            return dockPresentation ? NormalizeDockIcon(shellIcon) : shellIcon;
-        }).ConfigureAwait(false);
+        IconSnapshot snapshot = thumbnail is not null
+            ? (dockPresentation ? await Task.Run(() => NormalizeDockIcon(thumbnail)).ConfigureAwait(false) : thumbnail)
+            : await Task.Run(() =>
+            {
+                IconSnapshot shellIcon = ExtractShellIconPixels(path);
+                return dockPresentation ? NormalizeDockIcon(shellIcon) : shellIcon;
+            }).ConfigureAwait(false);
 
         string directory = Path.GetDirectoryName(cachePath)!;
         Directory.CreateDirectory(directory);
@@ -407,7 +630,21 @@ public sealed class IconCacheService
             extension.Equals(".url", StringComparison.OrdinalIgnoreCase) ||
             IsIconResourceExtension(extension))
         {
-            IntPtr icon = GetPreferredIcon(path, JumboSize, out int sourceSize);
+            if (TryGetShortcutIcon(path, JumboSize, out IntPtr shortcutIcon))
+            {
+                try { return new(DrawIconPixels(shortcutIcon, JumboSize), JumboSize, JumboSize); }
+                finally { _ = NativeMethods.DestroyIcon(shortcutIcon); }
+            }
+            if (TryGetResourceIcon(path, JumboSize, out IntPtr resourceIcon))
+            {
+                try { return new(DrawIconPixels(resourceIcon, JumboSize), JumboSize, JumboSize); }
+                finally { _ = NativeMethods.DestroyIcon(resourceIcon); }
+            }
+            if (TryExtractShellItemImage(path, JumboSize, out IconSnapshot shortcutShellItem))
+            {
+                return PreferJumboIfLowRes(path, shortcutShellItem);
+            }
+            IntPtr icon = GetShellFallbackIcon(path, out int sourceSize);
             try
             {
                 return new(DrawIconPixels(icon, sourceSize), sourceSize, sourceSize);
@@ -419,10 +656,10 @@ public sealed class IconCacheService
         }
         if (TryExtractShellItemImage(path, JumboSize, out IconSnapshot shellItemImage))
         {
-            return shellItemImage;
+            return PreferJumboIfLowRes(path, shellItemImage);
         }
 
-        IntPtr fallbackIcon = GetPreferredIcon(path, JumboSize, out int fallbackSourceSize);
+        IntPtr fallbackIcon = GetShellFallbackIcon(path, out int fallbackSourceSize);
         try
         {
             return new(DrawIconPixels(fallbackIcon, fallbackSourceSize), fallbackSourceSize, fallbackSourceSize);
@@ -431,6 +668,29 @@ public sealed class IconCacheService
         {
             _ = NativeMethods.DestroyIcon(fallbackIcon);
         }
+    }
+
+    private static IconSnapshot PreferJumboIfLowRes(string path, IconSnapshot shellItemImage)
+    {
+        if (shellItemImage.Width >= 64 && shellItemImage.Height >= 64)
+            return shellItemImage;
+
+        if (TryGetJumboIcon(path, out IntPtr jumboIcon))
+        {
+            try
+            {
+                return new(DrawIconPixels(jumboIcon, JumboSize), JumboSize, JumboSize);
+            }
+            catch
+            {
+                // Fall back to the ShellItem image if drawing Jumbo fails.
+            }
+            finally
+            {
+                _ = NativeMethods.DestroyIcon(jumboIcon);
+            }
+        }
+        return shellItemImage;
     }
 
     private static IntPtr GetPreferredIcon(string path, int requestedSize, out int sourceSize)
@@ -445,10 +705,20 @@ public sealed class IconCacheService
             sourceSize = requestedSize;
             return resourceIcon;
         }
+        return GetShellFallbackIcon(path, out sourceSize);
+    }
+
+    private static IntPtr GetShellFallbackIcon(string path, out int sourceSize)
+    {
         if (TryGetJumboIcon(path, out IntPtr jumboIcon))
         {
             sourceSize = JumboSize;
             return jumboIcon;
+        }
+        if (TryGetExtraLargeIcon(path, out IntPtr extraLargeIcon))
+        {
+            sourceSize = ExtraLargeSize;
+            return extraLargeIcon;
         }
         sourceSize = FallbackSize;
         return GetFallbackIcon(path);
@@ -482,11 +752,78 @@ public sealed class IconCacheService
         return false;
     }
 
+    private static readonly UTF8Encoding StrictUtf8 = new(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true);
+
     private static string ReadInternetShortcutValue(string path, string key)
     {
+        if (TryReadInternetShortcutValueManaged(path, key, out string managedValue))
+            return managedValue;
+
         var value = new StringBuilder(32768);
         _ = NativeMethods.GetPrivateProfileString("InternetShortcut", key, string.Empty, value, (uint)value.Capacity, path);
         return value.ToString();
+    }
+
+    private static bool TryReadInternetShortcutValueManaged(string path, string key, out string value)
+    {
+        value = string.Empty;
+        try
+        {
+            if (!File.Exists(path)) return false;
+            var info = new FileInfo(path);
+            if (info.Length <= 0 || info.Length > 128 * 1024) return false;
+            byte[] raw = File.ReadAllBytes(path);
+            string text;
+            if (raw.Length >= 2 && raw[0] == 0xFF && raw[1] == 0xFE)
+            {
+                text = Encoding.Unicode.GetString(raw, 2, raw.Length - 2);
+            }
+            else if (raw.Length >= 2 && raw[0] == 0xFE && raw[1] == 0xFF)
+            {
+                text = Encoding.BigEndianUnicode.GetString(raw, 2, raw.Length - 2);
+            }
+            else if (raw.Length >= 3 && raw[0] == 0xEF && raw[1] == 0xBB && raw[2] == 0xBF)
+            {
+                text = StrictUtf8.GetString(raw, 3, raw.Length - 3);
+            }
+            else
+            {
+                // Strict UTF-8 decoding preserves CJK paths in UTF-8 .url files; invalid UTF-8
+                // throws DecoderFallbackException so legacy ANSI .url files fall back cleanly.
+                text = StrictUtf8.GetString(raw);
+            }
+
+            bool inSection = false;
+            using var reader = new StringReader(text);
+            string? line;
+            while ((line = reader.ReadLine()) is not null)
+            {
+                ReadOnlySpan<char> trimmed = line.AsSpan().Trim();
+                if (trimmed.IsEmpty || trimmed[0] == ';' || trimmed[0] == '#') continue;
+                if (trimmed[0] == '[' && trimmed[^1] == ']')
+                {
+                    ReadOnlySpan<char> section = trimmed[1..^1].Trim();
+                    inSection = section.Equals("InternetShortcut", StringComparison.OrdinalIgnoreCase);
+                    continue;
+                }
+                if (!inSection) continue;
+                int eq = trimmed.IndexOf('=');
+                if (eq <= 0) continue;
+                ReadOnlySpan<char> candidateKey = trimmed[..eq].Trim();
+                if (!candidateKey.Equals(key, StringComparison.OrdinalIgnoreCase)) continue;
+                string parsed = trimmed[(eq + 1)..].Trim().ToString();
+                if (parsed.Length > 0)
+                {
+                    value = parsed;
+                    return true;
+                }
+            }
+        }
+        catch
+        {
+            // Fall back to GetPrivateProfileString for legacy ANSI or inaccessible files.
+        }
+        return false;
     }
 
     private static bool TryGetShortcutIcon(string path, int size, out IntPtr icon)
@@ -643,6 +980,7 @@ public sealed class IconCacheService
             }
 
             RepairMissingAlpha(pixels);
+            PremultiplyAlpha(pixels);
             snapshot = new IconSnapshot(pixels, width, height);
             return true;
         }
@@ -657,7 +995,13 @@ public sealed class IconCacheService
         }
     }
 
-    private static bool TryGetJumboIcon(string path, out IntPtr icon)
+    private static bool TryGetJumboIcon(string path, out IntPtr icon) =>
+        TryGetShellImageListIcon(path, NativeMethods.SHIL_JUMBO, out icon);
+
+    private static bool TryGetExtraLargeIcon(string path, out IntPtr icon) =>
+        TryGetShellImageListIcon(path, ShIlExtraLarge, out icon);
+
+    private static bool TryGetShellImageListIcon(string path, int imageListType, out IntPtr icon)
     {
         icon = IntPtr.Zero;
         var shellInfo = new NativeMethods.SHFILEINFO { DisplayName = string.Empty, TypeName = string.Empty };
@@ -672,7 +1016,7 @@ public sealed class IconCacheService
         if (shellInfo.Icon != IntPtr.Zero) _ = NativeMethods.DestroyIcon(shellInfo.Icon);
 
         Guid interfaceId = typeof(NativeMethods.IImageList).GUID;
-        int hr = NativeMethods.SHGetImageList(NativeMethods.SHIL_JUMBO, ref interfaceId, out NativeMethods.IImageList imageList);
+        int hr = NativeMethods.SHGetImageList(imageListType, ref interfaceId, out NativeMethods.IImageList imageList);
         if (hr < 0) return false;
         try
         {
@@ -759,6 +1103,25 @@ public sealed class IconCacheService
         for (int index = 0; index < pixels.Length; index += 4)
         {
             if (pixels[index] != 0 || pixels[index + 1] != 0 || pixels[index + 2] != 0) pixels[index + 3] = 255;
+        }
+    }
+
+    private static void PremultiplyAlpha(byte[] pixels)
+    {
+        for (int index = 0; index < pixels.Length; index += 4)
+        {
+            int alpha = pixels[index + 3];
+            if (alpha == 255) continue;
+            if (alpha == 0)
+            {
+                pixels[index] = 0;
+                pixels[index + 1] = 0;
+                pixels[index + 2] = 0;
+                continue;
+            }
+            pixels[index] = (byte)((pixels[index] * alpha + 127) / 255);
+            pixels[index + 1] = (byte)((pixels[index + 1] * alpha + 127) / 255);
+            pixels[index + 2] = (byte)((pixels[index + 2] * alpha + 127) / 255);
         }
     }
 

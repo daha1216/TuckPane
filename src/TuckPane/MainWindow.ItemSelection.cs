@@ -18,10 +18,11 @@ public sealed partial class MainWindow
     private static readonly SolidColorBrush ItemSelectedHoverBgBrush = new(Color.FromArgb(92, 0, 120, 212));
     private static readonly SolidColorBrush ItemSelectedPressedBgBrush = new(Color.FromArgb(112, 0, 120, 212));
     private static readonly SolidColorBrush ItemSelectedBorderBrush = new(Color.FromArgb(215, 0, 120, 212));
-    private static readonly SolidColorBrush ItemHoverBorderBrush = new(Color.FromArgb(72, 255, 255, 255));
+    private readonly SolidColorBrush ItemHoverBorderBrush = new(Color.FromArgb(72, 255, 255, 255));
     private static readonly SolidColorBrush ItemTransparentBorderBrush = new(Colors.Transparent);
 
     private readonly ItemSelectionModel _itemSelection = new();
+    private Border? _hoveredItemHost;
     private bool _marqueePressed;
     private bool _marqueeActive;
     private bool _marqueeAdditiveCtrl;
@@ -37,11 +38,12 @@ public sealed partial class MainWindow
 
     internal IReadOnlyList<WidgetItem> GetSelectedItemsInOrder()
     {
-        string[] visibleNames = _items.Select(i => i.RelativeName).ToArray();
+        IReadOnlyList<WidgetItem> visualItems = GetItemsInVisualReadingOrder();
+        string[] visibleNames = visualItems.Select(i => i.RelativeName).ToArray();
         IReadOnlyList<string> ordered = _itemSelection.OrderedSelection(visibleNames);
         if (ordered.Count == 0) return [];
-        var byName = new Dictionary<string, WidgetItem>(_items.Count, StringComparer.OrdinalIgnoreCase);
-        foreach (WidgetItem item in _items)
+        var byName = new Dictionary<string, WidgetItem>(visualItems.Count, StringComparer.OrdinalIgnoreCase);
+        foreach (WidgetItem item in visualItems)
             byName.TryAdd(item.RelativeName, item);
         var result = new List<WidgetItem>(ordered.Count);
         foreach (string name in ordered)
@@ -72,7 +74,10 @@ public sealed partial class MainWindow
     internal void SelectAllVisibleItems()
     {
         if (!_expanded || IsDock || _items.Count == 0) return;
-        _itemSelection.SelectAll(_items.Select(i => i.RelativeName).ToArray());
+        IReadOnlyList<WidgetItem> visualItems = GetItemsInVisualReadingOrder();
+        _itemSelection.SelectAll(visualItems.Select(i => i.RelativeName).ToArray());
+        if (_keyboardFocusedIndex < 0 && visualItems.Count > 0)
+            SyncKeyboardFocusToItem(visualItems[0].RelativeName, updateVisuals: false);
         RefreshItemSelectionVisuals();
     }
 
@@ -89,10 +94,20 @@ public sealed partial class MainWindow
         bool shift = (NativeMethods.GetAsyncKeyState(0x10) & 0x8000) != 0; // VK_SHIFT
         if (!ctrl && !shift) return false;
 
-        int index = IndexOfItem(relativeName);
-        if (index < 0) return false;
-        string[] visibleOrder = _items.Select(i => i.RelativeName).ToArray();
-        _itemSelection.HandleClick(visibleOrder, index, ctrl, shift);
+        IReadOnlyList<WidgetItem> visualItems = GetItemsInVisualReadingOrder();
+        int visualIndex = -1;
+        for (int i = 0; i < visualItems.Count; i++)
+        {
+            if (visualItems[i].RelativeName.Equals(relativeName, StringComparison.OrdinalIgnoreCase))
+            {
+                visualIndex = i;
+                break;
+            }
+        }
+        if (visualIndex < 0) return false;
+        string[] visualOrder = visualItems.Select(i => i.RelativeName).ToArray();
+        _itemSelection.HandleClick(visualOrder, visualIndex, ctrl, shift);
+        SyncKeyboardFocusToItem(relativeName, updateVisuals: false);
         RefreshItemSelectionVisuals();
         return true;
     }
@@ -111,6 +126,7 @@ public sealed partial class MainWindow
         if (!contentPoint.Properties.IsLeftButtonPressed) return false;
         if (contentPoint.Position.Y < 32) return false;
 
+        FocusExpandedItemsForKeyboardInput();
         _marqueePressed = true;
         _marqueeActive = false;
         _marqueePointerId = e.Pointer.PointerId;
@@ -224,19 +240,44 @@ public sealed partial class MainWindow
     private List<MarqueeTargetRect<string>> CaptureMarqueeTargets()
     {
         var targets = new List<MarqueeTargetRect<string>>(_items.Count);
+        double vpLeft = 0, vpTop = 0, vpRight = ExpandedContentLayer.ActualWidth, vpBottom = ExpandedContentLayer.ActualHeight;
+        try
+        {
+            Point vpOrigin = ItemsScrollView.TransformToVisual(ExpandedContentLayer).TransformPoint(new Point(0, 0));
+            double vpWidth = ItemsScrollView.ViewportWidth > 0 ? ItemsScrollView.ViewportWidth : ItemsScrollView.ActualWidth;
+            double vpHeight = ItemsScrollView.ViewportHeight > 0 ? ItemsScrollView.ViewportHeight : ItemsScrollView.ActualHeight;
+            if (vpWidth > 0 && vpHeight > 0)
+            {
+                vpLeft = vpOrigin.X;
+                vpTop = vpOrigin.Y;
+                vpRight = vpOrigin.X + vpWidth;
+                vpBottom = vpOrigin.Y + vpHeight;
+            }
+        }
+        catch
+        {
+            // Fall back to ExpandedContentLayer bounds if ScrollView transform is unavailable.
+        }
+
         for (int index = 0; index < _items.Count; index++)
         {
-            if (ItemsRepeater.TryGetElement(index) is not Border host) continue;
+            if (!TryGetRealizedItemHost(index, out Border host)) continue;
             if (host.ActualWidth <= 0 || host.ActualHeight <= 0) continue;
             try
             {
                 Point origin = host.TransformToVisual(ExpandedContentLayer).TransformPoint(new Point(0, 0));
+                double left = Math.Max(origin.X, vpLeft);
+                double top = Math.Max(origin.Y, vpTop);
+                double right = Math.Min(origin.X + host.ActualWidth, vpRight);
+                double bottom = Math.Min(origin.Y + host.ActualHeight, vpBottom);
+                if (right <= left || bottom <= top) continue;
+
                 var bounds = new NativeMethods.RECT
                 {
-                    Left = (int)Math.Round(origin.X),
-                    Top = (int)Math.Round(origin.Y),
-                    Right = (int)Math.Round(origin.X + host.ActualWidth),
-                    Bottom = (int)Math.Round(origin.Y + host.ActualHeight)
+                    Left = (int)Math.Round(left),
+                    Top = (int)Math.Round(top),
+                    Right = (int)Math.Round(right),
+                    Bottom = (int)Math.Round(bottom)
                 };
                 targets.Add(new MarqueeTargetRect<string>(_items[index].RelativeName, bounds));
             }
@@ -253,6 +294,10 @@ public sealed partial class MainWindow
         List<MarqueeTargetRect<string>> targets = _marqueeSnapshotTargets ?? CaptureMarqueeTargets();
         IReadOnlyList<string> hits = MarqueeSelectionMath.FindIntersectingIds(marqueeRect, targets);
         _itemSelection.ApplyMarquee(hits, _marqueeAdditiveCtrl, _marqueeBaseline);
+        if (hits.Count > 0)
+            SyncKeyboardFocusToItem(hits[^1], updateVisuals: false);
+        else if (_itemSelection.Count == 0)
+            _keyboardFocusedIndex = -1;
         RefreshItemSelectionVisuals();
     }
 
@@ -260,7 +305,7 @@ public sealed partial class MainWindow
     {
         for (int index = 0; index < _items.Count; index++)
         {
-            if (ItemsRepeater.TryGetElement(index) is Border host)
+            if (TryGetRealizedItemHost(index, out Border host))
                 ApplyItemSelectionVisual(host, _items[index].RelativeName);
         }
 
@@ -273,15 +318,41 @@ public sealed partial class MainWindow
         {
             SelectionCountBadge.Visibility = Visibility.Collapsed;
         }
+
+        UpdateExpandedTopOverlayOffsets();
+    }
+
+    private void UpdateExpandedTopOverlayOffsets()
+    {
+        bool bothVisible = ExpandedFilterBar.Visibility == Visibility.Visible &&
+            SelectionCountBadge.Visibility == Visibility.Visible;
+        Thickness targetMargin = bothVisible
+            ? new Thickness(14, 46, 0, 0)
+            : new Thickness(14, 10, 0, 0);
+        if (SelectionCountBadge.Margin != targetMargin)
+            SelectionCountBadge.Margin = targetMargin;
     }
 
     internal void ApplyItemSelectionVisual(Border host, string relativeName)
     {
         bool selected = _itemSelection.Contains(relativeName);
-        if (selected)
+        bool hovered = ReferenceEquals(host, _hoveredItemHost);
+        bool pressedDrag = ReferenceEquals(host, _itemDragHost) && _itemReorderSession is { State: ItemDragState.Pressed };
+        if (selected && !IsDock)
         {
-            host.Background = ItemSelectedBgBrush;
+            host.Background = IsCompactList
+                ? _transparentItemBrush
+                : pressedDrag
+                    ? ItemSelectedPressedBgBrush
+                    : hovered
+                        ? ItemSelectedHoverBgBrush
+                        : ItemSelectedBgBrush;
             host.BorderBrush = ItemSelectedBorderBrush;
+        }
+        else if (hovered && !IsDock && !IsCompactList && !ReferenceEquals(host, _itemDragHost))
+        {
+            host.Background = _hoveredItemBrush;
+            host.BorderBrush = ItemHoverBorderBrush;
         }
         else
         {
@@ -322,25 +393,11 @@ public sealed partial class MainWindow
             .ToArray();
         if (targets.Length == 0) return;
 
-        int deleted = 0;
-        foreach (WidgetItem target in targets)
-        {
-            try
-            {
-                await _catalogController.DeleteFileItemAsync(target);
-                deleted++;
-            }
-            catch (Exception ex)
-            {
-                AppLogger.Error($"批量删除失败：{target.FullPath}", ex);
-            }
-        }
-
         ClearItemSelection();
-        if (deleted > 0) await RefreshCatalogAsync(notifyUnsupported: false);
+        await _catalogController.DeleteFileItemsBatchAsync(targets);
     }
 
-    internal bool TryShowBatchItemContextMenu(FrameworkElement anchor, WidgetItem clickedItem)
+    internal bool TryShowBatchItemContextMenu(FrameworkElement anchor, WidgetItem clickedItem, Point? pointerPoint = null)
     {
         if (!_itemSelection.Contains(clickedItem.RelativeName) || !_itemSelection.HasMultipleSelection)
             return false;
@@ -350,26 +407,47 @@ public sealed partial class MainWindow
             .ToArray();
         if (selected.Length <= 1) return false;
 
-        var menu = new MenuFlyout
+        var copyAll = new MenuFlyoutItem { Text = AppStrings.Format("ContextBatchCopyFormat", selected.Length), Icon = new FontIcon { Glyph = "\uE8C8" } };
+        var cutAll = new MenuFlyoutItem { Text = AppStrings.Format("ContextBatchCutFormat", selected.Length), Icon = new FontIcon { Glyph = "\uE8C6" } };
+        var copyPaths = new MenuFlyoutItem { Text = AppStrings.Get("ContextBatchCopyPaths"), Icon = new FontIcon { Glyph = "\uE71B" } };
+        var deleteAll = new MenuFlyoutItem { Text = AppStrings.Format("ContextBatchDeleteFormat", selected.Length), Icon = new FontIcon { Glyph = "\uE74D" } };
+
+        if (WindowRoot.Resources.TryGetValue("OrganizerMenuItemStyle", out object? styleObj) && styleObj is Style itemStyle)
         {
-            ShouldConstrainToRootBounds = false,
-            MenuFlyoutPresenterStyle = (Style)WindowRoot.Resources["OrganizerMenuPresenterStyle"]
-        };
+            copyAll.Style = itemStyle;
+            cutAll.Style = itemStyle;
+            copyPaths.Style = itemStyle;
+            deleteAll.Style = itemStyle;
+        }
 
-        var copyAll = new MenuFlyoutItem { Text = AppStrings.Format("ContextBatchCopyFormat", selected.Length) };
-        var cutAll = new MenuFlyoutItem { Text = AppStrings.Format("ContextBatchCutFormat", selected.Length) };
-        var copyPaths = new MenuFlyoutItem { Text = AppStrings.Get("ContextBatchCopyPaths") };
-        var deleteAll = new MenuFlyoutItem { Text = AppStrings.Format("ContextBatchDeleteFormat", selected.Length) };
-
-        copyAll.Click += (_, _) => _ = RunSafelyAsync(() => { CopySelectedItemsToClipboard(); return Task.CompletedTask; }, "批量复制失败");
-        cutAll.Click += (_, _) => _ = RunSafelyAsync(() => { CutSelectedItemsToClipboard(); return Task.CompletedTask; }, "批量剪切失败");
+        copyAll.Click += (_, _) => _ = RunSafelyAsync(() =>
+        {
+            CopySelectedItemsToClipboard();
+            ShowExpandedToast(
+                LocalizeToast($"已复制 {selected.Length} 项", $"Copied {selected.Length} items", $"{selected.Length} 件をコピーしました"),
+                InfoBarSeverity.Success);
+            return Task.CompletedTask;
+        }, "批量复制失败");
+        cutAll.Click += (_, _) => _ = RunSafelyAsync(() =>
+        {
+            CutSelectedItemsToClipboard();
+            ShowExpandedToast(
+                LocalizeToast($"已剪切 {selected.Length} 项", $"Cut {selected.Length} items", $"{selected.Length} 件を切り取りました"),
+                InfoBarSeverity.Success);
+            return Task.CompletedTask;
+        }, "批量剪切失败");
         copyPaths.Click += (_, _) => _ = RunSafelyAsync(() =>
         {
             ShellItemCommands.CopyPathsToClipboard(selected.Select(i => i.FullPath));
+            ShowExpandedToast(
+                LocalizeToast($"已复制 {selected.Length} 条路径", $"Copied {selected.Length} paths", $"{selected.Length} 件のパスをコピーしました"),
+                InfoBarSeverity.Success);
             return Task.CompletedTask;
         }, "批量复制路径失败");
         deleteAll.Click += async (_, _) => await RunSafelyAsync(DeleteSelectedItemsAsync, "批量删除失败");
 
+        MenuFlyout menu = CreateOrganizerContextMenu();
+        menu.ShouldConstrainToRootBounds = false;
         menu.Items.Add(copyAll);
         menu.Items.Add(cutAll);
         menu.Items.Add(copyPaths);
@@ -377,10 +455,28 @@ public sealed partial class MainWindow
         menu.Items.Add(deleteAll);
 
         LocalizeContextMenu(menu);
-        menu.Opening += ContextMenu_Opening;
-        menu.Opened += ContextMenu_Opened;
-        menu.Closed += ContextMenu_Closed;
-        menu.ShowAt(anchor);
+        _shellContextMenuOpen = true;
+        PauseOutsideClickForOverlay();
+        menu.Opening += OrganizerMenu_PauseOutsideClick;
+        menu.Closed += (_, _) =>
+        {
+            _shellContextMenuOpen = false;
+            ResumeOutsideClickAfterOverlay();
+        };
+        try
+        {
+            if (pointerPoint is Point pt)
+                menu.ShowAt(anchor, pt);
+            else
+                menu.ShowAt(anchor);
+        }
+        catch (Exception ex)
+        {
+            _shellContextMenuOpen = false;
+            RestoreContextMenuHost();
+            ResumeOutsideClickAfterOverlay();
+            AppLogger.Error("无法打开批量操作菜单。", ex);
+        }
         return true;
     }
 }

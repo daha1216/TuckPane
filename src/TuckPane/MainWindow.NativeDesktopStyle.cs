@@ -28,6 +28,20 @@ public sealed partial class MainWindow
     private static readonly SolidColorBrush CompactNativeHoverBorderBrush = new(Color.FromArgb(0x66, 0x3B, 0x9E, 0xFF));
     private static readonly SolidColorBrush CompactTransparentPlateBrush = new(Colors.Transparent);
 
+    // Pre-allocated instance brushes for adaptive overlays/chrome (mutated in-place, zero hot-path allocations!).
+    private readonly SolidColorBrush _filterBarBgBrush = new(Color.FromArgb(0xDE, 0x1C, 0x20, 0x28));
+    private readonly SolidColorBrush _filterBarBorderBrush = new(Color.FromArgb(0x30, 0xFF, 0xFF, 0xFF));
+    private readonly SolidColorBrush _filterBarTextBrush = new(Colors.White);
+    private readonly SolidColorBrush _filterBarPlaceholderBrush = new(Color.FromArgb(0x99, 0xFF, 0xFF, 0xFF));
+    private readonly SolidColorBrush _toastPillBgBrush = new(Color.FromArgb(0xE6, 0x1C, 0x1F, 0x26));
+    private readonly SolidColorBrush _toastPillBorderBrush = new(Color.FromArgb(0x38, 0xFF, 0xFF, 0xFF));
+    private readonly SolidColorBrush _toastPillTextBrush = new(Colors.White);
+    private readonly SolidColorBrush _collapseRestingPillBrush = new(Color.FromArgb(0x24, 0xFF, 0xFF, 0xFF));
+    private readonly SolidColorBrush _collapseSurfaceBorderBrush = new(Color.FromArgb(0x38, 0xFF, 0xFF, 0xFF));
+    private readonly SolidColorBrush _expandedNameEditorFgBrush = new(Colors.White);
+    private readonly SolidColorBrush _expandedNameEditorBgBrush = new(Color.FromArgb(0xCC, 0x18, 0x1D, 0x24));
+    private readonly SolidColorBrush _expandedNameEditorBorderBrush = new(Color.FromArgb(0x40, 0xFF, 0xFF, 0xFF));
+
     private static LinearGradientBrush CreateVerticalGradientBrush(Color top, Color bottom)
     {
         var brush = new LinearGradientBrush
@@ -51,6 +65,9 @@ public sealed partial class MainWindow
     private SpriteVisual? _compactNameShadowVisual;
     private DropShadow? _compactNameDropShadow;
     private CompositionBrush? _compactNameAlphaMask;
+    private string? _compactNameMaskText;
+    private double _compactNameMaskFontSize;
+    private Vector2 _compactNameMaskSize;
     private bool _compactNameShadowHooked;
 
     private ContainerVisual? _expandedNameShadowRoot;
@@ -168,11 +185,19 @@ public sealed partial class MainWindow
         bool glassStyle = style == CompactVisualStyle.GlassTile;
         bool nativeStyle = style == CompactVisualStyle.NativeDesktop;
         bool folderStyle = CompactVisualStyles.ShowsFolderSilhouette(style);
+        bool edgeGlow = _host.State.GlobalSettings.EdgeGlowEnabled && !highContrast;
+        ThemeValues activeTheme = _host.State.GlobalSettings.GetTheme(OrganizerKinds.ThemeFor(_definition.PlacementMode));
+        bool allowGlassSheen = !highContrast && !activeTheme.FullyTransparent && !activeTheme.SolidColorMode;
 
-        CompactLiquidSheen.Visibility = glassStyle ? Visibility.Visible : Visibility.Collapsed;
+        CompactLiquidSheen.Visibility = glassStyle && allowGlassSheen ? Visibility.Visible : Visibility.Collapsed;
+        CompactLiquidInnerRim.Visibility = Visibility.Collapsed;
+        CompactLiquidSheen.BorderThickness = new Thickness(0);
+        CompactLiquidSheen.Opacity = edgeGlow ? 1.0 : 0.28;
         CompactNativeBadge.Visibility = nativeStyle ? Visibility.Visible : Visibility.Collapsed;
-        CompactEdgeOverlay.Visibility = nativeStyle ? Visibility.Collapsed : Visibility.Visible;
-        CompactEdgeOverlay.Opacity = nativeStyle ? 0.0 : backdropOpacity;
+        CompactNativeInnerRim.Visibility = nativeStyle && edgeGlow ? Visibility.Visible : Visibility.Collapsed;
+        bool showCompactEdge = !nativeStyle && edgeGlow && !activeTheme.FullyTransparent;
+        CompactEdgeOverlay.Visibility = showCompactEdge ? Visibility.Visible : Visibility.Collapsed;
+        CompactEdgeOverlay.Opacity = showCompactEdge ? backdropOpacity : 0.0;
 
         CompactFolderTab.Visibility = folderStyle ? Visibility.Visible : Visibility.Collapsed;
         CompactFolderPocket.Visibility = folderStyle ? Visibility.Visible : Visibility.Collapsed;
@@ -218,15 +243,111 @@ public sealed partial class MainWindow
         CompactNameShadow1.Visibility = Visibility.Collapsed;
         CompactNameShadow2.Visibility = Visibility.Collapsed;
 
-        // Keep expanded liquid glass sheen disabled in high-contrast accessibility mode.
-        ExpandedLiquidSheen.Visibility = highContrast ? Visibility.Collapsed : Visibility.Visible;
+        // Honor EdgeGlowEnabled, FullyTransparent/SolidColorMode, and high-contrast mode;
+        // ThemeEdgeSurface is the single authoritative GPU vector rim (inner XAML rim stays collapsed).
+        bool showExpandedSheen = allowGlassSheen && edgeGlow;
+        ExpandedLiquidSheen.Visibility = showExpandedSheen ? Visibility.Visible : Visibility.Collapsed;
+        ExpandedLiquidInnerRim.Visibility = Visibility.Collapsed;
+        ExpandedLiquidSheen.BorderThickness = new Thickness(0);
+        ExpandedLiquidSheen.Opacity = showExpandedSheen ? 1.0 : 0.0;
+        bool showExpandedEdge = edgeGlow && !activeTheme.FullyTransparent;
+        ExpandedEdgeOverlay.Visibility = showExpandedEdge ? Visibility.Visible : Visibility.Collapsed;
+        if (!showExpandedEdge)
+        {
+            _compactEdgeSurface.ClearPointerRim();
+            _expandedEdgeSurface.ClearPointerRim();
+        }
 
+        UpdateFloatingOverlayPalettes(activeTheme, highContrast);
         EnsureCompactGpuShadowVisuals();
+        RefreshOverlayImplicitAnimations();
+        ResetCompactHoverSpringToRestIfIdle();
         UpdateCompactNameShadowVisual(style, highContrast);
         UpdateExpandedNameShadowVisual(highContrast);
         UpdateCompactTileShadowVisual(style, highContrast);
         UpdateCompactSelectionPlateVisual();
         UpdateAllRealizedItemNameShadows(highContrast);
+    }
+
+    internal void UpdateFloatingOverlayPalettes(ThemeValues theme, bool highContrast)
+    {
+        bool dark = ThemePalette.IsDark(theme);
+        bool lightGlassPill = !dark && !highContrast;
+
+        ItemHoverBorderBrush.Color = dark
+            ? Color.FromArgb(72, 255, 255, 255)
+            : Color.FromArgb(31, 15, 23, 42);
+
+        _filterBarBgBrush.Color = lightGlassPill
+            ? Color.FromArgb(0xEC, 0xF8, 0xFA, 0xFC)
+            : Color.FromArgb(0xDE, 0x1C, 0x20, 0x28);
+        _filterBarBorderBrush.Color = lightGlassPill
+            ? Color.FromArgb(0x1E, 0x00, 0x00, 0x00)
+            : Color.FromArgb(0x30, 0xFF, 0xFF, 0xFF);
+        _filterBarTextBrush.Color = lightGlassPill
+            ? Color.FromArgb(0xFF, 0x1D, 0x1D, 0x1F)
+            : Colors.White;
+        _filterBarPlaceholderBrush.Color = lightGlassPill
+            ? Color.FromArgb(0x99, 0x1D, 0x1D, 0x1F)
+            : Color.FromArgb(0x99, 0xFF, 0xFF, 0xFF);
+
+        ExpandedFilterBar.RequestedTheme = lightGlassPill ? ElementTheme.Light : ElementTheme.Dark;
+        ExpandedFilterBar.Background = _filterBarBgBrush;
+        ExpandedFilterBar.BorderBrush = _filterBarBorderBrush;
+        ExpandedFilterBox.Foreground = _filterBarTextBrush;
+        ExpandedFilterCountText.Foreground = _filterBarPlaceholderBrush;
+        ExpandedFilterSearchIcon.Foreground = _filterBarTextBrush;
+        ExpandedFilterClearIcon.Foreground = _filterBarTextBrush;
+        if (ExpandedFilterBar.Resources.TryGetValue("TextControlForeground", out object? fg) && fg is SolidColorBrush fgBrush)
+            fgBrush.Color = _filterBarTextBrush.Color;
+        if (ExpandedFilterBar.Resources.TryGetValue("TextControlForegroundPointerOver", out object? fgp) && fgp is SolidColorBrush fgpBrush)
+            fgpBrush.Color = _filterBarTextBrush.Color;
+        if (ExpandedFilterBar.Resources.TryGetValue("TextControlForegroundFocused", out object? fgf) && fgf is SolidColorBrush fgfBrush)
+            fgfBrush.Color = _filterBarTextBrush.Color;
+        if (ExpandedFilterBar.Resources.TryGetValue("TextControlPlaceholderForeground", out object? ph) && ph is SolidColorBrush phBrush)
+            phBrush.Color = _filterBarPlaceholderBrush.Color;
+        if (ExpandedFilterBar.Resources.TryGetValue("TextControlPlaceholderForegroundPointerOver", out object? php) && php is SolidColorBrush phpBrush)
+            phpBrush.Color = _filterBarPlaceholderBrush.Color;
+        if (ExpandedFilterBar.Resources.TryGetValue("TextControlPlaceholderForegroundFocused", out object? phf) && phf is SolidColorBrush phfBrush)
+            phfBrush.Color = _filterBarPlaceholderBrush.Color;
+
+        _toastPillBgBrush.Color = lightGlassPill
+            ? Color.FromArgb(0xEC, 0xF8, 0xFA, 0xFC)
+            : Color.FromArgb(0xE6, 0x1C, 0x1F, 0x26);
+        _toastPillBorderBrush.Color = lightGlassPill
+            ? Color.FromArgb(0x1E, 0x00, 0x00, 0x00)
+            : Color.FromArgb(0x38, 0xFF, 0xFF, 0xFF);
+        _toastPillTextBrush.Color = lightGlassPill
+            ? Color.FromArgb(0xFF, 0x1D, 0x1D, 0x1F)
+            : Colors.White;
+        ExpandedToastPill.Background = _toastPillBgBrush;
+        ExpandedToastPill.BorderBrush = _toastPillBorderBrush;
+        ExpandedToastText.Foreground = _toastPillTextBrush;
+
+        _collapseRestingPillBrush.Color = dark
+            ? Color.FromArgb(0x26, 0xFF, 0xFF, 0xFF)
+            : Color.FromArgb(0x18, 0x0F, 0x17, 0x2A);
+        _collapseSurfaceBorderBrush.Color = dark
+            ? Color.FromArgb(0x38, 0xFF, 0xFF, 0xFF)
+            : Color.FromArgb(0x26, 0x0F, 0x17, 0x2A);
+        CollapseButtonRestingPill.Background = _collapseRestingPillBrush;
+        CollapseButtonSurface.BorderBrush = _collapseSurfaceBorderBrush;
+
+        _expandedNameEditorBgBrush.Color = Color.FromArgb(0xCC, 0x18, 0x1D, 0x24);
+        _expandedNameEditorBorderBrush.Color = Color.FromArgb(0x46, 0xFF, 0xFF, 0xFF);
+        _expandedNameEditorFgBrush.Color = Colors.White;
+        ExpandedNameEditorCapsule.Background = _expandedNameEditorBgBrush;
+        ExpandedNameEditorCapsule.BorderBrush = _expandedNameEditorBorderBrush;
+    }
+
+    internal void RefreshOverlayImplicitAnimations()
+    {
+        if (!_overlayImplicitAnimsAttached || _closing) return;
+        bool animate = UseCustomAnimations;
+        ElementCompositionPreview.SetImplicitShowAnimation(ExpandedFilterBar, animate ? _overlayShowAnimGroup : null);
+        ElementCompositionPreview.SetImplicitHideAnimation(ExpandedFilterBar, animate ? _overlayHideAnimGroup : null);
+        ElementCompositionPreview.SetImplicitShowAnimation(SelectionCountBadge, animate ? _overlayShowAnimGroup : null);
+        ElementCompositionPreview.SetImplicitHideAnimation(SelectionCountBadge, animate ? _overlayHideAnimGroup : null);
     }
 
     /// <summary>
@@ -348,7 +469,7 @@ public sealed partial class MainWindow
         CompactLiquidInnerRim.CornerRadius = innerRadius;
         CompactNativeBadge.CornerRadius = radius;
         CompactNativeInnerRim.CornerRadius = innerRadius;
-        CompactFolderPocket.CornerRadius = new CornerRadius(Math.Max(6, compactRadius * 0.85));
+        CompactFolderPocket.CornerRadius = radius;
 
         double w = CompactThumbnailHost.ActualWidth > 1 ? CompactThumbnailHost.ActualWidth : CompactThumbnailHost.Width;
         double h = CompactThumbnailHost.ActualHeight > 1 ? CompactThumbnailHost.ActualHeight : CompactThumbnailHost.Height;
@@ -571,16 +692,16 @@ public sealed partial class MainWindow
 
             _expandedNameDropShadowAura = compositor.CreateDropShadow();
             _expandedNameDropShadowAura.Color = Color.FromArgb(235, 0, 0, 0);
-            _expandedNameDropShadowAura.BlurRadius = 9.0f;
-            _expandedNameDropShadowAura.Offset = new Vector3(0f, 2.5f, 0f);
-            _expandedNameDropShadowAura.Opacity = 0.92f;
+            _expandedNameDropShadowAura.BlurRadius = 5.5f;
+            _expandedNameDropShadowAura.Offset = new Vector3(0f, 1.5f, 0f);
+            _expandedNameDropShadowAura.Opacity = 0.45f;
 
             _expandedNameShadowAuraVisual = compositor.CreateSpriteVisual();
             _expandedNameShadowAuraVisual.Shadow = _expandedNameDropShadowAura;
 
             _expandedNameDropShadow = compositor.CreateDropShadow();
             _expandedNameDropShadow.Color = Color.FromArgb(255, 0, 0, 0);
-            _expandedNameDropShadow.BlurRadius = 2.6f;
+            _expandedNameDropShadow.BlurRadius = 2.0f;
             _expandedNameDropShadow.Offset = new Vector3(0f, 1.0f, 0f);
             _expandedNameDropShadow.Opacity = 1.0f;
 
@@ -778,11 +899,21 @@ public sealed partial class MainWindow
         _compactNameShadowAuraVisual.Size = size;
 
         float opacity = (float)Math.Clamp(CompactVisualStyles.LabelShadowOpacity(style, highContrast), 0.0, 1.0);
-        if (_compactNameAlphaMask is null)
+        string text = CompactNameText.Text;
+        double fontSize = CompactNameText.FontSize;
+        bool contentChanged = !string.Equals(_compactNameMaskText, text, StringComparison.Ordinal) ||
+                              Math.Abs(_compactNameMaskFontSize - fontSize) > 0.01 ||
+                              Math.Abs(_compactNameMaskSize.X - size.X) > 0.25f ||
+                              Math.Abs(_compactNameMaskSize.Y - size.Y) > 0.25f;
+        if (_compactNameAlphaMask is null || contentChanged)
         {
+            // XAML owns TextBlock.GetAlphaMask() brushes; rebind without calling Dispose().
             _compactNameAlphaMask = CompactNameText.GetAlphaMask();
             _compactNameDropShadow.Mask = _compactNameAlphaMask;
             _compactNameDropShadowAura.Mask = _compactNameAlphaMask;
+            _compactNameMaskText = text;
+            _compactNameMaskFontSize = fontSize;
+            _compactNameMaskSize = size;
         }
         _compactNameDropShadow.Opacity = opacity;
         _compactNameDropShadowAura.Opacity = opacity * 0.95f;
@@ -827,6 +958,9 @@ public sealed partial class MainWindow
         }
 
         Vector2 size = new((float)width, (float)height);
+        ExpandedNameShadowHost.Width = size.X;
+        ExpandedNameShadowHost.Height = size.Y;
+        ExpandedNameShadowHost.VerticalAlignment = VerticalAlignment.Center;
         _expandedNameShadowRoot.Size = size;
         _expandedNameShadowVisual.Size = size;
         _expandedNameShadowAuraVisual.Size = size;
@@ -864,7 +998,7 @@ public sealed partial class MainWindow
         }
 
         _expandedNameDropShadow.Opacity = 1.0f;
-        _expandedNameDropShadowAura.Opacity = 0.92f;
+        _expandedNameDropShadowAura.Opacity = 0.45f;
         _expandedNameShadowRoot.IsVisible = true;
     }
 
@@ -895,7 +1029,17 @@ public sealed partial class MainWindow
         double tileW = Math.Max(24, CompactTile.Width);
         double tileH = Math.Max(24, CompactTile.Height);
 
-        double desiredWidth = Math.Min(viewWidth - 2.0, tileW + 8.0);
+        bool labelVisible = CompactNameText.Visibility == Visibility.Visible &&
+                            !string.IsNullOrEmpty(CompactNameText.Text);
+        double measuredLabelWidth = 0.0;
+        if (labelVisible)
+        {
+            double rawW = CompactNameText.ActualWidth > 1
+                ? CompactNameText.ActualWidth
+                : CompactNameText.DesiredSize.Width;
+            measuredLabelWidth = Math.Min(rawW, CompactNameText.MaxWidth > 1 ? CompactNameText.MaxWidth : viewWidth - 4.0);
+        }
+        double desiredWidth = Math.Min(viewWidth - 2.0, Math.Max(tileW + 8.0, measuredLabelWidth + 10.0));
         double plateWidth = desiredWidth;
         double shiftX = 0.0;
 
@@ -914,30 +1058,18 @@ public sealed partial class MainWindow
                 double visibleSpan = visibleRight - visibleLeft;
                 if (visibleSpan > tileW + 1.0)
                 {
+                    plateWidth = Math.Clamp(desiredWidth, tileW + 2.0, visibleSpan);
                     double centerX = viewWidth / 2.0;
-                    double maxLeftHalo = Math.Max(0.0, (centerX - tileW / 2.0) - visibleLeft);
-                    double maxRightHalo = Math.Max(0.0, visibleRight - (centerX + tileW / 2.0));
-                    double symmetricHalo = Math.Min(4.0, Math.Min(maxLeftHalo, maxRightHalo));
-                    if (symmetricHalo >= 2.0)
-                    {
-                        plateWidth = Math.Min(desiredWidth, tileW + symmetricHalo * 2.0);
-                    }
-                    else
-                    {
-                        plateWidth = Math.Clamp(tileW + 4.0, tileW + 2.0, Math.Min(desiredWidth, visibleSpan));
-                        double naturalLeft = centerX - plateWidth / 2.0;
-                        double naturalRight = centerX + plateWidth / 2.0;
-                        if (naturalRight > visibleRight)
-                            shiftX = visibleRight - naturalRight;
-                        else if (naturalLeft < visibleLeft)
-                            shiftX = visibleLeft - naturalLeft;
-                    }
+                    double naturalLeft = centerX - plateWidth / 2.0;
+                    double naturalRight = centerX + plateWidth / 2.0;
+                    if (naturalRight > visibleRight)
+                        shiftX = visibleRight - naturalRight;
+                    else if (naturalLeft < visibleLeft)
+                        shiftX = visibleLeft - naturalLeft;
                 }
             }
         }
 
-        bool labelVisible = CompactNameText.Visibility == Visibility.Visible &&
-                            !string.IsNullOrEmpty(CompactNameText.Text);
         double rowGap = CompactView.RowDefinitions.Count > 1 && CompactView.RowDefinitions[1].Height.IsAbsolute
             ? CompactView.RowDefinitions[1].Height.Value
             : 4.0;
@@ -1069,11 +1201,8 @@ public sealed partial class MainWindow
         FrameworkElement inactiveHost = folderStyle ? CompactThumbnailHost : CompactTile;
         Visual tileVisual = ElementCompositionPreview.GetElementVisual(springHost);
         Visual inactiveVisual = ElementCompositionPreview.GetElementVisual(inactiveHost);
-        if (inactiveVisual.Scale != Vector3.One)
-        {
-            inactiveVisual.StopAnimation("Scale");
-            inactiveVisual.Scale = Vector3.One;
-        }
+        inactiveVisual.StopAnimation("Scale");
+        inactiveVisual.Scale = Vector3.One;
         Visual iconVisual = ElementCompositionPreview.GetElementVisual(CompactPreviewGrid);
         double w = springHost.ActualWidth > 1 ? springHost.ActualWidth : springHost.Width;
         double h = springHost.ActualHeight > 1 ? springHost.ActualHeight : springHost.Height;
@@ -1123,16 +1252,85 @@ public sealed partial class MainWindow
 
     internal void UpdateCompactSpecularPointer(PointerRoutedEventArgs e)
     {
-        if (!_compactPointerHovered || _compactSpecularBrush is null || _compactSpecularVisual is null) return;
-        if (_host.State.GlobalSettings.CompactVisualStyle != CompactVisualStyle.GlassTile) return;
+        if (!_compactPointerHovered) return;
         double w = CompactThumbnailHost.ActualWidth;
         double h = CompactThumbnailHost.ActualHeight;
         if (w <= 1 || h <= 1) return;
 
         Point pos = e.GetCurrentPoint(CompactThumbnailHost).Position;
+        if (_host.State.GlobalSettings.EdgeGlowEnabled && UseCustomAnimations && !DesktopTypographyService.IsHighContrast())
+        {
+            _compactEdgeSurface.UpdatePointerRim(pos.X, pos.Y);
+        }
+        if (_compactSpecularBrush is null || _compactSpecularVisual is null) return;
+        if (_host.State.GlobalSettings.CompactVisualStyle != CompactVisualStyle.GlassTile) return;
         float nx = (float)Math.Clamp(pos.X / w, 0.05, 0.95);
         float ny = (float)Math.Clamp(pos.Y / h, 0.05, 0.95);
         _compactSpecularBrush.EllipseCenter = new Vector2(nx, ny);
+    }
+
+    internal void ClearCompactSpecularPointer()
+    {
+        if (_compactSpecularVisual is not null && _compactSpecularVisual.Opacity > 0.001f)
+            _compactSpecularVisual.Opacity = 0f;
+        _compactEdgeSurface.ClearPointerRim();
+    }
+
+    internal void UpdateExpandedEdgePointer(PointerRoutedEventArgs e)
+    {
+        if (_closing || !_expanded || _animating) return;
+        if (!_host.State.GlobalSettings.EdgeGlowEnabled || !UseCustomAnimations || DesktopTypographyService.IsHighContrast())
+        {
+            _expandedEdgeSurface.ClearPointerRim();
+            return;
+        }
+        double w = ExpandedEdgeOverlay.ActualWidth;
+        double h = ExpandedEdgeOverlay.ActualHeight;
+        Point pt = e.GetCurrentPoint(ExpandedEdgeOverlay).Position;
+        if (w <= 1 || h <= 1 || pt.X < -8 || pt.Y < -8 || pt.X > w + 8 || pt.Y > h + 8)
+        {
+            _expandedEdgeSurface.ClearPointerRim();
+            return;
+        }
+        _expandedEdgeSurface.UpdatePointerRim(pt.X, pt.Y);
+    }
+
+    internal void ClearExpandedEdgePointer()
+    {
+        _expandedEdgeSurface.ClearPointerRim();
+    }
+
+    internal void ResetCompactHoverSpringToRestIfIdle()
+    {
+        if (_closing || !WindowRoot.IsLoaded || _animating || _compactPointerHovered || _compactPointerPressed)
+            return;
+        Visual thumbVisual = ElementCompositionPreview.GetElementVisual(CompactThumbnailHost);
+        thumbVisual.StopAnimation("Scale");
+        thumbVisual.Scale = Vector3.One;
+        Visual tileVisual = ElementCompositionPreview.GetElementVisual(CompactTile);
+        tileVisual.StopAnimation("Scale");
+        tileVisual.Scale = Vector3.One;
+        Visual iconVisual = ElementCompositionPreview.GetElementVisual(CompactPreviewGrid);
+        iconVisual.StopAnimation("Scale");
+        iconVisual.Scale = Vector3.One;
+    }
+
+    private void ForceResetCompactHoverVisuals()
+    {
+        _compactPointerHovered = false;
+        _compactPointerPressed = false;
+        ClearCompactSpecularPointer();
+        UpdateCompactSelectionPlateVisual();
+        if (_closing || !WindowRoot.IsLoaded) return;
+        Visual thumbVisual = ElementCompositionPreview.GetElementVisual(CompactThumbnailHost);
+        thumbVisual.StopAnimation("Scale");
+        thumbVisual.Scale = Vector3.One;
+        Visual tileVisual = ElementCompositionPreview.GetElementVisual(CompactTile);
+        tileVisual.StopAnimation("Scale");
+        tileVisual.Scale = Vector3.One;
+        Visual iconVisual = ElementCompositionPreview.GetElementVisual(CompactPreviewGrid);
+        iconVisual.StopAnimation("Scale");
+        iconVisual.Scale = Vector3.One;
     }
 
     internal void SetCompactPressVisualState(bool pressed)
@@ -1181,6 +1379,9 @@ public sealed partial class MainWindow
         if (_compactNameDropShadowAura is not null) _compactNameDropShadowAura.Mask = null;
         // XAML owns TextBlock.GetAlphaMask() brushes; detach from DropShadow without calling Dispose().
         _compactNameAlphaMask = null;
+        _compactNameMaskText = null;
+        _compactNameMaskFontSize = 0;
+        _compactNameMaskSize = Vector2.Zero;
         _compactNameShadowAuraVisual?.Dispose();
         _compactNameShadowAuraVisual = null;
         _compactNameDropShadowAura?.Dispose();
@@ -1341,7 +1542,12 @@ public sealed partial class MainWindow
     {
         _compactPointerHovered = false;
         _compactPointerPressed = false;
+        ClearCompactSpecularPointer();
         UpdateCompactSelectionPlateVisual();
+        if (_animating || _expanded)
+        {
+            return;
+        }
         AnimateCompactTileHoverSpring();
     }
 
@@ -1394,8 +1600,20 @@ public sealed partial class MainWindow
         await RunSafelyAsync(async () =>
         {
             int count = await _host.AlignFloatingToDesktopGridAsync(_definition.Id);
-            if (count > 0 && !_closing)
-                ShowMessage(AppStrings.Format("DesktopGridAlignDoneFormat", count), InfoBarSeverity.Success);
+            if (_closing) return;
+            if (count > 0)
+            {
+                string message = AppStrings.Format("DesktopGridAlignDoneFormat", count);
+                if (_expanded)
+                    message += LocalizeToast("（收起后生效）", " (applies on collapse)", "（収納後に反映）");
+                ShowMessage(message, InfoBarSeverity.Success);
+            }
+            else
+            {
+                ShowMessage(
+                    LocalizeToast("当前已在桌面图标网格位置", "Already aligned to desktop icon grid", "すでにデスクトップグリッドに整列済みです"),
+                    InfoBarSeverity.Informational);
+            }
         }, "对齐桌面图标网格失败");
     }
 
