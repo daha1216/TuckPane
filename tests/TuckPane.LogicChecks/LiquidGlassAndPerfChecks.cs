@@ -1,9 +1,12 @@
+using System.Runtime.InteropServices;
 using TuckPane.Core;
 using TuckPane.Services;
 using Microsoft.UI.Text;
 
 internal static class LiquidGlassAndPerfChecks
 {
+    [DllImport("shlwapi.dll", CharSet = CharSet.Unicode, ExactSpelling = true)]
+    private static extern int StrCmpLogicalW(string x, string y);
     internal static Task RunAsync()
     {
         static void Require(bool condition, string message)
@@ -307,12 +310,22 @@ internal static class LiquidGlassAndPerfChecks
             new("Wallpaper Engine.url", "Wallpaper Engine", TuckPane.Models.WidgetItemKind.InternetShortcut, ".url", now, 202)
         };
         IReadOnlyList<string> explorerSorted = OrganizerSortOrder.Sort(mixedGameShortcuts, OrganizerSortCriterion.NameAscending);
+        int cjkOrder = StrCmpLogicalW("鸣潮", "三角洲行动");
+        string firstCjk = cjkOrder <= 0 ? "鸣潮.lnk" : "三角洲行动.lnk";
+        string secondCjk = cjkOrder <= 0 ? "三角洲行动.lnk" : "鸣潮.lnk";
+        IReadOnlyList<string> numericSorted = OrganizerSortOrder.Sort(
+        [
+            new("Item 10.txt", "Item 10", TuckPane.Models.WidgetItemKind.File, ".txt", now, 10),
+            new("Item 2.txt", "Item 2", TuckPane.Models.WidgetItemKind.File, ".txt", now, 2)
+        ], OrganizerSortCriterion.NameAscending);
         require(explorerSorted[0] == "NVIDIA App.lnk" &&
                 explorerSorted[1] == "Steam.lnk" &&
                 explorerSorted[2] == "UU加速器.lnk" &&
                 explorerSorted[3] == "Wallpaper Engine.url" &&
-                explorerSorted[4] == "鸣潮.lnk" &&
-                explorerSorted[5] == "三角洲行动.lnk",
+                explorerSorted[4] == firstCjk &&
+                explorerSorted[5] == secondCjk &&
+                numericSorted[0] == "Item 2.txt" &&
+                numericSorted[1] == "Item 10.txt",
             $"按名称（A→Z）未遵循 Windows 资源管理器 StrCmpLogicalW 中英自然顺序：{string.Join(" -> ", explorerSorted)}");
 
         // 6. Optical Liquid Glass Edge Rim & Pre-Uncloak DComp Commit & Element-Identity FreeGrid Slot Resolution
