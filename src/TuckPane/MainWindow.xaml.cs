@@ -3385,6 +3385,7 @@ public sealed partial class MainWindow : Window
         bounds = DockPhysicalBounds(bounds);
         _animationTrace?.Metrics.RecordWork(AnimationTraceWork.ApplyBounds);
         uint flags = NativeMethods.SWP_NOACTIVATE | NativeMethods.SWP_NOOWNERZORDER |
+            NativeMethods.SWP_NOCOPYBITS |
             (preserveZOrder ? NativeMethods.SWP_NOZORDER : 0) |
             (show ? NativeMethods.SWP_SHOWWINDOW : 0);
         IntPtr insertAfter = preserveZOrder

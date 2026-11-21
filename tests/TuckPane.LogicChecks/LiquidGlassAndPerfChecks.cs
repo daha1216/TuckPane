@@ -290,5 +290,42 @@ internal static class LiquidGlassAndPerfChecks
                 consoleXaml.Contains("Width=\"228\"", StringComparison.Ordinal) &&
                 formXaml.Contains("Width=\"208\"", StringComparison.Ordinal),
             "设置页缺少边缘弧光开关实时联动或 Swiss-Grid 右列对齐规格。");
+
+        // 5. Zero-overlap submenu templates & Windows Explorer StrCmpLogicalW natural mixed sorting
+        require(mainXaml.Contains("x:Key=\"OrganizerMenuItemStyle\"", StringComparison.Ordinal) &&
+                mainXaml.Contains("x:Key=\"OrganizerMenuSubItemStyle\"", StringComparison.Ordinal),
+            "MainWindow.xaml 缺少防止子菜单图标与文字重叠的显式列布局样式。");
+
+        DateTimeOffset now = DateTimeOffset.UtcNow;
+        var mixedGameShortcuts = new SortableItemMetadata[]
+        {
+            new("鸣潮.lnk", "鸣潮", TuckPane.Models.WidgetItemKind.Shortcut, ".lnk", now, 1551),
+            new("三角洲行动.lnk", "三角洲行动", TuckPane.Models.WidgetItemKind.Shortcut, ".lnk", now, 848),
+            new("NVIDIA App.lnk", "NVIDIA App", TuckPane.Models.WidgetItemKind.Shortcut, ".lnk", now, 1430),
+            new("Steam.lnk", "Steam", TuckPane.Models.WidgetItemKind.Shortcut, ".lnk", now, 550),
+            new("UU加速器.lnk", "UU加速器", TuckPane.Models.WidgetItemKind.Shortcut, ".lnk", now, 499),
+            new("Wallpaper Engine.url", "Wallpaper Engine", TuckPane.Models.WidgetItemKind.InternetShortcut, ".url", now, 202)
+        };
+        IReadOnlyList<string> explorerSorted = OrganizerSortOrder.Sort(mixedGameShortcuts, OrganizerSortCriterion.NameAscending);
+        require(explorerSorted[0] == "NVIDIA App.lnk" &&
+                explorerSorted[1] == "Steam.lnk" &&
+                explorerSorted[2] == "UU加速器.lnk" &&
+                explorerSorted[3] == "Wallpaper Engine.url" &&
+                explorerSorted[4] == "鸣潮.lnk" &&
+                explorerSorted[5] == "三角洲行动.lnk",
+            $"按名称（A→Z）未遵循 Windows 资源管理器 StrCmpLogicalW 中英自然顺序：{string.Join(" -> ", explorerSorted)}");
+
+        // 6. Optical Liquid Glass Edge Rim & Pre-Uncloak DComp Commit
+        string edgeSurfaceCs = File.ReadAllText(Path.Combine(srcRoot, "Services", "ThemeEdgeSurface.cs"));
+        require(edgeSurfaceCs.Contains("UpdatePointerRim(", StringComparison.Ordinal) &&
+                edgeSurfaceCs.Contains("ClearPointerRim(", StringComparison.Ordinal) &&
+                edgeSurfaceCs.Contains("_counterArcShape", StringComparison.Ordinal) &&
+                edgeSurfaceCs.Contains("_pointerRimVisual", StringComparison.Ordinal),
+            "ThemeEdgeSurface 缺少双极菲涅尔圆角焦散弧或 120Hz 鼠标跟随流光边缘。");
+
+        require(mainCs.Contains("NativeMethods.SWP_NOCOPYBITS", StringComparison.Ordinal) &&
+                transCs.Contains("NativeMethods.DwmFlush()", StringComparison.Ordinal) &&
+                styleCs.Contains("ResetCompactHoverSpringToRestIfIdle(", StringComparison.Ordinal),
+            "悬停展开缺少 SWP_NOCOPYBITS、DwmFlush 预提交护航或紧凑态悬停弹簧防抖锁。");
     }
 }

@@ -137,7 +137,6 @@ public sealed partial class MainWindow
         try
         {
             RefreshPerformanceSettings();
-            if (!isStation && !contained) _desktopLayer?.SetExpanded(true);
 
             NativeMethods.RECT currentBounds = compactOrigin;
             if (!isStation && !contained && !continuingCanvas &&
@@ -214,12 +213,13 @@ public sealed partial class MainWindow
                     Visual expandedVisual = GetExpandedCompositionVisual();
                     Visual compactVisual = GetCompactCompositionVisual();
                     bool showCompactDuringTransition = !contained && (!reducedMotion || ContainsRect(expandedBounds, compactOrigin));
-                    // Cloak the HWND under a 1:1 frozen screen snapshot before relocating/resizing to
-                    // CanvasBounds so DWM never flashes CompactView at the canvas top-left for 1 frame.
+                    // Cloak the HWND under a 1:1 frozen screen snapshot BEFORE mutating GWLP_HWNDPARENT /
+                    // Z-order (_desktopLayer.SetExpanded) or relocating/resizing to CanvasBounds so DWM
+                    // never blinks the compact tile or flashes CompactView at the canvas top-left (0,0).
                     bool shouldCloakForCanvasRelocation = !contained && _runtimeVisible && !RectsEqual(compactOrigin, plan.CanvasBounds);
                     if (shouldCloakForCanvasRelocation)
                     {
-                        CloakForAtomicRelocation(compactOrigin, topmost: false);
+                        CloakForAtomicRelocation(compactOrigin, topmost: true);
                     }
 
                     ExpandedView.Visibility = Visibility.Visible;
@@ -255,6 +255,7 @@ public sealed partial class MainWindow
                     }
                     else
                     {
+                        _desktopLayer?.SetExpanded(true);
                         ApplyBounds(plan.CanvasBounds, show: _runtimeVisible, preserveZOrder: shouldCloakForCanvasRelocation);
                     }
                     _lastTransitionWindowLeft = plan.CanvasBounds.Left;
@@ -265,6 +266,17 @@ public sealed partial class MainWindow
                     UpdateSurfaceClips();
                     await WaitForNextRenderedAsync(transition.Token, PreWarmFrameTimeoutMs);
                     if (!IsCurrent() || transition.IsCancellationRequested) return;
+                }
+                else
+                {
+                    if (contained)
+                    {
+                        _desktopLayer?.SetExpanded(true, stayTopmost: true);
+                    }
+                    else
+                    {
+                        _desktopLayer?.SetExpanded(true);
+                    }
                 }
             }
 
@@ -279,7 +291,7 @@ public sealed partial class MainWindow
                 bool canCloak = _runtimeVisible || contained;
                 if (canCloak)
                 {
-                    CloakForAtomicRelocation(expandedUnionPlan.ExpandedBounds, topmost: contained);
+                    CloakForAtomicRelocation(expandedUnionPlan.ExpandedBounds, topmost: true);
                 }
 
                 _dwmTransitionRunning = false;
@@ -305,6 +317,7 @@ public sealed partial class MainWindow
                 {
                     await WaitForNextRenderedAsync(transition.Token, AtomicRelocationFrameTimeoutMs);
                     if (!IsCurrent() || transition.IsCancellationRequested) return;
+                    _ = NativeMethods.DwmFlush();
                     UncloakAfterAtomicRelocation(flushDwm: true);
                 }
             }
@@ -611,6 +624,7 @@ public sealed partial class MainWindow
             if (NativeMethods.SetWindowCloaked(_hwnd, true))
             {
                 _transitionWindowCloaked = true;
+                _ = NativeMethods.DwmFlush();
             }
             else if (bridgeShown)
             {
@@ -709,6 +723,7 @@ public sealed partial class MainWindow
             {
                 await WaitForNextRenderedAsync(cancellationToken, AtomicRelocationFrameTimeoutMs);
                 if (_closing || cancellationToken.IsCancellationRequested) return;
+                _ = NativeMethods.DwmFlush();
                 UncloakAfterAtomicRelocation(flushDwm: true);
                 cloakedHere = false;
             }
@@ -947,6 +962,8 @@ public sealed partial class MainWindow
             if (_transitionVisualTranslationEnabled)
                 contentVisual.Properties.InsertVector3("Translation", Vector3.Zero);
         }
+        if (opacity <= 0.01f)
+            ClearExpandedEdgePointer();
     }
 
     private void ResetCompactVisualToRest()
@@ -960,6 +977,7 @@ public sealed partial class MainWindow
         compactVisual.IsVisible = true;
         if (_transitionVisualTranslationEnabled)
             compactVisual.Properties.InsertVector3("Translation", Vector3.Zero);
+        ResetCompactHoverSpringToRestIfIdle();
     }
 
     private void CleanupAbortedTransitionVisuals()
@@ -1201,6 +1219,22 @@ public sealed partial class MainWindow
             expandedVisual.Clip = null;
 
         expandedVisual.CenterPoint = plan.ExpandedCenterPointDip;
+        if (!continuingDwmFlight)
+        {
+            float clampedInitial = Math.Clamp(initialProgress, 0f, 1f);
+            float initialExpandedOpacity = Math.Clamp(MathF.Max(0f, clampedInitial - 0.04f) / 0.08f, 0f, 1f);
+            float initialSurfaceOpacity = Math.Clamp(clampedInitial / 0.28f, 0f, 1f);
+            float delay = reducedMotion ? 0.0f : 0.14f;
+            float span = reducedMotion ? 0.28f : 0.44f;
+            float initialContentOpacity = Math.Clamp((clampedInitial - delay) / span, 0f, 1f);
+            expandedVisual.Opacity = initialExpandedOpacity;
+            surfaceVisual.Opacity = initialSurfaceOpacity;
+            sheenVisual.Opacity = initialSurfaceOpacity;
+            edgeVisual.Opacity = initialSurfaceOpacity;
+            contentVisual.Opacity = initialContentOpacity;
+            nameVisual.Opacity = initialContentOpacity;
+            nameShadowVisual.Opacity = initialContentOpacity;
+        }
         expandedVisual.IsVisible = true;
 
         _expandedScaleExpr!.SetScalarParameter("sx", reducedMotion ? 1.0f : plan.StartScale.X);
@@ -1415,7 +1449,12 @@ public sealed partial class MainWindow
             _transitionProgress = target;
             _transitionVelocity = 0;
             if (_transitionWindowCloaked)
+            {
+                await WaitForNextRenderedAsync(cancellationToken, AtomicRelocationFrameTimeoutMs);
+                if (cancellationToken.IsCancellationRequested) return true;
+                _ = NativeMethods.DwmFlush();
                 UncloakAfterAtomicRelocation(flushDwm: true);
+            }
             return true;
         }
 
@@ -1473,6 +1512,19 @@ public sealed partial class MainWindow
         try
         {
             cancellationToken.ThrowIfCancellationRequested();
+            if (_transitionWindowCloaked)
+            {
+                // Commit the bound Progress=initialProgress visual tree (CompactView pixel-snapped at
+                // compactOrigin with Opacity=1/Scale=1, ExpandedView at Opacity=0) to XAML & DWM BEFORE
+                // uncloaking and BEFORE starting the spring, eliminating 1-2 frame top-left (0,0) flashes
+                // and compact tile scale/opacity jumps.
+                props.InsertScalar("Progress", initialProgress);
+                await WaitForNextRenderedAsync(cancellationToken, AtomicRelocationFrameTimeoutMs);
+                cancellationToken.ThrowIfCancellationRequested();
+                _ = NativeMethods.DwmFlush();
+                UncloakAfterAtomicRelocation(flushDwm: true);
+            }
+
             batch = compositor.CreateScopedBatch(CompositionBatchTypes.Animation);
             completedHandler = (_, _) => tcs.TrySetResult(true);
             batch.Completed += completedHandler;
@@ -1485,10 +1537,6 @@ public sealed partial class MainWindow
             long dwmStartedAt = Stopwatch.GetTimestamp();
             props.StartAnimation("Progress", animation);
             batch.End();
-            if (_transitionWindowCloaked)
-            {
-                UncloakAfterAtomicRelocation(flushDwm: true);
-            }
             safetyTimer.Start();
 
             bool completedByBatch = await tcs.Task;
@@ -2254,6 +2302,7 @@ public sealed partial class MainWindow
 
     private void ExpandedView_PointerMoved(object sender, PointerRoutedEventArgs e)
     {
+        UpdateExpandedEdgePointer(e);
         if (_canvasResize is not null)
         {
             e.Handled = true;

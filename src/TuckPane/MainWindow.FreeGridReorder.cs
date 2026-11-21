@@ -702,6 +702,8 @@ public sealed partial class MainWindow
                     }
                 }
 
+                _activeSortCriterion = null;
+                UpdateSortMenuIndicators();
                 if (visualPositions is not null) ApplyFlipFromCapturedPositions(visualPositions);
                 _host.NotifyOrganizerPreviewChanged(_definition.Id);
             }

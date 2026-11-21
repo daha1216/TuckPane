@@ -26,34 +26,199 @@
                 <Setter Property="CornerRadius" Value="10" />
                 <Setter Property="Padding" Value="4" />
             </Style>
-            <Style x:Key="OrganizerHideNameMenuStyle" TargetType="ToggleMenuFlyoutItem"
-                   BasedOn="{StaticResource DefaultToggleMenuFlyoutItemStyle}">
+            <Style x:Key="OrganizerMenuItemStyle" TargetType="MenuFlyoutItem">
+                <Setter Property="Background" Value="Transparent" />
+                <Setter Property="Foreground" Value="#FF1D1D1F" />
+                <Setter Property="Padding" Value="10,6,12,6" />
+                <Setter Property="CornerRadius" Value="6" />
+                <Setter Property="MinHeight" Value="32" />
                 <Setter Property="Template">
                     <Setter.Value>
-                        <ControlTemplate TargetType="ToggleMenuFlyoutItem">
-                            <Grid x:Name="LayoutRoot" Padding="{TemplateBinding Padding}"
-                                  Margin="{StaticResource MenuFlyoutItemMargin}"
+                        <ControlTemplate TargetType="MenuFlyoutItem">
+                            <Grid x:Name="LayoutRoot"
+                                  Padding="10,6,12,6"
+                                  Margin="4,1"
+                                  MinHeight="32"
                                   Background="{TemplateBinding Background}"
                                   BorderBrush="{TemplateBinding BorderBrush}"
                                   BorderThickness="{TemplateBinding BorderThickness}"
-                                  CornerRadius="{TemplateBinding CornerRadius}">
+                                  CornerRadius="6">
                                 <VisualStateManager.VisualStateGroups>
                                     <VisualStateGroup x:Name="CommonStates">
                                         <VisualState x:Name="Normal" />
                                         <VisualState x:Name="PointerOver">
                                             <VisualState.Setters>
-                                                <Setter Target="LayoutRoot.Background" Value="{ThemeResource MenuFlyoutItemBackgroundPointerOver}" />
-                                                <Setter Target="IconGlyph.Foreground" Value="{ThemeResource MenuFlyoutItemForegroundPointerOver}" />
-                                                <Setter Target="TextBlock.Foreground" Value="{ThemeResource MenuFlyoutItemForegroundPointerOver}" />
-                                                <Setter Target="CheckGlyph.Foreground" Value="{ThemeResource MenuFlyoutItemForegroundPointerOver}" />
+                                                <Setter Target="LayoutRoot.Background" Value="#12000000" />
                                             </VisualState.Setters>
                                         </VisualState>
                                         <VisualState x:Name="Pressed">
                                             <VisualState.Setters>
-                                                <Setter Target="LayoutRoot.Background" Value="{ThemeResource MenuFlyoutItemBackgroundPressed}" />
+                                                <Setter Target="LayoutRoot.Background" Value="#1E000000" />
+                                            </VisualState.Setters>
+                                        </VisualState>
+                                        <VisualState x:Name="Disabled">
+                                            <VisualState.Setters>
+                                                <Setter Target="IconContent.Opacity" Value="0.38" />
+                                                <Setter Target="TextBlock.Opacity" Value="0.38" />
+                                                <Setter Target="TrailingGlyph.Opacity" Value="0.38" />
+                                            </VisualState.Setters>
+                                        </VisualState>
+                                    </VisualStateGroup>
+                                </VisualStateManager.VisualStateGroups>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="20" />
+                                    <ColumnDefinition Width="10" />
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <ContentPresenter x:Name="IconContent"
+                                                  Grid.Column="0"
+                                                  Width="16"
+                                                  Height="16"
+                                                  HorizontalAlignment="Center"
+                                                  VerticalAlignment="Center"
+                                                  Content="{TemplateBinding Icon}"
+                                                  Foreground="{TemplateBinding Foreground}"
+                                                  AutomationProperties.AccessibilityView="Raw" />
+                                <TextBlock x:Name="TextBlock"
+                                           Grid.Column="2"
+                                           Text="{TemplateBinding Text}"
+                                           Foreground="{TemplateBinding Foreground}"
+                                           FontFamily="{TemplateBinding FontFamily}"
+                                           CharacterSpacing="{TemplateBinding CharacterSpacing}"
+                                           FontSize="13.5"
+                                           VerticalAlignment="Center"
+                                           TextTrimming="CharacterEllipsis" />
+                                <TextBlock x:Name="TrailingGlyph"
+                                           Grid.Column="3"
+                                           Margin="14,0,0,0"
+                                           Text="{TemplateBinding KeyboardAcceleratorTextOverride}"
+                                           FontSize="12"
+                                           FontWeight="SemiBold"
+                                           Foreground="#FF007AFF"
+                                           VerticalAlignment="Center" />
+                            </Grid>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+            <Style x:Key="OrganizerMenuSubItemStyle" TargetType="MenuFlyoutSubItem">
+                <Setter Property="Background" Value="Transparent" />
+                <Setter Property="Foreground" Value="#FF1D1D1F" />
+                <Setter Property="Padding" Value="10,6,12,6" />
+                <Setter Property="CornerRadius" Value="6" />
+                <Setter Property="MinHeight" Value="32" />
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="MenuFlyoutSubItem">
+                            <Grid x:Name="LayoutRoot"
+                                  Padding="10,6,12,6"
+                                  Margin="4,1"
+                                  MinHeight="32"
+                                  Background="{TemplateBinding Background}"
+                                  BorderBrush="{TemplateBinding BorderBrush}"
+                                  BorderThickness="{TemplateBinding BorderThickness}"
+                                  CornerRadius="6">
+                                <VisualStateManager.VisualStateGroups>
+                                    <VisualStateGroup x:Name="CommonStates">
+                                        <VisualState x:Name="Normal" />
+                                        <VisualState x:Name="PointerOver">
+                                            <VisualState.Setters>
+                                                <Setter Target="LayoutRoot.Background" Value="#12000000" />
+                                            </VisualState.Setters>
+                                        </VisualState>
+                                        <VisualState x:Name="Pressed">
+                                            <VisualState.Setters>
+                                                <Setter Target="LayoutRoot.Background" Value="#1E000000" />
+                                            </VisualState.Setters>
+                                        </VisualState>
+                                        <VisualState x:Name="SubMenuOpened">
+                                            <VisualState.Setters>
+                                                <Setter Target="LayoutRoot.Background" Value="#12000000" />
+                                            </VisualState.Setters>
+                                        </VisualState>
+                                        <VisualState x:Name="Disabled">
+                                            <VisualState.Setters>
+                                                <Setter Target="IconContent.Opacity" Value="0.38" />
+                                                <Setter Target="TextBlock.Opacity" Value="0.38" />
+                                                <Setter Target="SubItemChevron.Opacity" Value="0.38" />
+                                            </VisualState.Setters>
+                                        </VisualState>
+                                    </VisualStateGroup>
+                                </VisualStateManager.VisualStateGroups>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="20" />
+                                    <ColumnDefinition Width="10" />
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <ContentPresenter x:Name="IconContent"
+                                                  Grid.Column="0"
+                                                  Width="16"
+                                                  Height="16"
+                                                  HorizontalAlignment="Center"
+                                                  VerticalAlignment="Center"
+                                                  Content="{TemplateBinding Icon}"
+                                                  Foreground="{TemplateBinding Foreground}"
+                                                  AutomationProperties.AccessibilityView="Raw" />
+                                <TextBlock x:Name="TextBlock"
+                                           Grid.Column="2"
+                                           Text="{TemplateBinding Text}"
+                                           Foreground="{TemplateBinding Foreground}"
+                                           FontFamily="{TemplateBinding FontFamily}"
+                                           CharacterSpacing="{TemplateBinding CharacterSpacing}"
+                                           FontSize="13.5"
+                                           VerticalAlignment="Center"
+                                           TextTrimming="CharacterEllipsis" />
+                                <FontIcon x:Name="SubItemChevron"
+                                          Grid.Column="3"
+                                          Margin="14,0,0,0"
+                                          FontFamily="{ThemeResource SymbolThemeFontFamily}"
+                                          Glyph="&#xE76C;"
+                                          FontSize="10"
+                                          Foreground="#881D1D1F"
+                                          VerticalAlignment="Center"
+                                          AutomationProperties.AccessibilityView="Raw" />
+                            </Grid>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+            <Style x:Key="OrganizerHideNameMenuStyle" TargetType="ToggleMenuFlyoutItem"
+                   BasedOn="{StaticResource DefaultToggleMenuFlyoutItemStyle}">
+                <Setter Property="Background" Value="Transparent" />
+                <Setter Property="Foreground" Value="#FF1D1D1F" />
+                <Setter Property="Padding" Value="10,6,12,6" />
+                <Setter Property="CornerRadius" Value="6" />
+                <Setter Property="MinHeight" Value="32" />
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="ToggleMenuFlyoutItem">
+                            <Grid x:Name="LayoutRoot"
+                                  Padding="10,6,12,6"
+                                  Margin="4,1"
+                                  MinHeight="32"
+                                  Background="{TemplateBinding Background}"
+                                  BorderBrush="{TemplateBinding BorderBrush}"
+                                  BorderThickness="{TemplateBinding BorderThickness}"
+                                  CornerRadius="6">
+                                <VisualStateManager.VisualStateGroups>
+                                    <VisualStateGroup x:Name="CommonStates">
+                                        <VisualState x:Name="Normal" />
+                                        <VisualState x:Name="PointerOver">
+                                            <VisualState.Setters>
+                                                <Setter Target="LayoutRoot.Background" Value="#12000000" />
+                                                <Setter Target="IconGlyph.Foreground" Value="{ThemeResource MenuFlyoutItemForegroundPointerOver}" />
+                                                <Setter Target="TextBlock.Foreground" Value="{ThemeResource MenuFlyoutItemForegroundPointerOver}" />
+                                                <Setter Target="CheckGlyph.Foreground" Value="#FF007AFF" />
+                                            </VisualState.Setters>
+                                        </VisualState>
+                                        <VisualState x:Name="Pressed">
+                                            <VisualState.Setters>
+                                                <Setter Target="LayoutRoot.Background" Value="#1E000000" />
                                                 <Setter Target="IconGlyph.Foreground" Value="{ThemeResource MenuFlyoutItemForegroundPressed}" />
                                                 <Setter Target="TextBlock.Foreground" Value="{ThemeResource MenuFlyoutItemForegroundPressed}" />
-                                                <Setter Target="CheckGlyph.Foreground" Value="{ThemeResource MenuFlyoutItemForegroundPressed}" />
+                                                <Setter Target="CheckGlyph.Foreground" Value="#FF007AFF" />
                                             </VisualState.Setters>
                                         </VisualState>
                                         <VisualState x:Name="Disabled">
@@ -75,30 +240,31 @@
                                     </VisualStateGroup>
                                     <VisualStateGroup x:Name="PaddingSizeStates">
                                         <VisualState x:Name="DefaultPadding" />
-                                        <VisualState x:Name="NarrowPadding">
-                                            <VisualState.Setters>
-                                                <Setter Target="LayoutRoot.Padding" Value="{StaticResource MenuFlyoutItemThemePaddingNarrow}" />
-                                            </VisualState.Setters>
-                                        </VisualState>
+                                        <VisualState x:Name="NarrowPadding" />
                                     </VisualStateGroup>
                                 </VisualStateManager.VisualStateGroups>
                                 <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="20" />
+                                    <ColumnDefinition Width="10" />
                                     <ColumnDefinition Width="*" />
                                     <ColumnDefinition Width="Auto" />
                                 </Grid.ColumnDefinitions>
-                                <FontIcon x:Name="IconGlyph" Grid.Column="0" Width="16" Margin="0,0,12,0"
+                                <FontIcon x:Name="IconGlyph" Grid.Column="0" Width="16" Height="16"
                                           FontFamily="{ThemeResource SymbolThemeFontFamily}" Glyph="&#xED1A;"
                                           FontSize="15" Foreground="{TemplateBinding Foreground}"
-                                          VerticalAlignment="Center" AutomationProperties.AccessibilityView="Raw" />
-                                <TextBlock x:Name="TextBlock" Grid.Column="1" Text="{TemplateBinding Text}"
+                                          HorizontalAlignment="Center" VerticalAlignment="Center"
+                                          AutomationProperties.AccessibilityView="Raw" />
+                                <TextBlock x:Name="TextBlock" Grid.Column="2" Text="{TemplateBinding Text}"
                                            Foreground="{TemplateBinding Foreground}"
+                                           FontFamily="{TemplateBinding FontFamily}"
+                                           CharacterSpacing="{TemplateBinding CharacterSpacing}"
+                                           FontSize="13.5"
                                            TextTrimming="{ThemeResource MenuFlyoutItemTextTrimming}"
                                            HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
-                                           VerticalAlignment="{TemplateBinding VerticalContentAlignment}" />
-                                <FontIcon x:Name="CheckGlyph" Grid.Column="2" Width="16" Margin="16,0,0,0"
+                                           VerticalAlignment="Center" />
+                                <FontIcon x:Name="CheckGlyph" Grid.Column="3" Width="16" Margin="14,0,0,0"
                                           FontFamily="{ThemeResource SymbolThemeFontFamily}" Glyph="&#xE73E;"
-                                          FontSize="12" Foreground="{TemplateBinding Foreground}" Opacity="0"
+                                          FontSize="12" Foreground="#FF007AFF" Opacity="0"
                                           VerticalAlignment="Center" AutomationProperties.AccessibilityView="Raw" />
                             </Grid>
                         </ControlTemplate>
@@ -112,126 +278,126 @@
                 Opened="ContextMenu_Opened"
                 Opening="ContextMenu_Opening"
                 ShouldConstrainToRootBounds="False">
-                <MenuFlyoutSubItem x:Name="AddItemMenuItem" Tag="ContextAddItem" Text="添加项目">
-                    <MenuFlyoutItem Click="AddFileMenuItem_Click" Tag="ContextAddFile" Text="文件…">
+                <MenuFlyoutSubItem x:Name="AddItemMenuItem" Style="{StaticResource OrganizerMenuSubItemStyle}" Tag="ContextAddItem" Text="添加项目">
+                    <MenuFlyoutItem Style="{StaticResource OrganizerMenuItemStyle}" Click="AddFileMenuItem_Click" Tag="ContextAddFile" Text="文件…">
                         <MenuFlyoutItem.Icon>
                             <FontIcon Glyph="&#xE8A5;" />
                         </MenuFlyoutItem.Icon>
                     </MenuFlyoutItem>
-                    <MenuFlyoutItem Click="AddFolderMenuItem_Click" Tag="ContextAddFolder" Text="文件夹…">
+                    <MenuFlyoutItem Style="{StaticResource OrganizerMenuItemStyle}" Click="AddFolderMenuItem_Click" Tag="ContextAddFolder" Text="文件夹…">
                         <MenuFlyoutItem.Icon>
                             <FontIcon Glyph="&#xE8B7;" />
                         </MenuFlyoutItem.Icon>
                     </MenuFlyoutItem>
                 </MenuFlyoutSubItem>
-                <MenuFlyoutItem x:Name="NewFolderMenuItem" Click="NewFolderMenuItem_Click" Tag="ContextNewFolder" Text="新建文件夹">
+                <MenuFlyoutItem x:Name="NewFolderMenuItem" Style="{StaticResource OrganizerMenuItemStyle}" Click="NewFolderMenuItem_Click" Tag="ContextNewFolder" Text="新建文件夹">
                     <MenuFlyoutItem.Icon>
                         <FontIcon Glyph="&#xE8F4;" />
                     </MenuFlyoutItem.Icon>
                 </MenuFlyoutItem>
-                <MenuFlyoutItem x:Name="NewNoteMenuItem" Click="NewNoteMenuItem_Click" Tag="ContextNewNote" Text="新建便签">
+                <MenuFlyoutItem x:Name="NewNoteMenuItem" Style="{StaticResource OrganizerMenuItemStyle}" Click="NewNoteMenuItem_Click" Tag="ContextNewNote" Text="新建便签">
                     <MenuFlyoutItem.Icon>
                         <FontIcon Glyph="&#xE70B;" />
                     </MenuFlyoutItem.Icon>
                 </MenuFlyoutItem>
-                <MenuFlyoutItem x:Name="NewTodoMenuItem" Click="NewTodoMenuItem_Click" Tag="ContextNewTodo" Text="新建待办">
+                <MenuFlyoutItem x:Name="NewTodoMenuItem" Style="{StaticResource OrganizerMenuItemStyle}" Click="NewTodoMenuItem_Click" Tag="ContextNewTodo" Text="新建待办">
                     <MenuFlyoutItem.Icon>
                         <FontIcon Glyph="&#xE762;" />
                     </MenuFlyoutItem.Icon>
                 </MenuFlyoutItem>
-                <MenuFlyoutItem x:Name="PasteMenuItem" Click="PasteMenuItem_Click" IsEnabled="False" Tag="ContextPaste" Text="粘贴">
+                <MenuFlyoutItem x:Name="PasteMenuItem" Style="{StaticResource OrganizerMenuItemStyle}" Click="PasteMenuItem_Click" IsEnabled="False" Tag="ContextPaste" Text="粘贴">
                     <MenuFlyoutItem.Icon>
                         <FontIcon Glyph="&#xE77F;" />
                     </MenuFlyoutItem.Icon>
                 </MenuFlyoutItem>
-                <MenuFlyoutItem x:Name="DeleteWindowMenuItem" Click="DeleteWindowMenuItem_Click" Tag="ContextDeleteWindow" Text="删除">
+                <MenuFlyoutItem x:Name="DeleteWindowMenuItem" Style="{StaticResource OrganizerMenuItemStyle}" Click="DeleteWindowMenuItem_Click" Tag="ContextDeleteWindow" Text="删除">
                     <MenuFlyoutItem.Icon>
                         <FontIcon Glyph="&#xE74D;" />
                     </MenuFlyoutItem.Icon>
                 </MenuFlyoutItem>
-                <MenuFlyoutItem x:Name="OpenStorageMenuItem" Click="OpenStorageMenuItem_Click" Tag="ContextOpenStorage" Text="打开收纳目录">
+                <MenuFlyoutItem x:Name="OpenStorageMenuItem" Style="{StaticResource OrganizerMenuItemStyle}" Click="OpenStorageMenuItem_Click" Tag="ContextOpenStorage" Text="打开收纳目录">
                     <MenuFlyoutItem.Icon>
                         <FontIcon Glyph="&#xE8DA;" />
                     </MenuFlyoutItem.Icon>
                 </MenuFlyoutItem>
-                <MenuFlyoutItem x:Name="RenameMenuItem" Click="RenameMenuItem_Click" Tag="ContextRename" Text="重命名">
+                <MenuFlyoutItem x:Name="RenameMenuItem" Style="{StaticResource OrganizerMenuItemStyle}" Click="RenameMenuItem_Click" Tag="ContextRename" Text="重命名">
                     <MenuFlyoutItem.Icon>
                         <FontIcon Glyph="&#xE8AC;" />
                     </MenuFlyoutItem.Icon>
                 </MenuFlyoutItem>
                 <MenuFlyoutSeparator />
-                <MenuFlyoutItem x:Name="ManageMenuItem" Click="ManageMenuItem_Click" Tag="ContextManage" Text="设置">
+                <MenuFlyoutItem x:Name="ManageMenuItem" Style="{StaticResource OrganizerMenuItemStyle}" Click="ManageMenuItem_Click" Tag="ContextManage" Text="设置">
                     <MenuFlyoutItem.Icon>
                         <FontIcon Glyph="&#xE713;" />
                     </MenuFlyoutItem.Icon>
                 </MenuFlyoutItem>
-                <MenuFlyoutItem x:Name="DuplicateMenuItem" Click="DuplicateWindowMenuItem_Click" Tag="ContextDuplicate" Text="窗口复制">
+                <MenuFlyoutItem x:Name="DuplicateMenuItem" Style="{StaticResource OrganizerMenuItemStyle}" Click="DuplicateWindowMenuItem_Click" Tag="ContextDuplicate" Text="窗口复制">
                     <MenuFlyoutItem.Icon>
                         <FontIcon Glyph="&#xE8C8;" />
                     </MenuFlyoutItem.Icon>
                 </MenuFlyoutItem>
-                <MenuFlyoutItem x:Name="ToggleModeMenuItem" Tag="ContextSwitchPlacement" Click="ToggleModeMenuItem_Click" Text="改为定位">
+                <MenuFlyoutItem x:Name="ToggleModeMenuItem" Style="{StaticResource OrganizerMenuItemStyle}" Tag="ContextSwitchPlacement" Click="ToggleModeMenuItem_Click" Text="改为定位">
                     <MenuFlyoutItem.Icon>
                         <FontIcon Glyph="&#xE718;" />
                     </MenuFlyoutItem.Icon>
                 </MenuFlyoutItem>
-                <MenuFlyoutItem x:Name="ToggleContentModeMenuItem" Tag="ContextSwitchContent" Click="ToggleContentModeMenuItem_Click" Text="改为精简">
+                <MenuFlyoutItem x:Name="ToggleContentModeMenuItem" Style="{StaticResource OrganizerMenuItemStyle}" Tag="ContextSwitchContent" Click="ToggleContentModeMenuItem_Click" Text="改为精简">
                     <MenuFlyoutItem.Icon>
                         <FontIcon Glyph="&#xE8FD;" />
                     </MenuFlyoutItem.Icon>
                 </MenuFlyoutItem>
-                <MenuFlyoutItem x:Name="ToggleExpansionModeMenuItem" Tag="ContextSwitchExpansion" Click="ToggleExpansionModeMenuItem_Click" Text="改为展开">
+                <MenuFlyoutItem x:Name="ToggleExpansionModeMenuItem" Style="{StaticResource OrganizerMenuItemStyle}" Tag="ContextSwitchExpansion" Click="ToggleExpansionModeMenuItem_Click" Text="改为展开">
                     <MenuFlyoutItem.Icon>
                         <FontIcon Glyph="&#xE740;" />
                     </MenuFlyoutItem.Icon>
                 </MenuFlyoutItem>
                 <ToggleMenuFlyoutItem x:Name="HideNameMenuItem" Tag="ContextHideName" Style="{StaticResource OrganizerHideNameMenuStyle}" Click="HideNameMenuItem_Click" Text="隐藏名称" />
-                <MenuFlyoutSubItem x:Name="SortMenuItem" Tag="ContextSort" Text="排序方式">
+                <MenuFlyoutSubItem x:Name="SortMenuItem" Style="{StaticResource OrganizerMenuSubItemStyle}" Tag="ContextSort" Text="排序方式">
                     <MenuFlyoutSubItem.Icon>
                         <FontIcon Glyph="&#xE8CB;" />
                     </MenuFlyoutSubItem.Icon>
-                    <MenuFlyoutItem x:Name="SortByNameAscMenuItem" Click="SortByNameAscMenuItem_Click" Tag="ContextSortNameAsc" Text="按名称（A→Z）">
+                    <MenuFlyoutItem x:Name="SortByNameAscMenuItem" Style="{StaticResource OrganizerMenuItemStyle}" Click="SortByNameAscMenuItem_Click" Tag="ContextSortNameAsc" Text="按名称（A→Z）">
                         <MenuFlyoutItem.Icon>
                             <FontIcon Glyph="&#xE74A;" />
                         </MenuFlyoutItem.Icon>
                     </MenuFlyoutItem>
-                    <MenuFlyoutItem x:Name="SortByNameDescMenuItem" Click="SortByNameDescMenuItem_Click" Tag="ContextSortNameDesc" Text="按名称（Z→A）">
+                    <MenuFlyoutItem x:Name="SortByNameDescMenuItem" Style="{StaticResource OrganizerMenuItemStyle}" Click="SortByNameDescMenuItem_Click" Tag="ContextSortNameDesc" Text="按名称（Z→A）">
                         <MenuFlyoutItem.Icon>
                             <FontIcon Glyph="&#xE74B;" />
                         </MenuFlyoutItem.Icon>
                     </MenuFlyoutItem>
-                    <MenuFlyoutItem x:Name="SortByTypeMenuItem" Click="SortByTypeMenuItem_Click" Tag="ContextSortType" Text="按类型">
+                    <MenuFlyoutItem x:Name="SortByTypeMenuItem" Style="{StaticResource OrganizerMenuItemStyle}" Click="SortByTypeMenuItem_Click" Tag="ContextSortType" Text="按类型">
                         <MenuFlyoutItem.Icon>
                             <FontIcon Glyph="&#xE8EC;" />
                         </MenuFlyoutItem.Icon>
                     </MenuFlyoutItem>
-                    <MenuFlyoutItem x:Name="SortByDateModifiedMenuItem" Click="SortByDateModifiedMenuItem_Click" Tag="ContextSortDateModified" Text="按修改日期">
+                    <MenuFlyoutItem x:Name="SortByDateModifiedMenuItem" Style="{StaticResource OrganizerMenuItemStyle}" Click="SortByDateModifiedMenuItem_Click" Tag="ContextSortDateModified" Text="按修改日期">
                         <MenuFlyoutItem.Icon>
                             <FontIcon Glyph="&#xE823;" />
                         </MenuFlyoutItem.Icon>
                     </MenuFlyoutItem>
-                    <MenuFlyoutItem x:Name="SortBySizeMenuItem" Click="SortBySizeMenuItem_Click" Tag="ContextSortSize" Text="按大小">
+                    <MenuFlyoutItem x:Name="SortBySizeMenuItem" Style="{StaticResource OrganizerMenuItemStyle}" Click="SortBySizeMenuItem_Click" Tag="ContextSortSize" Text="按大小">
                         <MenuFlyoutItem.Icon>
                             <FontIcon Glyph="&#xE9D9;" />
                         </MenuFlyoutItem.Icon>
                     </MenuFlyoutItem>
                 </MenuFlyoutSubItem>
-                <MenuFlyoutItem x:Name="TidyEdgeStackMenuItem" Tag="ContextTidyEdgeStack" Click="TidyEdgeStackMenuItem_Click" Text="整齐贴边排列">
+                <MenuFlyoutItem x:Name="TidyEdgeStackMenuItem" Style="{StaticResource OrganizerMenuItemStyle}" Tag="ContextTidyEdgeStack" Click="TidyEdgeStackMenuItem_Click" Text="整齐贴边排列">
                     <MenuFlyoutItem.Icon>
                         <FontIcon Glyph="&#xE8A9;" />
                     </MenuFlyoutItem.Icon>
                 </MenuFlyoutItem>
-                <MenuFlyoutItem x:Name="AlignToDesktopGridMenuItem" Tag="ContextAlignToDesktopGrid" Click="AlignToDesktopGridMenuItem_Click" Text="对齐桌面图标网格">
+                <MenuFlyoutItem x:Name="AlignToDesktopGridMenuItem" Style="{StaticResource OrganizerMenuItemStyle}" Tag="ContextAlignToDesktopGrid" Click="AlignToDesktopGridMenuItem_Click" Text="对齐桌面图标网格">
                     <MenuFlyoutItem.Icon>
                         <FontIcon Glyph="&#xF0E2;" />
                     </MenuFlyoutItem.Icon>
                 </MenuFlyoutItem>
-                <MenuFlyoutItem x:Name="ImportDesktopSelectionMenuItem" Tag="ContextImportDesktopSelection" Click="ImportDesktopSelectionMenuItem_Click" Text="收入桌面已选项目">
+                <MenuFlyoutItem x:Name="ImportDesktopSelectionMenuItem" Style="{StaticResource OrganizerMenuItemStyle}" Tag="ContextImportDesktopSelection" Click="ImportDesktopSelectionMenuItem_Click" Text="收入桌面已选项目">
                     <MenuFlyoutItem.Icon>
                         <FontIcon Glyph="&#xE896;" />
                     </MenuFlyoutItem.Icon>
                 </MenuFlyoutItem>
-                <MenuFlyoutItem x:Name="CompactGridGapsMenuItem" Tag="ContextCompactGridGaps" Click="CompactGridGapsMenuItem_Click" Text="紧凑排布空位">
+                <MenuFlyoutItem x:Name="CompactGridGapsMenuItem" Style="{StaticResource OrganizerMenuItemStyle}" Tag="ContextCompactGridGaps" Click="CompactGridGapsMenuItem_Click" Text="紧凑排布空位">
                     <MenuFlyoutItem.Icon>
                         <FontIcon Glyph="&#xE73F;" />
                     </MenuFlyoutItem.Icon>

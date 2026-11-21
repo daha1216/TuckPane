@@ -231,8 +231,14 @@ public sealed partial class MainWindow
         ExpandedLiquidInnerRim.Visibility = edgeGlow ? Visibility.Visible : Visibility.Collapsed;
         ExpandedLiquidSheen.BorderThickness = edgeGlow ? new Thickness(0.75) : new Thickness(0);
         ExpandedLiquidSheen.Opacity = edgeGlow ? 1.0 : 0.25;
+        if (!edgeGlow)
+        {
+            _compactEdgeSurface.ClearPointerRim();
+            _expandedEdgeSurface.ClearPointerRim();
+        }
 
         EnsureCompactGpuShadowVisuals();
+        ResetCompactHoverSpringToRestIfIdle();
         UpdateCompactNameShadowVisual(style, highContrast);
         UpdateExpandedNameShadowVisual(highContrast);
         UpdateCompactTileShadowVisual(style, highContrast);
@@ -1144,16 +1150,69 @@ public sealed partial class MainWindow
 
     internal void UpdateCompactSpecularPointer(PointerRoutedEventArgs e)
     {
-        if (!_compactPointerHovered || _compactSpecularBrush is null || _compactSpecularVisual is null) return;
-        if (_host.State.GlobalSettings.CompactVisualStyle != CompactVisualStyle.GlassTile) return;
+        if (!_compactPointerHovered) return;
         double w = CompactThumbnailHost.ActualWidth;
         double h = CompactThumbnailHost.ActualHeight;
         if (w <= 1 || h <= 1) return;
 
         Point pos = e.GetCurrentPoint(CompactThumbnailHost).Position;
+        if (_host.State.GlobalSettings.EdgeGlowEnabled && UseCustomAnimations && !DesktopTypographyService.IsHighContrast())
+        {
+            _compactEdgeSurface.UpdatePointerRim(pos.X, pos.Y);
+        }
+        if (_compactSpecularBrush is null || _compactSpecularVisual is null) return;
+        if (_host.State.GlobalSettings.CompactVisualStyle != CompactVisualStyle.GlassTile) return;
         float nx = (float)Math.Clamp(pos.X / w, 0.05, 0.95);
         float ny = (float)Math.Clamp(pos.Y / h, 0.05, 0.95);
         _compactSpecularBrush.EllipseCenter = new Vector2(nx, ny);
+    }
+
+    internal void ClearCompactSpecularPointer()
+    {
+        if (_compactSpecularVisual is not null && _compactSpecularVisual.Opacity > 0.001f)
+            _compactSpecularVisual.Opacity = 0f;
+        _compactEdgeSurface.ClearPointerRim();
+    }
+
+    internal void UpdateExpandedEdgePointer(PointerRoutedEventArgs e)
+    {
+        if (_closing || !_expanded || _animating) return;
+        if (!_host.State.GlobalSettings.EdgeGlowEnabled || !UseCustomAnimations || DesktopTypographyService.IsHighContrast())
+        {
+            _expandedEdgeSurface.ClearPointerRim();
+            return;
+        }
+        Point pt = e.GetCurrentPoint(ExpandedEdgeOverlay).Position;
+        _expandedEdgeSurface.UpdatePointerRim(pt.X, pt.Y);
+    }
+
+    internal void ClearExpandedEdgePointer()
+    {
+        _expandedEdgeSurface.ClearPointerRim();
+    }
+
+    internal void ResetCompactHoverSpringToRestIfIdle()
+    {
+        if (_closing || !WindowRoot.IsLoaded || _animating || _compactPointerHovered || _compactPointerPressed)
+            return;
+        Visual thumbVisual = ElementCompositionPreview.GetElementVisual(CompactThumbnailHost);
+        if (thumbVisual.Scale != Vector3.One)
+        {
+            thumbVisual.StopAnimation("Scale");
+            thumbVisual.Scale = Vector3.One;
+        }
+        Visual tileVisual = ElementCompositionPreview.GetElementVisual(CompactTile);
+        if (tileVisual.Scale != Vector3.One)
+        {
+            tileVisual.StopAnimation("Scale");
+            tileVisual.Scale = Vector3.One;
+        }
+        Visual iconVisual = ElementCompositionPreview.GetElementVisual(CompactPreviewGrid);
+        if (iconVisual.Scale != Vector3.One)
+        {
+            iconVisual.StopAnimation("Scale");
+            iconVisual.Scale = Vector3.One;
+        }
     }
 
     internal void SetCompactPressVisualState(bool pressed)
@@ -1365,7 +1424,12 @@ public sealed partial class MainWindow
     {
         _compactPointerHovered = false;
         _compactPointerPressed = false;
+        ClearCompactSpecularPointer();
         UpdateCompactSelectionPlateVisual();
+        if (_animating || _expanded)
+        {
+            return;
+        }
         AnimateCompactTileHoverSpring();
     }
 

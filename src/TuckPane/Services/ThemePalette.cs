@@ -34,8 +34,14 @@ internal static class ThemePalette
     internal const float OrganizerGlassOuterEdgeThicknessDip = 1.25f;
     internal const float OrganizerGlassInnerEdgeThicknessDip = .75f;
     internal const float OrganizerGlassInnerEdgeInsetDip = 1.5f;
-    internal const float GlassEdgeHighlightThicknessDip = 2.75f;
-    internal const float GlassEdgeTextureThicknessDip = 1.25f;
+    internal const float GlassEdgeHighlightThicknessDip = 2.15f;
+    internal const float GlassEdgeHighlightInsetDip = .45f;
+    internal const float GlassEdgeCounterArcThicknessDip = 1.65f;
+    internal const float GlassEdgeCounterArcInsetDip = .75f;
+    internal const float GlassEdgeTextureThicknessDip = 1.15f;
+    internal const float GlassEdgeTextureInsetDip = 1.35f;
+    internal const float GlassEdgePointerRimThicknessDip = 2.25f;
+    internal const float GlassEdgePointerRimInsetDip = .5f;
     internal const float GlassEdgeMinimumOpacity = .92f;
 
     private const float GlassBlurAmount = 18f;
@@ -191,25 +197,37 @@ internal static class ThemePalette
 
     internal static IReadOnlyList<(float Offset, Color Color)> GlassEdgeHighlightStops { get; } =
     [
-        (0f, Color.FromArgb(0, 255, 255, 255)),
-        (.18f, Color.FromArgb(28, 255, 255, 255)),
-        (.38f, Color.FromArgb(42, 255, 255, 255)),
-        (.56f, Color.FromArgb(12, 255, 255, 255)),
-        (.82f, Color.FromArgb(4, 255, 255, 255)),
+        (0f, Color.FromArgb(242, 255, 255, 255)),
+        (.16f, Color.FromArgb(176, 255, 255, 255)),
+        (.36f, Color.FromArgb(68, 240, 248, 255)),
+        (.58f, Color.FromArgb(10, 255, 255, 255)),
+        (1f, Color.FromArgb(0, 255, 255, 255))
+    ];
+
+    internal static IReadOnlyList<(float Offset, Color Color)> GlassEdgeCounterArcStops { get; } =
+    [
+        (0f, Color.FromArgb(148, 236, 246, 255)),
+        (.20f, Color.FromArgb(76, 224, 240, 255)),
+        (.48f, Color.FromArgb(16, 255, 255, 255)),
         (1f, Color.FromArgb(0, 255, 255, 255))
     ];
 
     internal static IReadOnlyList<(float Offset, Color Color)> GlassEdgeTextureStops { get; } =
     [
-        (0f, Color.FromArgb(0, 255, 255, 255)),
-        (.08f, Color.FromArgb(6, 255, 255, 255)),
-        (.16f, Color.FromArgb(0, 255, 255, 255)),
-        (.27f, Color.FromArgb(5, 255, 255, 255)),
-        (.39f, Color.FromArgb(0, 255, 255, 255)),
-        (.52f, Color.FromArgb(4, 255, 255, 255)),
-        (.65f, Color.FromArgb(0, 255, 255, 255)),
-        (.78f, Color.FromArgb(5, 255, 255, 255)),
-        (.91f, Color.FromArgb(0, 255, 255, 255)),
+        (0f, Color.FromArgb(96, 255, 255, 255)),
+        (.12f, Color.FromArgb(78, 176, 228, 255)),
+        (.28f, Color.FromArgb(110, 255, 255, 255)),
+        (.48f, Color.FromArgb(18, 15, 23, 42)),
+        (.72f, Color.FromArgb(58, 214, 198, 255)),
+        (.88f, Color.FromArgb(52, 255, 226, 198)),
+        (1f, Color.FromArgb(28, 15, 23, 42))
+    ];
+
+    internal static IReadOnlyList<(float Offset, Color Color)> GlassEdgePointerRimStops { get; } =
+    [
+        (0f, Color.FromArgb(245, 255, 255, 255)),
+        (.26f, Color.FromArgb(168, 212, 238, 255)),
+        (.58f, Color.FromArgb(48, 255, 255, 255)),
         (1f, Color.FromArgb(0, 255, 255, 255))
     ];
 

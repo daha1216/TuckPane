@@ -48,6 +48,18 @@ public sealed partial class MainWindow
         var cut = new MenuFlyoutItem { Text = AppStrings.Get("Cut"), Icon = new FontIcon { Glyph = "\uE8C6" } };
         var delete = new MenuFlyoutItem { Text = AppStrings.Get("Delete"), Icon = new FontIcon { Glyph = "\uE74D" } };
 
+        if (WindowRoot.Resources.TryGetValue("OrganizerMenuItemStyle", out object? styleObj) && styleObj is Style itemStyle)
+        {
+            open.Style = itemStyle;
+            reveal.Style = itemStyle;
+            copyPath.Style = itemStyle;
+            properties.Style = itemStyle;
+            rename.Style = itemStyle;
+            copy.Style = itemStyle;
+            cut.Style = itemStyle;
+            delete.Style = itemStyle;
+        }
+
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetAutomationId(open, "OpenFileMenuItem");
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetAutomationId(reveal, "RevealFileMenuItem");
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetAutomationId(copyPath, "CopyPathMenuItem");
@@ -200,6 +212,8 @@ public sealed partial class MainWindow
             return;
         }
 
+        string[] previousVisibleOrder = _items.Select(i => i.RelativeName).ToArray();
+        int[] previousResolvedSlots = _resolvedItemSlots.ToArray();
         Dictionary<string, Point>? before = UseCustomAnimations && _expanded ? CaptureRealizedItemPositions() : null;
 
         SortableItemMetadata[] metadata = await Task.Run(() =>
@@ -245,9 +259,42 @@ public sealed partial class MainWindow
 
         ApplyCatalogItemsAndRender(reordered, refreshIcons: false);
         SyncResolvedItemSlots();
+        _freeSlotGridLayout.InvalidateSlots();
+        ItemsRepeater.InvalidateMeasure();
+        ItemsRepeater.InvalidateArrange();
         ItemsRepeater.UpdateLayout();
         if (before is not null) ApplyFlipFromCapturedPositions(before);
         _host.NotifyOrganizerPreviewChanged(_definition.Id);
+
+        _activeSortCriterion = criterion;
+        UpdateSortMenuIndicators();
+
+        int changedCount = 0;
+        int compareLength = Math.Max(previousVisibleOrder.Length, _items.Count);
+        for (int index = 0; index < compareLength; index++)
+        {
+            string? oldName = index < previousVisibleOrder.Length ? previousVisibleOrder[index] : null;
+            string? newName = index < _items.Count ? _items[index].RelativeName : null;
+            int oldSlot = index < previousResolvedSlots.Length ? previousResolvedSlots[index] : index;
+            int newSlot = index < _resolvedItemSlots.Length ? _resolvedItemSlots[index] : index;
+            if (!string.Equals(oldName, newName, StringComparison.OrdinalIgnoreCase) || oldSlot != newSlot)
+                changedCount++;
+        }
+
+        if (changedCount == 0)
+        {
+            string unchangedToast = criterion switch
+            {
+                OrganizerSortCriterion.NameAscending => LocalizeToast("当前已是按名称（A→Z）顺序", "Already sorted by name (A→Z)", "すでに名前順（A→Z）です"),
+                OrganizerSortCriterion.NameDescending => LocalizeToast("当前已是按名称（Z→A）顺序", "Already sorted by name (Z→A)", "すでに名前順（Z→A）です"),
+                OrganizerSortCriterion.TypeAscending => LocalizeToast("当前已是按类型顺序", "Already sorted by type", "すでに種類順です"),
+                OrganizerSortCriterion.DateModifiedDescending => LocalizeToast("当前已是按修改日期顺序", "Already sorted by date modified", "すでに更新日時順です"),
+                OrganizerSortCriterion.SizeDescending => LocalizeToast("当前已是按大小顺序", "Already sorted by size", "すでにサイズ順です"),
+                _ => LocalizeToast("当前已是该排序顺序", "Already in this sort order", "すでにこの並び順です")
+            };
+            ShowExpandedToast(unchangedToast, InfoBarSeverity.Informational);
+            return;
+        }
 
         string toastMessage = criterion switch
         {

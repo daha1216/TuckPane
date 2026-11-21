@@ -9,6 +9,8 @@ namespace TuckPane.Services;
 /// </summary>
 internal sealed class TransitionBridgeOverlay : IDisposable
 {
+    private const long WsExTopmost = 0x00000008L;
+
     private IntPtr _hwnd;
     private bool _visible;
     private bool _wasTopmost;
@@ -256,7 +258,9 @@ internal sealed class TransitionBridgeOverlay : IDisposable
                 insertAfter = IntPtr.Zero;
                 skipZOrder = true;
             }
-            else if (aboveTarget == IntPtr.Zero || !NativeMethods.IsWindow(aboveTarget))
+            else if (aboveTarget == IntPtr.Zero ||
+                     !NativeMethods.IsWindow(aboveTarget) ||
+                     (NativeMethods.GetWindowLongPtr(aboveTarget, NativeMethods.GWL_EXSTYLE) & WsExTopmost) != 0)
             {
                 insertAfter = NativeMethods.HWND_TOP;
             }

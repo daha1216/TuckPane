@@ -28,6 +28,7 @@ public sealed partial class MainWindow
     private int _expandedToastVersion;
     private string? _cachedToastFontFamilyName;
     private FontFamily? _cachedToastFontFamily;
+    private OrganizerSortCriterion? _activeSortCriterion;
 
     internal static string LocalizeToast(string zh, string en, string ja) => AppStrings.Language switch
     {
@@ -35,6 +36,20 @@ public sealed partial class MainWindow
         AppLanguage.Japanese => ja,
         _ => zh
     };
+
+    internal void UpdateSortMenuIndicators()
+    {
+        SortByNameAscMenuItem.KeyboardAcceleratorTextOverride =
+            _activeSortCriterion == OrganizerSortCriterion.NameAscending ? "✓" : string.Empty;
+        SortByNameDescMenuItem.KeyboardAcceleratorTextOverride =
+            _activeSortCriterion == OrganizerSortCriterion.NameDescending ? "✓" : string.Empty;
+        SortByTypeMenuItem.KeyboardAcceleratorTextOverride =
+            _activeSortCriterion == OrganizerSortCriterion.TypeAscending ? "✓" : string.Empty;
+        SortByDateModifiedMenuItem.KeyboardAcceleratorTextOverride =
+            _activeSortCriterion == OrganizerSortCriterion.DateModifiedDescending ? "✓" : string.Empty;
+        SortBySizeMenuItem.KeyboardAcceleratorTextOverride =
+            _activeSortCriterion == OrganizerSortCriterion.SizeDescending ? "✓" : string.Empty;
+    }
 
     private void EnsureOrganizerMenuHooksAndIcons()
     {
@@ -49,6 +64,7 @@ public sealed partial class MainWindow
             _definition.ExpandedContentMode == OrganizerExpandedContentMode.Icon ? "\uE8FD" : "\uF0E2");
         bool permanent = _host.GetRequestedExpansionMode(OrganizerId) == OrganizerExpansionMode.AlwaysExpanded;
         SetMenuIconGlyph(ToggleExpansionModeMenuItem, permanent ? "\uE73F" : "\uE740");
+        UpdateSortMenuIndicators();
 
         if (_organizerMenuHooksAttached) return;
         _organizerMenuHooksAttached = true;
@@ -318,6 +334,9 @@ public sealed partial class MainWindow
         if (_catalogController.IsAddingItem || _closing || sender is not FrameworkElement target) return;
         var menu = new MenuFlyout { ShouldConstrainToRootBounds = false,
             MenuFlyoutPresenterStyle = (Style)WindowRoot.Resources["OrganizerMenuPresenterStyle"] };
+        Style? itemStyle = WindowRoot.Resources.TryGetValue("OrganizerMenuItemStyle", out object? styleObj)
+            ? styleObj as Style
+            : null;
         var file = new MenuFlyoutItem
         {
             Text = AppStrings.Get("ContextAddFile"),
@@ -330,6 +349,11 @@ public sealed partial class MainWindow
             Tag = "ContextAddFolder",
             Icon = new FontIcon { Glyph = "\uE8B7" }
         };
+        if (itemStyle is not null)
+        {
+            file.Style = itemStyle;
+            folder.Style = itemStyle;
+        }
         file.Click += AddFileMenuItem_Click;
         folder.Click += AddFolderMenuItem_Click;
         menu.Items.Add(file);
