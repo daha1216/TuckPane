@@ -1,3 +1,13 @@
+## 4.3.3
+
+本版为应用内更新体验热修版，彻底解决共享代理/VPN 出口节点下点击「检查更新」触发 GitHub REST API `403 (rate limit exceeded)` 限流报错的问题（完全保持 `SchemaVersion = 16` 配置向后兼容，应用内更新只检查本 fork `daha1216/TuckPane`）。
+
+- **应用内更新免 403/429 限流兜底通道**：
+  - 当 `api.github.com` 因共享代理出口耗尽未认证速率额度而返回 `403 Forbidden` 或 `429 Too Many Requests` 时，`ReleaseClient` 自动无感切换至免限流网页跳转通道（`https://github.com/daha1216/TuckPane/releases/latest` 302 跳转解析稳定版标签 + `SHA256SUMS.txt` 校验摘要 + `HEAD`/`Range` 资产长度探测 + `raw.githubusercontent.com` 版本说明），完整保留仓库来源校验、稳定语义版本校验、文件大小上限与 SHA-256 双重校验契约。
+  - 修复历史升级残留 `result.json` 在覆盖安装更高版本后仍显示原始英文 `launched: Program files updated...` 的问题，统一显示本地化成功提示。
+  - 新增 `TuckPane.UpdateChecks` 专项自动化验证（覆盖 `403`/`429` 回退、`HEAD` 降级 `Range` 探测，以及跨站重定向与预发布标签安全拦截）。
+- **验证**：Release x64 **0 警告 0 错误**；`TuckPane.UpdateChecks` **5/5**、`TuckPane.LogicChecks --ci-headless` **63/63** 全部通过，并经共享代理实测 `403` 自动回退解析成功。
+
 ## 4.3.2
 
 本版合入全链路精雕与 46 项深度体验打磨 PR（[#18](https://github.com/daha1216/TuckPane/pull/18)），全面升级 **Retina 超清小图标与无泛白边图标管线、纯晶白零泛黑光学液态玻璃弧光、零闪烁收起/悬停展开与多屏混合 DPI 动效、Windows 原生中英自然排序与自由网格全链路交互、设置中心 9 页 Swiss-Grid 统一排版，以及全局搜索/便签/待办核心体验**（完全保持 `SchemaVersion = 16` 配置向后兼容，应用内更新只检查本 fork）。

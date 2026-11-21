@@ -14,6 +14,7 @@ if (args.Length != 1 || args[0] != "--updates")
 (string Name, Func<Task> Run)[] groups =
 [
     ("release selection, asset boundaries and 24-hour policy", () => { CheckReleaseRules(); return Task.CompletedTask; }),
+    ("rate-limit web fallback (403/429) and redirect safety", CheckRateLimitFallback),
     ("download success and failure cleanup", CheckDownloads),
     ("independent configuration backup", () => { CheckBackup(); return Task.CompletedTask; }),
     ("portable replacement, data protection and rollback", () => { CheckPortable(); return Task.CompletedTask; })
@@ -67,6 +68,92 @@ static string ReleaseJson(string? fault = null, bool prerelease = false, bool dr
         case "wrong-architecture": assets[1]["name"] = "TuckPane-3.1.0-win-arm64-portable.zip"; break;
     }
     return JsonSerializer.Serialize(new { tag_name = "v3.1.0", draft, prerelease, body = "Update notes", assets });
+}
+
+static async Task CheckRateLimitFallback()
+{
+    const string tag = "v4.3.3";
+    const string setupName = "TuckPane-4.3.3-win-x64-setup.exe";
+    const string portableName = "TuckPane-4.3.3-win-x64-portable.zip";
+    string setupHash = new('a', 64);
+    string portableHash = new('b', 64);
+    string checksums = $"{setupHash}  {setupName}\n{portableHash}  {portableName}\n";
+    string expectedTagUrl = $"https://github.com/{ReleaseRules.Repository}/releases/tag/{tag}";
+    string setupUrl = ReleaseRules.ExpectedDownloadUrl(tag, setupName);
+    string portableUrl = ReleaseRules.ExpectedDownloadUrl(tag, portableName);
+    string sumsUrl = ReleaseRules.ExpectedDownloadUrl(tag, "SHA256SUMS.txt");
+    string notesUrl = ReleaseRules.ExpectedRawNotesUrl(tag);
+
+    foreach ((HttpStatusCode apiStatus, bool headSupported) in new[]
+    {
+        (HttpStatusCode.Forbidden, true),
+        (HttpStatusCode.TooManyRequests, false)
+    })
+    {
+        using var handler = new StubHandler((request, _) =>
+        {
+            string uri = request.RequestUri!.AbsoluteUri;
+            if (uri == ReleaseRules.LatestUrl)
+                return Task.FromResult(new HttpResponseMessage(apiStatus));
+            if (uri == ReleaseRules.LatestWebUrl)
+            {
+                var redirect = new HttpResponseMessage(HttpStatusCode.Found);
+                redirect.Headers.Location = new Uri(expectedTagUrl);
+                return Task.FromResult(redirect);
+            }
+            if (uri == sumsUrl)
+                return Task.FromResult(Response(new StringContent(checksums, Encoding.UTF8)));
+            if (uri == notesUrl)
+                return Task.FromResult(Response(new StringContent("## 4.3.3\nFallback notes", Encoding.UTF8)));
+            if (uri == setupUrl || uri == portableUrl)
+            {
+                long size = uri == setupUrl ? 380_000_000L : 130_000_000L;
+                if (request.Method == HttpMethod.Head)
+                {
+                    if (!headSupported) return Task.FromResult(new HttpResponseMessage(HttpStatusCode.MethodNotAllowed));
+                    var headOk = new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent([]) };
+                    headOk.Content.Headers.ContentLength = size;
+                    return Task.FromResult(headOk);
+                }
+                if (request.Headers.Range is not null)
+                {
+                    var partial = new HttpResponseMessage(HttpStatusCode.PartialContent) { Content = new ByteArrayContent([0]) };
+                    partial.Content.Headers.ContentRange = new System.Net.Http.Headers.ContentRangeHeaderValue(0, 0, size);
+                    return Task.FromResult(partial);
+                }
+            }
+            throw new InvalidOperationException("Unexpected fallback request: " + request.Method + " " + uri);
+        });
+        using var http = new HttpClient(handler);
+        string json = await new ReleaseClient(http).GetLatestJsonAsync(CancellationToken.None);
+        UpdateRelease installedRelease = ReleaseRules.Parse(json, "4.3.2", installed: true)!;
+        UpdateRelease portableRelease = ReleaseRules.Parse(json, "4.3.2", installed: false)!;
+        Require(installedRelease.Version == "4.3.3" && installedRelease.Package.Size == 380_000_000L && installedRelease.Package.Digest == "sha256:" + setupHash,
+            "Fallback failed to resolve installed package metadata.");
+        Require(portableRelease.Version == "4.3.3" && portableRelease.Package.Size == 130_000_000L && portableRelease.Package.Digest == "sha256:" + portableHash,
+            "Fallback failed to resolve portable package metadata.");
+        Require(installedRelease.Notes.Contains("Fallback notes", StringComparison.Ordinal),
+            "Fallback omitted release notes.");
+    }
+
+    foreach (string badRedirect in new[]
+    {
+        "https://evil.invalid/" + ReleaseRules.Repository + "/releases/tag/v4.3.3",
+        "https://github.com/ch998244353/TuckPane/releases/tag/v4.3.3",
+        $"https://github.com/{ReleaseRules.Repository}/releases/tag/v4.3.3-beta.1"
+    })
+    {
+        using var badHandler = new StubHandler((request, _) =>
+        {
+            if (request.RequestUri!.AbsoluteUri == ReleaseRules.LatestUrl)
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.Forbidden));
+            var redirect = new HttpResponseMessage(HttpStatusCode.Found);
+            redirect.Headers.Location = new Uri(badRedirect);
+            return Task.FromResult(redirect);
+        });
+        using var http = new HttpClient(badHandler);
+        await ThrowsAsync<InvalidDataException>(() => new ReleaseClient(http).GetLatestJsonAsync(CancellationToken.None));
+    }
 }
 
 static async Task CheckDownloads()

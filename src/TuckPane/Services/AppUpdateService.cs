@@ -51,7 +51,12 @@ internal sealed class AppUpdateService : IDisposable
                 UpdateResult? result = JsonSerializer.Deserialize<UpdateResult>(File.ReadAllText(path));
                 if (result is not null)
                 {
-                    PreviousResult = result.Status == "launched" && result.Version == CurrentVersion
+                    bool launchedAtOrPastTarget = result.Status == "launched" &&
+                        (result.Version == CurrentVersion ||
+                         (Version.TryParse(result.Version, out Version? resultVersion) &&
+                          Version.TryParse(CurrentVersion, out Version? currentVersion) &&
+                          currentVersion >= resultVersion));
+                    PreviousResult = launchedAtOrPastTarget
                         ? AppStrings.Get("UpdatePreviousSuccess") : $"{result.Status}: {result.Message}";
                     BackupPath = result.BackupDirectory;
                 }
