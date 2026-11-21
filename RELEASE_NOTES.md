@@ -1,3 +1,22 @@
+## 4.3.2
+
+本版合入全链路精雕与 46 项深度体验打磨 PR（[#18](https://github.com/daha1216/TuckPane/pull/18)），全面升级 **Retina 超清小图标与无泛白边图标管线、纯晶白零泛黑光学液态玻璃弧光、零闪烁收起/悬停展开与多屏混合 DPI 动效、Windows 原生中英自然排序与自由网格全链路交互、设置中心 9 页 Swiss-Grid 统一排版，以及全局搜索/便签/待办核心体验**（完全保持 `SchemaVersion = 16` 配置向后兼容，应用内更新只检查本 fork）。
+
+- **光学液态玻璃、Retina 超清图标与 Dock 精致度**：
+  - **Retina 超清小图标与 Straight-Alpha 根治**：为 `IconCacheService` 补齐 `IShellItemImageFactory` 直通像素预乘（`PremultiplyAlpha` + `v9` 缓存自动刷新），彻底消除文件夹/PDF/文档图标边缘泛白光晕；支持 UTF-8 编码 `.url` 图标路径与 `SHIL_EXTRALARGE` 回退，内置图标提升至 `256px` 物理像素解码，紧凑 2×2 预览、精简列表及嵌套预览全线走高倍率 Fant 超采样，清晰度达到原生桌面水准。
+  - **单一权威光学边缘弧光（零泛黑）**：移除 XAML 与 Composition 双重描边叠加及黑色色标，由 `ThemeEdgeSurface` 单一 GPU 向量层渲染纯晶白基底 + 双极菲涅尔焦散弧 + 120Hz 指针跟随流光（浅色主题增加高亮度冰晶折射微线，纯白/纯黑壁纸同样精致）；离开窗口、Dock 顶沿溢出与 8 向缩放边缘热区均精确联动与熄灭；`FullyTransparent` / `SolidColorMode` 下彻底抑制多余玻璃光泽。
+  - **交互组件与 Dock 细节升级**：展开态内联改名升级高对比磨砂胶囊（`ExpandedNameEditorCapsule`）并收紧大标题投影；精简列表项目补齐 `GetAlphaMask()` 硬件文字阴影与变化重绑；右上角收起 `-` 按钮升级液态玻璃药丸；`DockTipWindow` 同步主题与描边、`DockRunning` 升级双对比运行圆点与防遮挡间距；修复 Dock 弹跳被边缘层裁切、新增按压微反馈，并实现顶部筛选栏与多选徽章动态垂直避让。
+- **零闪烁过渡、8 向缩放与多屏混合 DPI**：
+  - **彻底消除展开/收起瞬移、闪烁与缩放后 1 帧挤压**：为 8 向缩放收尾与中断收起补齐同步 `WindowRoot.UpdateLayout()` 与 `ExpandedContentLayer.SizeChanged` 裁剪订阅；修复展开/收起中途折返 `continuingDwmFlight` 不一致与隐藏态重复 `BitBlt` 导致的闪烁；提升展开弹簧阻尼至 `0.94f` 并对 `ExpressionAnimation` 进度做 `Clamp(0, 1)`，彻底消除边缘弧光越界裁切；无条件重置紧凑态 `1.05×` 悬停弹簧与点击展开按压回弹；收紧常驻展开窗口首次落位消除 24 DIP 边缘跳变；异常中断过渡自动清理桥接层与隐身状态。
+  - **多屏混合 DPI 与 Peek/Win+D 稳态**：信任 `GetDpiForMonitor` 并在 `DisplayPlacementService.Capture` 校验 `MonitorFromWindow == monitor`，修复跨 DPI 缩放漂移；保留 Peek 置顶态并在 `Win+D` 锚定计算中正确映射 `WS_EX_TOPMOST -> HWND_TOP`。
+- **Windows 原生排序、自由网格拖拽与键盘 2D 导航**：
+  - **真·资源管理器排序与中文 `.lnk` 修复**：通过 Win32 `StrCmpLogicalW` 还原 Windows 原生中英自然顺序，采用 `MultiByteToWideChar(CP_ACP)` + `EXP_SZ_LINK` + `ShortcutIntegrityService` 回退修复 `.NET 10` 下中文路径 `.lnk` 目标识别乱码，彻底杜绝把 `.exe` 快捷方式误判为文件夹；排序与重排后自动按视觉阅读序刷新 2×2 预览、Shift 连续选区并按需清除旧排序勾选状态。
+  - **自由网格零错位、零死锁、零脏数据**：按 `UIElement` 真实身份解析槽位，彻底修复排序后拖拽乱跳；新增 `ReceivingDrop` 刷新互斥、仅将外部落格绑定到新增文件并在 `finally` 无条件清理、自动清理已删除项的失效 `ItemSlots`、筛选态禁止内部重排、`CompactGridGapsAsync` 先判变再落盘、拖拽结束释放 `FreeGridOverlayCanvas` 高度消除底部幽灵空白行、补齐 `CommitIosFluidReorderAsync` 异常安全 `finally` 与 OLE 拖出回拖同步、修复精简列表/Dock 拖拽纵向跳变及便携便签/待办改名丢格；支持展开区真正 2D `(row, col)` 方向键导航、批量菜单对齐图标样式与光标定位、单批删除与框选视口裁剪。
+- **设置中心 9 页全面打磨与搜索/便签/待办修复**：
+  - **设置中心 9 页**：自动整理支持草稿感知预览/执行、目标切换保护、中转站全名显示、改名联动、`_autoOrganizeBusy` 并发锁与扩展名/通配符标签；修复全部 18 个滑块 `SmallChange` 键盘步进与 Dock 页 `SetModelValue`；修复主题色块二次点击反选并新增自定义色点指示；管理列表改名/改布局实时刷新且空分类清空选中；快照导入导出切换至 WinAppSDK 原生 Picker（支持管理员权限）；桌面网格对齐反馈归位、热键注册失败非破坏性回滚；修复缓存更新状态矛盾文案并完成更新页 Swiss-Grid 视觉升级与多语言 `FlowWrapPanel` 防裁切换行。
+  - **全局搜索、便签与待办**：修复待办编辑按 `Enter` 静默丢改动（`UpdateSourceTrigger=PropertyChanged` + 即时提交）；修复便签内联改名白字白底并同步 `RequestedTheme` 极性；修复全局搜索首次打开失焦、1 帧入场闪白及全窗 `Esc` / `Ctrl+Shift+C`；修复跨 DPI 便签/待办标题栏点击透传与失焦焦点死循环；消除便签打开 WebView2 白闪并下调最小高度至 `220 DIP`；统一便签 32 DIP 顶栏与 1px 外框、待办本地化占位符与打开自动聚焦。
+- **验证**：Release x64 **0 警告 0 错误**；无头 `TuckPane.LogicChecks` **63/63**、`TuckPane.UpdateChecks` **4/4**、`check-portable-launcher.ps1` **6/6**、Note JS 检查 **3/3** 全部通过，并经用户桌面实机验收通过。
+
 ## 4.3.1
 
 本版合入里程碑级性能与视觉重构 PR（[#17](https://github.com/daha1216/TuckPane/pull/17)），实现 **DWM 合成器级 100% GPU 240Hz 零闪现展开/收起、Apple iOS 26/27 光学液态玻璃动态模糊、全 8 向 240Hz 零抽搐对边锚定拉伸、Windows 11 原生桌面字体与纯白壁纸高对比度清晰度、同心圆角桌面多选，以及设置窗与全局搜索的旗舰级重塑**（完全保持 `SchemaVersion = 16` 配置向后兼容，应用内更新只检查本 fork）。
