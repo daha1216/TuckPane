@@ -85,6 +85,7 @@ public sealed partial class OrganizerSettingsForm : UserControl
         Color card,
         Color rowBorder,
         Color primaryText,
+        Color secondaryText,
         Color inputSurface,
         Color sliderActive,
         Color sliderInactive,
@@ -93,6 +94,7 @@ public sealed partial class OrganizerSettingsForm : UserControl
         SetBrush("FormCardSurfaceBrush", card);
         SetBrush("FormRowBorderBrush", rowBorder);
         SetBrush("FormPrimaryTextBrush", primaryText);
+        SetBrush("FormSecondaryTextBrush", secondaryText);
         SetBrush("FormInputSurfaceBrush", inputSurface);
         SetBrush("FormSliderActiveBrush", sliderActive);
         SetBrush("FormSliderInactiveBrush", sliderInactive);
@@ -284,6 +286,8 @@ public sealed partial class OrganizerSettingsForm : UserControl
         if (compactScaleConstrained)
             CompactScaleSlider.SetModelValue(globalSettings.ResolveCompactScale(placementMode, CompactScaleSlider.Value));
         CompactScaleSlider.IsEnabled = !compactScaleConstrained;
+        CompactScaleContentGrid.Opacity = compactScaleConstrained ? 0.48 : 1.0;
+        ToolTipService.SetToolTip(CompactScaleCard, compactScaleConstrained ? AppStrings.Get("UniformEntrySizes") : null);
         CompactScaleSlider.SetModelValue(Math.Clamp(
             CompactScaleSlider.Value,
             OrganizerLimits.MinimumCompactScale,

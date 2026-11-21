@@ -17,11 +17,24 @@ public sealed partial class ConsoleWindow
         if (CompactHoverMagnificationToggle.IsEnabled) CompactHoverMagnificationToggle.IsOn = _host.State.GlobalSettings.CompactHoverMagnificationEnabled;
         if (DockHoverMagnificationToggle.IsEnabled) DockHoverMagnificationToggle.IsOn = _host.State.GlobalSettings.DockHoverMagnificationEnabled;
         UpdateHoverMagnificationScaleControls();
+        UpdateHoverMagnificationSubRowOpacity();
+        var fontFamily = new Microsoft.UI.Xaml.Media.FontFamily(AppStrings.FontFamily);
         foreach (string key in OrganizerMenuVisibility.Actions)
         {
             if (!_organizerMenuToggles.TryGetValue(key, out ToggleSwitch? toggle))
             {
-                toggle = new ToggleSwitch { Tag = key, MinWidth = 44, MaxWidth = 46, Padding = new Thickness(0), Margin = new Thickness(0), OnContent = string.Empty, OffContent = string.Empty, HorizontalAlignment = HorizontalAlignment.Right };
+                toggle = new ToggleSwitch
+                {
+                    Tag = key,
+                    MinWidth = 44,
+                    MaxWidth = 46,
+                    Padding = new Thickness(0),
+                    Margin = new Thickness(0),
+                    OnContent = string.Empty,
+                    OffContent = string.Empty,
+                    HorizontalAlignment = HorizontalAlignment.Right,
+                    VerticalAlignment = VerticalAlignment.Center
+                };
                 toggle.Toggled += OrganizerMenuToggle_Toggled;
                 _organizerMenuToggles.Add(key, toggle);
                 OrganizerMenuOptions.Children.Add(CreateMenuSettingRow(toggle, AppStrings.Get(key)));
@@ -30,15 +43,23 @@ public sealed partial class ConsoleWindow
             {
                 var label = (TextBlock)row.Children[0];
                 label.Text = AppStrings.Get(key);
-                label.FontFamily = new Microsoft.UI.Xaml.Media.FontFamily(AppStrings.FontFamily);
+                label.FontFamily = fontFamily;
                 label.CharacterSpacing = AppStrings.CharacterSpacing;
             }
-            toggle.FontFamily = new Microsoft.UI.Xaml.Media.FontFamily(AppStrings.FontFamily);
+            toggle.FontFamily = fontFamily;
             toggle.CharacterSpacing = AppStrings.CharacterSpacing;
             Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(toggle, AppStrings.Get(key));
             if (toggle.IsEnabled) toggle.IsOn = OrganizerMenuVisibility.IsEnabled(_host.State.GlobalSettings, key);
         }
         UpdateSettingGroupSeparators(OrganizerMenuOptions);
+    }
+
+    private void UpdateHoverMagnificationSubRowOpacity()
+    {
+        if (CompactHoverMagnificationRow is not null)
+            CompactHoverMagnificationRow.Opacity = CompactHoverMagnificationSlider.IsEnabled ? 1.0 : 0.45;
+        if (DockHoverMagnificationRow is not null)
+            DockHoverMagnificationRow.Opacity = DockHoverMagnificationSlider.IsEnabled ? 1.0 : 0.45;
     }
 
     private async void HideCollapseIndicatorToggle_Toggled(object sender, RoutedEventArgs e)
@@ -63,6 +84,7 @@ public sealed partial class ConsoleWindow
         if (!_componentReady || _settingBinder.IsSuppressed || sender is not ToggleSwitch toggle) return;
         toggle.IsEnabled = false;
         UpdateHoverMagnificationScaleControls();
+        UpdateHoverMagnificationSubRowOpacity();
         try { await _host.SetHoverMagnificationAsync(ReferenceEquals(toggle, DockHoverMagnificationToggle), toggle.IsOn); }
         catch (Exception ex)
         {

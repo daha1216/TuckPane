@@ -377,7 +377,9 @@ public sealed partial class AppHost
         var staticOccupied = new List<NativeMethods.RECT>();
         foreach (MainWindow window in _windows.Values)
         {
-            if (!window.IsEligibleForDesktopMultiSelect) continue;
+            if (window.IsClosing || window.IsContainedWindow || !window.IsRuntimeVisible ||
+                window.Definition.PlacementMode is not (OrganizerPlacementMode.Floating or OrganizerPlacementMode.Positioned))
+                continue;
             NativeMethods.RECT bounds = window.GetCurrentCompactBounds();
             if (!string.Equals(DisplayPlacementService.ForBounds(bounds).Device, display.Device, StringComparison.OrdinalIgnoreCase))
                 continue;

@@ -703,7 +703,7 @@ public sealed partial class ConsoleWindow : Window
         Color selectedListItem = ColorFor(0xFFEAF3FF, Windows.UI.ViewManagement.UIElementType.Highlight);
         Color selectionAccent = ColorFor(0xFF007AFF, Windows.UI.ViewManagement.UIElementType.Highlight);
         Color primaryText = ColorFor(0xFF1D1D1F, Windows.UI.ViewManagement.UIElementType.WindowText);
-        Color generalRowBorder = ColorFor(0xFFE5E5EA, Windows.UI.ViewManagement.UIElementType.WindowText);
+        Color generalRowBorder = ColorFor(0xFFECECF0, Windows.UI.ViewManagement.UIElementType.WindowText);
         Color manageBorder = generalRowBorder;
         Color secondaryText = ColorFor(0xFF6E6E73, Windows.UI.ViewManagement.UIElementType.GrayText);
         Color input = ColorFor(0xFFF5F5F7, Windows.UI.ViewManagement.UIElementType.ButtonFace);
@@ -755,8 +755,8 @@ public sealed partial class ConsoleWindow : Window
         SetSurfaceBrush("SliderTrackValueFillPressed", sliderActive);
         SetSurfaceBrush("SliderTrackValueFillDisabled", ColorHelper.FromArgb(115, sliderActive.R, sliderActive.G, sliderActive.B));
 
-        ManageForm.ApplySurfacePalette(card, generalRowBorder, primaryText, input, sliderActive, sliderInactive, sliderFocusSecondary);
-        AddForm.ApplySurfacePalette(card, generalRowBorder, primaryText, input, sliderActive, sliderInactive, sliderFocusSecondary);
+        ManageForm.ApplySurfacePalette(card, generalRowBorder, primaryText, secondaryText, input, sliderActive, sliderInactive, sliderFocusSecondary);
+        AddForm.ApplySurfacePalette(card, generalRowBorder, primaryText, secondaryText, input, sliderActive, sliderInactive, sliderFocusSecondary);
 
         _minimizeHoverBrush.Color = ColorHelper.FromArgb(24, primaryText.R, primaryText.G, primaryText.B);
         _minimizePressedBrush.Color = ColorHelper.FromArgb(42, primaryText.R, primaryText.G, primaryText.B);
@@ -1178,10 +1178,12 @@ public sealed partial class ConsoleWindow : Window
             if (UniformFloatingCompactScaleToggle.IsEnabled) UniformFloatingCompactScaleToggle.IsOn = settings.UseUniformFloatingCompactScale;
             UniformFloatingCompactScaleSlider.SetModelValue(settings.UniformFloatingCompactScale);
             UniformFloatingCompactScaleSlider.IsEnabled = settings.UseUniformFloatingCompactScale && !_changingUniformCompactScaleToggle;
+            UniformFloatingCompactScaleRow.Opacity = settings.UseUniformFloatingCompactScale ? 1.0 : 0.45;
             SetPercent(UniformFloatingCompactScalePercent, settings.UniformFloatingCompactScale);
             if (UniformPositionedCompactScaleToggle.IsEnabled) UniformPositionedCompactScaleToggle.IsOn = settings.UseUniformPositionedCompactScale;
             UniformPositionedCompactScaleSlider.SetModelValue(settings.UniformPositionedCompactScale);
             UniformPositionedCompactScaleSlider.IsEnabled = settings.UseUniformPositionedCompactScale && !_changingUniformCompactScaleToggle;
+            UniformPositionedCompactScaleRow.Opacity = settings.UseUniformPositionedCompactScale ? 1.0 : 0.45;
             SetPercent(UniformPositionedCompactScalePercent, settings.UniformPositionedCompactScale);
         }
         UpdateAddControls();
@@ -1230,6 +1232,10 @@ public sealed partial class ConsoleWindow : Window
         OrganizerPlacementMode mode = ReferenceEquals(sender, UniformFloatingCompactScaleSlider)
             ? OrganizerPlacementMode.Floating
             : OrganizerPlacementMode.Positioned;
+        if (mode == OrganizerPlacementMode.Floating)
+            SetPercent(UniformFloatingCompactScalePercent, UniformFloatingCompactScaleSlider.Value);
+        else
+            SetPercent(UniformPositionedCompactScalePercent, UniformPositionedCompactScaleSlider.Value);
         _uniformSliderSave.Changed();
         _pendingUniformCompactScaleModes |= 1 << (int)mode;
         if (_uniformCompactScaleApplyScheduled) return;
@@ -1379,7 +1385,11 @@ public sealed partial class ConsoleWindow : Window
                 await _host.SetExpandOnHoverAsync(ExpandOnHoverToggle.IsOn);
                 UpdateHoverDelayControls();
             },
-            UpdateExpandOnHoverToggle,
+            () =>
+            {
+                UpdateExpandOnHoverToggle();
+                UpdateHoverDelayControls();
+            },
             "无法更新悬浮展开设置。",
             "ExpandOnHoverErrorTitle",
             ShowError);
@@ -1395,7 +1405,11 @@ public sealed partial class ConsoleWindow : Window
                 await _host.SetCollapseOnPointerLeaveAsync(CollapseOnPointerLeaveToggle.IsOn);
                 UpdateHoverDelayControls();
             },
-            UpdateCollapseOnPointerLeaveToggle,
+            () =>
+            {
+                UpdateCollapseOnPointerLeaveToggle();
+                UpdateHoverDelayControls();
+            },
             "无法更新鼠标离开收缩设置。",
             "CollapseOnPointerLeaveErrorTitle",
             ShowError);
@@ -1413,6 +1427,8 @@ public sealed partial class ConsoleWindow : Window
         StationHoverExpandDelaySlider.SetModelValue(_host.State.GlobalSettings.StationHoverExpandDelayMs);
         HoverExpandDelaySlider.IsEnabled = _host.State.GlobalSettings.ExpandOnHover;
         PointerLeaveCollapseDelaySlider.IsEnabled = _host.State.GlobalSettings.CollapseOnPointerLeave;
+        HoverExpandDelayRow.Opacity = _host.State.GlobalSettings.ExpandOnHover ? 1.0 : 0.45;
+        PointerLeaveCollapseDelayRow.Opacity = _host.State.GlobalSettings.CollapseOnPointerLeave ? 1.0 : 0.45;
         HoverExpandDelayValue.Text = AppStrings.Format("MillisecondsFormat", _host.State.GlobalSettings.HoverExpandDelayMs);
         PointerLeaveCollapseDelayValue.Text = AppStrings.Format("MillisecondsFormat", _host.State.GlobalSettings.PointerLeaveCollapseDelayMs);
         StationPointerLeaveCollapseDelayValue.Text = AppStrings.Format(
@@ -1917,27 +1933,62 @@ public sealed partial class ConsoleWindow : Window
             .OrderByDescending(item => item.CreatedAtUtc)
             .ThenByDescending(item => item.Id);
         ManageList.Items.Clear();
+        var itemFontFamily = new FontFamily(AppStrings.FontFamily);
+        SolidColorBrush primaryBrush = GetSurfaceBrush("ConsolePrimaryTextBrush");
+        SolidColorBrush secondaryBrush = GetSurfaceBrush("ConsoleSecondaryTextBrush");
+        SolidColorBrush accentBrush = GetSurfaceBrush("ConsoleSelectionAccentBrush");
         foreach (OrganizerDefinition definition in definitions)
         {
             MainWindow? window = _host.Windows.FirstOrDefault(item => item.OrganizerId == definition.Id);
             string layout = definition.PlacementMode == OrganizerPlacementMode.Dock
                 ? AppStrings.Get(definition.DockOrientation == DockOrientation.Horizontal ? "DockHorizontal" : "DockVertical")
                 : AppStrings.Format("GridLayoutFormat", definition.Layout.Columns, definition.Layout.Rows);
-            var panel = new StackPanel { Spacing = 3 };
+            string itemCount = AppStrings.FormatItemCount(window?.FileCount ?? 0);
+            string compactSubtitle = $"{layout} · {itemCount}";
+            string fullSummary = AppStrings.Format("ManageItemSummaryFormat", layout, itemCount, AppStrings.FormatDate(definition.CreatedAtUtc));
+            var panel = new StackPanel { Spacing = 2, VerticalAlignment = VerticalAlignment.Center };
             string displayName = definition.PlacementMode == OrganizerPlacementMode.Station
                 ? AppStrings.Format("StationListNameFormat", DockEdgeName(definition.DockEdge))
                 : definition.Name;
-            panel.Children.Add(new TextBlock { Text = displayName, FontSize = 14, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, Foreground = GetSurfaceBrush("ConsolePrimaryTextBrush"), TextWrapping = TextWrapping.Wrap });
-            panel.Children.Add(new TextBlock { Text = AppStrings.Format("ManageItemSummaryFormat", layout, AppStrings.FormatItemCount(window?.FileCount ?? 0), AppStrings.FormatDate(definition.CreatedAtUtc)), FontFamily = new FontFamily(AppStrings.FontFamily), CharacterSpacing = AppStrings.CharacterSpacing, FontSize = 12, Foreground = GetSurfaceBrush("ConsoleSecondaryTextBrush") });
-            var content = new Grid { ColumnSpacing = 7 };
+            panel.Children.Add(new TextBlock
+            {
+                Text = displayName,
+                FontFamily = itemFontFamily,
+                CharacterSpacing = AppStrings.CharacterSpacing,
+                FontSize = 13.5,
+                FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+                Foreground = primaryBrush,
+                TextWrapping = TextWrapping.NoWrap,
+                TextTrimming = TextTrimming.CharacterEllipsis
+            });
+            panel.Children.Add(new TextBlock
+            {
+                Tag = "subtitle",
+                Text = compactSubtitle,
+                FontFamily = itemFontFamily,
+                CharacterSpacing = AppStrings.CharacterSpacing,
+                FontSize = 11.5,
+                Foreground = secondaryBrush,
+                TextWrapping = TextWrapping.NoWrap,
+                TextTrimming = TextTrimming.CharacterEllipsis
+            });
+            var content = new Grid { ColumnSpacing = 8 };
             content.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(3) });
             content.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            var indicator = new Border { Width = 3, CornerRadius = new CornerRadius(1.5), Background = GetSurfaceBrush("ConsoleSelectionAccentBrush"), Visibility = Visibility.Collapsed };
+            var indicator = new Border
+            {
+                Width = 3,
+                Height = 22,
+                VerticalAlignment = VerticalAlignment.Center,
+                CornerRadius = new CornerRadius(1.5),
+                Background = accentBrush,
+                Visibility = Visibility.Collapsed
+            };
             Grid.SetColumn(panel, 1);
             content.Children.Add(indicator);
             content.Children.Add(panel);
-            ApplyTypography(content);
-            var item = new ListViewItem { Tag = definition.Id, Content = content, Padding = new Thickness(7, 8, 10, 8) };
+            var item = new ListViewItem { Tag = definition.Id, Content = content, Padding = new Thickness(7, 7, 10, 7) };
+            ToolTipService.SetToolTip(item, fullSummary);
             ManageList.Items.Add(item);
             if (!_creating && definition.Id == selectId) ManageList.SelectedItem = item;
         }
@@ -1980,6 +2031,11 @@ public sealed partial class ConsoleWindow : Window
     private void UpdateManageListItemSurfaces()
     {
         if (ManageList is null) return;
+        SolidColorBrush primaryBrush = GetSurfaceBrush("ConsolePrimaryTextBrush");
+        SolidColorBrush secondaryBrush = GetSurfaceBrush("ConsoleSecondaryTextBrush");
+        SolidColorBrush? highContrastSelectedBrush = _settingsHighContrast
+            ? new SolidColorBrush(_uiSettings.UIElementColor(Windows.UI.ViewManagement.UIElementType.HighlightText))
+            : null;
         foreach (ListViewItem item in ManageList.Items.OfType<ListViewItem>())
         {
             bool isSelected = ReferenceEquals(item, ManageList.SelectedItem);
@@ -1987,9 +2043,9 @@ public sealed partial class ConsoleWindow : Window
                 VisitTree(itemContent, child =>
                 {
                     if (child is TextBlock text)
-                        text.Foreground = isSelected && _accessibilitySettings.HighContrast
-                            ? new SolidColorBrush(_uiSettings.UIElementColor(Windows.UI.ViewManagement.UIElementType.HighlightText))
-                            : GetSurfaceBrush(text.FontSize < 14 ? "ConsoleSecondaryTextBrush" : "ConsolePrimaryTextBrush");
+                        text.Foreground = isSelected && highContrastSelectedBrush is not null
+                            ? highContrastSelectedBrush
+                            : (Equals(text.Tag, "subtitle") ? secondaryBrush : primaryBrush);
                 });
             if (item.Content is Grid content && content.Children.OfType<Border>().FirstOrDefault() is { } indicator)
             {

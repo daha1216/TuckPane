@@ -15,6 +15,7 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
+using Microsoft.UI.Xaml.Media.Imaging;
 using Microsoft.UI.Xaml.Hosting;
 using Windows.ApplicationModel.DataTransfer;
 using Windows.Foundation;
@@ -28,15 +29,15 @@ public sealed partial class MainWindow
     private const float ExpandSpringDampingRatio = 0.80f;
     private const int ExpandSpringPeriodMs = 44;
     private const float CollapseSpringDampingRatio = 0.94f;
-    private const int CollapseSpringPeriodMs = 32;
+    private const int CollapseSpringPeriodMs = 30;
     private const float StationSpringDampingRatio = 0.94f;
     private const int StationSpringPeriodMs = 40;
     private const int ReducedMotionTransitionDurationMs = 140;
     private const int ExpandBatchSafetyTimeoutMs = 480;
-    private const int CollapseBatchSafetyTimeoutMs = 300;
+    private const int CollapseBatchSafetyTimeoutMs = 340;
     private const int StationBatchSafetyTimeoutMs = 380;
     private const int PreWarmFrameTimeoutMs = 50;
-    private const int AtomicRelocationFrameTimeoutMs = 32;
+    private const int AtomicRelocationFrameTimeoutMs = 48;
 
     // 100% DWM GPU Compositor transition resources (reused across every expand/collapse, zero per-frame allocations).
     private CompositionPropertySet? _transitionProps;
@@ -236,7 +237,7 @@ public sealed partial class MainWindow
                     compactVisual.Scale = Vector3.One;
                     compactVisual.CenterPoint = plan.CompactCenterPointDip;
                     compactVisual.IsVisible = true;
-                    SetCompactVisualTranslation(showCompactDuringTransition ? plan.CompactFinalTranslationDip : Vector3.Zero);
+                    SetCompactVisualTranslation(showCompactDuringTransition ? GetPixelSnappedCompactTranslation(plan) : Vector3.Zero);
 
                     if (plan.IsUnionNeeded)
                     {
@@ -455,6 +456,11 @@ public sealed partial class MainWindow
                     Visual compactVisual = GetCompactCompositionVisual();
                     Visual expandedVisual = GetExpandedCompositionVisual();
                     bool showCompactDuringTransition = !contained && (!reducedMotion || ContainsRect(plan.ExpandedBounds, compactTarget));
+                    if (showCompactDuringTransition && !IsCompactPreviewUpToDate())
+                    {
+                        await EnsureCompactPreviewReadyAsync(transition.Token);
+                        if (!IsCurrent() || transition.IsCancellationRequested) return;
+                    }
                     // Cloak left/top-offset union expansions before moving the HWND origin so
                     // ExpandedView never jumps up/left for 1 frame before Margin commits.
                     bool shouldCloakForCanvasRelocation = plan.IsUnionNeeded &&
@@ -468,14 +474,13 @@ public sealed partial class MainWindow
 
                     if (showCompactDuringTransition)
                     {
-                        RenderCompactPreview();
                         CompactView.Visibility = Visibility.Visible;
                         CompactView.Opacity = 1;
                         // Keep hidden for 1 frame while XAML commits Visibility=Visible so CompactView
                         // never flashes on top of ExpandedView before ExpressionAnimations take over.
                         compactVisual.IsVisible = false;
                         compactVisual.CenterPoint = plan.CompactCenterPointDip;
-                        SetCompactVisualTranslation(plan.CompactFinalTranslationDip);
+                        SetCompactVisualTranslation(GetPixelSnappedCompactTranslation(plan));
                     }
                     else
                     {
@@ -858,6 +863,24 @@ public sealed partial class MainWindow
     private Visual GetExpandedNameShadowCompositionVisual() =>
         _expandedNameShadowCompositionVisual ??= ElementCompositionPreview.GetElementVisual(ExpandedNameShadowHost);
 
+    private Vector3 GetPixelSnappedCompactTranslation(TransitionCanvasPlan plan)
+    {
+        double scale = GetCompactDpiScale();
+        int canvasW = plan.CanvasBounds.Width;
+        int canvasH = plan.CanvasBounds.Height;
+        int compactW = plan.CompactOrigin.Width;
+        int compactH = plan.CompactOrigin.Height;
+        // WinUI UseLayoutRounding centers CompactView at Floor((canvas - compact) / 2 + 0.5) physical px.
+        int centeredX = (int)Math.Floor((canvasW - compactW) * 0.5 + 0.5);
+        int centeredY = (int)Math.Floor((canvasH - compactH) * 0.5 + 0.5);
+        int targetX = plan.CompactOrigin.Left - plan.CanvasBounds.Left;
+        int targetY = plan.CompactOrigin.Top - plan.CanvasBounds.Top;
+        return new Vector3(
+            (float)((targetX - centeredX) / scale),
+            (float)((targetY - centeredY) / scale),
+            0f);
+    }
+
     private void SetCompactVisualTranslation(Vector3 translation)
     {
         EnsureTransitionVisualTranslationEnabled();
@@ -971,7 +994,7 @@ public sealed partial class MainWindow
         _expandedTranslationExpr.SetReferenceParameter("props", _transitionProps);
 
         _expandedOpacityExpr = compositor.CreateExpressionAnimation(
-            "Clamp(props.Progress / 0.08, 0.0, 1.0)");
+            "Clamp(Max(0.0, props.Progress - 0.04) / 0.08, 0.0, 1.0)");
         _expandedOpacityExpr.SetReferenceParameter("props", _transitionProps);
 
         _surfaceOpacityExpr = compositor.CreateExpressionAnimation(
@@ -987,11 +1010,11 @@ public sealed partial class MainWindow
         _contentTranslationExpr.SetReferenceParameter("props", _transitionProps);
 
         _compactOpacityExpr = compositor.CreateExpressionAnimation(
-            "Clamp(1.0 - props.Progress / 0.24, 0.0, 1.0)");
+            "Clamp(1.0 - Max(0.0, props.Progress - 0.06) / 0.24, 0.0, 1.0)");
         _compactOpacityExpr.SetReferenceParameter("props", _transitionProps);
 
         _compactScaleExpr = compositor.CreateExpressionAnimation(
-            "Vector3(1.0 + Clamp(props.Progress / 0.24, 0.0, 1.0) * push, 1.0 + Clamp(props.Progress / 0.24, 0.0, 1.0) * push, 1.0)");
+            "Vector3(1.0 + Clamp(Max(0.0, props.Progress - 0.06) / 0.24, 0.0, 1.0) * push, 1.0 + Clamp(Max(0.0, props.Progress - 0.06) / 0.24, 0.0, 1.0) * push, 1.0)");
         _compactScaleExpr.SetReferenceParameter("props", _transitionProps);
 
         _stationOpacityExpr = compositor.CreateExpressionAnimation(
@@ -1207,7 +1230,7 @@ public sealed partial class MainWindow
         if (showCompact)
         {
             compactVisual.CenterPoint = plan.CompactCenterPointDip;
-            SetCompactVisualTranslation(plan.CompactFinalTranslationDip);
+            SetCompactVisualTranslation(GetPixelSnappedCompactTranslation(plan));
             compactVisual.IsVisible = true;
             compactVisual.StartAnimation("Opacity", _compactOpacityExpr!);
             _compactScaleExpr!.SetScalarParameter("push", reducedMotion ? 0.0f : 0.10f);
@@ -1730,7 +1753,7 @@ public sealed partial class MainWindow
                         plan.StartTranslationDip.X * (1f - (float)progress),
                         plan.StartTranslationDip.Y * (1f - (float)progress),
                         0f));
-            SetCompactVisualTranslation(plan.CompactFinalTranslationDip);
+            SetCompactVisualTranslation(GetPixelSnappedCompactTranslation(plan));
         }
         else
         {
@@ -1748,13 +1771,14 @@ public sealed partial class MainWindow
         float contentOpacity = reducedMotion
             ? surfaceOpacity
             : (float)Math.Clamp((clamped - 0.14) / 0.44, 0, 1);
-        float compactOpacity = (float)Math.Clamp(1.0 - clamped / 0.24, 0, 1);
-        float compactPush = reducedMotion ? 0f : (float)Math.Clamp(clamped / 0.24, 0, 1) * 0.10f;
+        double compactPhase = Math.Clamp(Math.Max(0.0, clamped - 0.06) / 0.24, 0, 1);
+        float compactOpacity = (float)(1.0 - compactPhase);
+        float compactPush = reducedMotion ? 0f : (float)compactPhase * 0.10f;
         Visual compactVisual = GetCompactCompositionVisual();
         compactVisual.IsVisible = true;
         compactVisual.Opacity = compactOpacity;
         compactVisual.Scale = new Vector3(1f + compactPush, 1f + compactPush, 1f);
-        expandedVisual.Opacity = (float)Math.Clamp(clamped / 0.08, 0, 1);
+        expandedVisual.Opacity = (float)Math.Clamp(Math.Max(0.0, clamped - 0.04) / 0.08, 0, 1);
         GetExpandedSurfaceCompositionVisual().Opacity = surfaceOpacity;
         GetExpandedSheenCompositionVisual().Opacity = surfaceOpacity;
         GetExpandedEdgeCompositionVisual().Opacity = surfaceOpacity;
@@ -1822,25 +1846,120 @@ public sealed partial class MainWindow
         SetExpandedContentVisualTranslation(Vector3.Zero);
     }
 
-    private async Task LoadOrganizerPreviewAsync(OrganizerPreviewControl preview, Guid organizerId, object requestToken)
+    private int GetNestedOrganizerPreviewPhysicalPx(OrganizerPreviewControl preview, int itemCount)
+    {
+        double dpiScale = GetCompactDpiScale();
+        double previewDip = double.IsFinite(preview.Width) && preview.Width > 0
+            ? preview.Width
+            : (preview.ActualWidth > 0 ? preview.ActualWidth : 20);
+        double innerDip = Math.Max(6, previewDip - (preview.IsCompactVisual ? 4 : 12));
+        double subSlotDip = itemCount <= 1 ? innerDip : innerDip * 0.5;
+        return IconCacheService.NormalizeCompactPreviewPixelSize((int)Math.Ceiling(subSlotDip * dpiScale));
+    }
+
+    private static string BuildOrganizerPreviewSubIconKey(WidgetItem item, bool compactVisual, int compactPhysicalPx)
+    {
+        string baseKey = item.Kind == WidgetItemKind.Organizer
+            ? $"organizer:{item.OrganizerId:N}"
+            : IsDocumentItem(item)
+                ? $"doc:{item.Kind}:{item.RelativeName}"
+                : item.FullPath;
+        return compactVisual ? $"{baseKey}|cpx={compactPhysicalPx}" : baseKey;
+    }
+
+    private bool IsOrganizerPreviewContentCurrent(OrganizerPreviewControl preview, Guid organizerId)
     {
         WidgetItem[] items = _host.GetOrganizerPreviewItems(organizerId).Take(CompactPreviewItemCount).ToArray();
+        int compactPhysicalPx = preview.IsCompactVisual ? GetNestedOrganizerPreviewPhysicalPx(preview, items.Length) : 0;
         for (int index = 0; index < CompactPreviewItemCount; index++)
         {
             Image image = preview.Images[index];
-            image.Tag = null;
-            image.Source = null;
+            if (index < items.Length)
+            {
+                string expectedKey = BuildOrganizerPreviewSubIconKey(items[index], preview.IsCompactVisual, compactPhysicalPx);
+                if (image.Visibility != Visibility.Visible ||
+                    image.Source is null ||
+                    !string.Equals(image.Tag as string, expectedKey, StringComparison.OrdinalIgnoreCase))
+                {
+                    return false;
+                }
+            }
+            else if (image.Visibility != Visibility.Collapsed)
+            {
+                return false;
+            }
         }
+        return true;
+    }
+
+    private async Task LoadOrganizerPreviewAsync(OrganizerPreviewControl preview, Guid organizerId, object requestToken)
+    {
+        WidgetItem[] items = _host.GetOrganizerPreviewItems(organizerId).Take(CompactPreviewItemCount).ToArray();
+        bool compactVisual = preview.IsCompactVisual;
+        int compactPhysicalPx = compactVisual ? GetNestedOrganizerPreviewPhysicalPx(preview, items.Length) : 0;
+
+        for (int index = 0; index < CompactPreviewItemCount; index++)
+        {
+            Image image = preview.Images[index];
+            if (index >= items.Length)
+            {
+                image.Tag = null;
+                if (image.Source is not null) image.Source = null;
+                continue;
+            }
+
+            string expectedKey = BuildOrganizerPreviewSubIconKey(items[index], compactVisual, compactPhysicalPx);
+            if (!string.Equals(image.Tag as string, expectedKey, StringComparison.OrdinalIgnoreCase))
+            {
+                image.Tag = expectedKey;
+                if (image.Source is not null) image.Source = null;
+            }
+        }
+
         ApplyOrganizerPreviewLayout(preview, items.Length);
+
         for (int index = 0; index < items.Length; index++)
         {
             Image image = preview.Images[index];
             WidgetItem item = items[index];
-            string iconKey = IsDocumentItem(item) ? item.RelativeName : item.FullPath;
+            string iconKey = BuildOrganizerPreviewSubIconKey(item, compactVisual, compactPhysicalPx);
+            if (string.Equals(image.Tag as string, iconKey, StringComparison.OrdinalIgnoreCase) &&
+                image.Source is not null)
+            {
+                continue;
+            }
+
             image.Tag = iconKey;
-            if (item.Kind == WidgetItemKind.Organizer) image.Source = _organizerIcon;
-            else if (IsDocumentItem(item)) image.Source = GetDocumentIcon(item);
-            else await LoadIconAsync(image, item.FullPath);
+            if (item.Kind == WidgetItemKind.Organizer)
+            {
+                BitmapImage orgIcon = compactVisual ? GetCompactOrganizerFallbackIcon(compactPhysicalPx) : _organizerIcon;
+                if (!ReferenceEquals(image.Source, orgIcon)) image.Source = orgIcon;
+            }
+            else if (IsDocumentItem(item))
+            {
+                BitmapImage docIcon = compactVisual ? GetCompactDocumentIcon(item, compactPhysicalPx) : GetDocumentIcon(item);
+                if (!ReferenceEquals(image.Source, docIcon)) image.Source = docIcon;
+            }
+            else if (compactVisual)
+            {
+                BitmapImage? bitmap = await GetCompactPreviewIconThrottledAsync(item.FullPath, compactPhysicalPx);
+                if (_closing || !ReferenceEquals(preview.RequestToken, requestToken)) return;
+                if (string.Equals(image.Tag as string, iconKey, StringComparison.OrdinalIgnoreCase))
+                {
+                    if (bitmap is not null)
+                    {
+                        if (!ReferenceEquals(image.Source, bitmap)) image.Source = bitmap;
+                    }
+                    else
+                    {
+                        image.ClearValue(Image.SourceProperty);
+                    }
+                }
+            }
+            else
+            {
+                await LoadIconAsync(image, item.FullPath);
+            }
             if (!ReferenceEquals(preview.RequestToken, requestToken)) return;
         }
     }

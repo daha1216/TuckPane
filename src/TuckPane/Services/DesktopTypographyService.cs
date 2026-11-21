@@ -70,8 +70,8 @@ internal static class DesktopTypographyService
 
     /// <summary>
     /// Computes crisp, pixel-aligned Windows 11 desktop typography across all visual styles:
-    /// uses authentic ~12.0 DIP Normal weight (exact 18px at 150% DPI) matching native Explorer
-    /// icons so Microsoft YaHei UI renders razor-sharp without synthetic bold bloat.
+    /// uses authentic ~12.0 DIP Normal weight (exact 18px at 150% DPI) at 100% scale matching
+    /// native Explorer icons while smoothly honoring CompactNameScaleSlider adjustments (60%–100%).
     /// </summary>
     internal static (double FontSizeDip, FontWeight Weight) ResolveCompactLabelTypography(
         CompactVisualStyle style,
@@ -81,18 +81,22 @@ internal static class DesktopTypographyService
     {
         DesktopTypographyMetrics sys = GetMetrics();
         double baseDip = Math.Clamp(sys.IconFontSizeDip, 11.5, 13.5);
-        double safeNameScale = Math.Clamp(compactNameScale, 0.75, 1.45);
+        double safeNameScale = double.IsFinite(compactNameScale)
+            ? Math.Clamp(compactNameScale, 0.60, 1.45)
+            : 1.0;
 
         if (CompactVisualStyles.UsesNativeBlendSurface(style))
         {
-            // Match native Windows 11 desktop icons (~12 DIP Normal) regardless of tile zoom!
-            double nativeSize = Math.Clamp(Math.Round(baseDip * safeNameScale * 2.0) / 2.0, 11.5, 14.0);
+            // Match native Windows 11 desktop icons (~12 DIP Normal at 100%) regardless of tile zoom,
+            // while scaling smoothly down to 8.0 DIP when CompactNameScaleSlider is lowered toward 60%.
+            double nativeSize = Math.Clamp(Math.Round(baseDip * safeNameScale * 2.0) / 2.0, 8.0, 14.0);
             return (nativeSize, FontWeights.Normal);
         }
 
-        // GlassTile: crisp pixel-snapped Windows 11 desktop typography (12 DIP Normal at 1.0 name scale)
-        // so CJK text never blurs from fractional font heights or synthetic Medium bolding.
-        double glassSize = Math.Clamp(Math.Round(baseDip * safeNameScale * 2.0) / 2.0, 12.0, 14.0);
+        // GlassTile: crisp pixel-snapped Windows 11 desktop typography (12.0 DIP Normal at 100% scale)
+        // that smoothly responds to CompactNameScaleSlider across the full 60%–100% range.
+        double glassBaseDip = Math.Max(12.0, baseDip);
+        double glassSize = Math.Clamp(Math.Round(glassBaseDip * safeNameScale * 2.0) / 2.0, 8.0, 14.0);
         return (glassSize, FontWeights.Normal);
     }
 

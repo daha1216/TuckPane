@@ -3,6 +3,7 @@ using Microsoft.UI.Xaml.Controls;
 using TuckPane.Core;
 using TuckPane.Models;
 using TuckPane.Services;
+using Windows.Foundation;
 
 namespace TuckPane;
 
@@ -38,14 +39,14 @@ public sealed partial class MainWindow
 
     private void ShowEnhancedFileContextMenu(FrameworkElement host, WidgetItem item)
     {
-        var open = new MenuFlyoutItem { Text = AppStrings.Get("ContextItemOpen") };
-        var reveal = new MenuFlyoutItem { Text = AppStrings.Get("ContextItemReveal") };
-        var copyPath = new MenuFlyoutItem { Text = AppStrings.Get("ContextItemCopyPath") };
-        var properties = new MenuFlyoutItem { Text = AppStrings.Get("ContextItemProperties") };
-        var rename = new MenuFlyoutItem { Text = AppStrings.Get("ContextRenameFile") };
-        var copy = new MenuFlyoutItem { Text = AppStrings.Get("ContextCopyFile") };
-        var cut = new MenuFlyoutItem { Text = AppStrings.Get("Cut") };
-        var delete = new MenuFlyoutItem { Text = AppStrings.Get("Delete") };
+        var open = new MenuFlyoutItem { Text = AppStrings.Get("ContextItemOpen"), Icon = new FontIcon { Glyph = "\uE8E5" } };
+        var reveal = new MenuFlyoutItem { Text = AppStrings.Get("ContextItemReveal"), Icon = new FontIcon { Glyph = "\uE8DA" } };
+        var copyPath = new MenuFlyoutItem { Text = AppStrings.Get("ContextItemCopyPath"), Icon = new FontIcon { Glyph = "\uE71B" } };
+        var properties = new MenuFlyoutItem { Text = AppStrings.Get("ContextItemProperties"), Icon = new FontIcon { Glyph = "\uE946" } };
+        var rename = new MenuFlyoutItem { Text = AppStrings.Get("ContextRenameFile"), Icon = new FontIcon { Glyph = "\uE8AC" } };
+        var copy = new MenuFlyoutItem { Text = AppStrings.Get("ContextCopyFile"), Icon = new FontIcon { Glyph = "\uE8C8" } };
+        var cut = new MenuFlyoutItem { Text = AppStrings.Get("Cut"), Icon = new FontIcon { Glyph = "\uE8C6" } };
+        var delete = new MenuFlyoutItem { Text = AppStrings.Get("Delete"), Icon = new FontIcon { Glyph = "\uE74D" } };
 
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetAutomationId(open, "OpenFileMenuItem");
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetAutomationId(reveal, "RevealFileMenuItem");
@@ -58,7 +59,13 @@ public sealed partial class MainWindow
 
         open.Click += async (_, _) => await RunSafelyAsync(() => OpenItemDirectlyAsync(item), "打开项目失败");
         reveal.Click += (_, _) => RunShellItemCommand(item, () => ShellItemCommands.RevealInExplorer(item.FullPath));
-        copyPath.Click += (_, _) => RunShellItemCommand(item, () => ShellItemCommands.CopyPathToClipboard(item.FullPath));
+        copyPath.Click += (_, _) => RunShellItemCommand(item, () =>
+        {
+            ShellItemCommands.CopyPathToClipboard(item.FullPath);
+            ShowExpandedToast(
+                LocalizeToast("已复制完整路径", "Full path copied", "フルパスをコピーしました"),
+                InfoBarSeverity.Success);
+        });
         properties.Click += (_, _) => RunShellItemCommand(item, () => ShellItemCommands.ShowProperties(_hwnd, item.FullPath));
         rename.Click += async (_, _) => await _catalogController.ShowRenameFileDialogAsync(item);
         copy.Click += async (_, _) => await _catalogController.CopyFileItemAsync(item);
@@ -66,6 +73,7 @@ public sealed partial class MainWindow
         delete.Click += async (_, _) => await _catalogController.DeleteFileItemAsync(item);
 
         MenuFlyout flyout = CreateOrganizerContextMenu();
+        flyout.ShouldConstrainToRootBounds = false;
         flyout.Items.Add(open);
         flyout.Items.Add(reveal);
         flyout.Items.Add(copyPath);
@@ -77,7 +85,13 @@ public sealed partial class MainWindow
         flyout.Items.Add(delete);
 
         _shellContextMenuOpen = true;
-        flyout.Closed += (_, _) => _shellContextMenuOpen = false;
+        PauseOutsideClickForOverlay();
+        flyout.Opening += OrganizerMenu_PauseOutsideClick;
+        flyout.Closed += (_, _) =>
+        {
+            _shellContextMenuOpen = false;
+            ResumeOutsideClickAfterOverlay();
+        };
         try
         {
             flyout.ShowAt(host);
@@ -86,6 +100,7 @@ public sealed partial class MainWindow
         {
             _shellContextMenuOpen = false;
             RestoreContextMenuHost();
+            ResumeOutsideClickAfterOverlay();
             AppLogger.Error($"无法打开文件项目菜单：{item.FullPath}", ex);
             ShowMessage(AppStrings.Format("FileMenuErrorFormat", item.Name, ex.Message), InfoBarSeverity.Error);
         }
@@ -150,13 +165,42 @@ public sealed partial class MainWindow
         await RunSafelyAsync(() => SortOrganizerAsync(OrganizerSortCriterion.SizeDescending), "按大小排序失败");
 
     private async void TidyEdgeStackMenuItem_Click(object sender, RoutedEventArgs e) =>
-        await RunSafelyAsync(async () => _ = await _host.TidyFloatingEdgeStackAsync(OrganizerId), "边缘整齐排列失败");
+        await RunSafelyAsync(async () =>
+        {
+            int moved = await _host.TidyFloatingEdgeStackAsync(OrganizerId);
+            if (_closing) return;
+            if (moved <= 0)
+            {
+                ShowExpandedToast(
+                    LocalizeToast("当前悬浮收纳窗已整齐贴边", "Floating organizers are already tidied", "フローティングボックスは整列済みです"),
+                    InfoBarSeverity.Informational);
+            }
+            else if (_expanded)
+            {
+                string message = moved == 1
+                    ? LocalizeToast("已更新贴边排列位置（收起后生效）", "Edge alignment updated (applies on collapse)", "端への整列位置を更新しました（折りたたみ後に反映）")
+                    : LocalizeToast($"已整齐排列 {moved} 个悬浮窗（收起后生效）", $"Tidied {moved} floating organizers (applies on collapse)", $"{moved} 個のボックスを整列しました（折りたたみ後に反映）");
+                ShowExpandedToast(message, InfoBarSeverity.Success);
+            }
+            else
+            {
+                ShowMessage(AppStrings.Format("TidyEdgeStackDoneFormat", moved), InfoBarSeverity.Success);
+            }
+        }, "边缘整齐排列失败");
 
     internal async Task SortOrganizerAsync(OrganizerSortCriterion criterion)
     {
         if (_closing) return;
         IReadOnlyList<WidgetItem> source = _allCatalogItems.Count > 0 ? _allCatalogItems : _items.ToArray();
-        if (source.Count <= 1) return;
+        if (source.Count <= 1)
+        {
+            ShowExpandedToast(
+                LocalizeToast("项目不足 2 项，无需排序", "Need at least 2 items to sort", "並び替えには 2 件以上の項目が必要です"),
+                InfoBarSeverity.Informational);
+            return;
+        }
+
+        Dictionary<string, Point>? before = UseCustomAnimations && _expanded ? CaptureRealizedItemPositions() : null;
 
         SortableItemMetadata[] metadata = await Task.Run(() =>
             source.Select(OrganizerSortOrder.InspectItem).ToArray());
@@ -200,5 +244,20 @@ public sealed partial class MainWindow
         reordered.AddRange(duplicates);
 
         ApplyCatalogItemsAndRender(reordered, refreshIcons: false);
+        SyncResolvedItemSlots();
+        ItemsRepeater.UpdateLayout();
+        if (before is not null) ApplyFlipFromCapturedPositions(before);
+        _host.NotifyOrganizerPreviewChanged(_definition.Id);
+
+        string toastMessage = criterion switch
+        {
+            OrganizerSortCriterion.NameAscending => LocalizeToast("已按名称（A→Z）排序", "Sorted by name (A→Z)", "名前順（A→Z）で並び替えました"),
+            OrganizerSortCriterion.NameDescending => LocalizeToast("已按名称（Z→A）排序", "Sorted by name (Z→A)", "名前順（Z→A）で並び替えました"),
+            OrganizerSortCriterion.TypeAscending => LocalizeToast("已按类型排序", "Sorted by type", "種類順で並び替えました"),
+            OrganizerSortCriterion.DateModifiedDescending => LocalizeToast("已按修改日期排序", "Sorted by date modified", "更新日時順で並び替えました"),
+            OrganizerSortCriterion.SizeDescending => LocalizeToast("已按大小排序", "Sorted by size", "サイズ順で並び替えました"),
+            _ => LocalizeToast("已完成排序", "Items sorted", "並び替えました")
+        };
+        ShowExpandedToast(toastMessage, InfoBarSeverity.Success);
     }
 }

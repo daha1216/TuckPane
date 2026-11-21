@@ -51,6 +51,9 @@ public sealed partial class MainWindow
     private SpriteVisual? _compactNameShadowVisual;
     private DropShadow? _compactNameDropShadow;
     private CompositionBrush? _compactNameAlphaMask;
+    private string? _compactNameMaskText;
+    private double _compactNameMaskFontSize;
+    private Vector2 _compactNameMaskSize;
     private bool _compactNameShadowHooked;
 
     private ContainerVisual? _expandedNameShadowRoot;
@@ -168,11 +171,16 @@ public sealed partial class MainWindow
         bool glassStyle = style == CompactVisualStyle.GlassTile;
         bool nativeStyle = style == CompactVisualStyle.NativeDesktop;
         bool folderStyle = CompactVisualStyles.ShowsFolderSilhouette(style);
+        bool edgeGlow = _host.State.GlobalSettings.EdgeGlowEnabled && !highContrast;
 
-        CompactLiquidSheen.Visibility = glassStyle ? Visibility.Visible : Visibility.Collapsed;
+        CompactLiquidSheen.Visibility = glassStyle && !highContrast ? Visibility.Visible : Visibility.Collapsed;
+        CompactLiquidInnerRim.Visibility = glassStyle && edgeGlow ? Visibility.Visible : Visibility.Collapsed;
+        CompactLiquidSheen.BorderThickness = edgeGlow ? new Thickness(0.75) : new Thickness(0);
+        CompactLiquidSheen.Opacity = edgeGlow ? 1.0 : 0.28;
         CompactNativeBadge.Visibility = nativeStyle ? Visibility.Visible : Visibility.Collapsed;
-        CompactEdgeOverlay.Visibility = nativeStyle ? Visibility.Collapsed : Visibility.Visible;
-        CompactEdgeOverlay.Opacity = nativeStyle ? 0.0 : backdropOpacity;
+        CompactNativeInnerRim.Visibility = nativeStyle && edgeGlow ? Visibility.Visible : Visibility.Collapsed;
+        CompactEdgeOverlay.Visibility = (nativeStyle || !edgeGlow) ? Visibility.Collapsed : Visibility.Visible;
+        CompactEdgeOverlay.Opacity = (nativeStyle || !edgeGlow) ? 0.0 : backdropOpacity;
 
         CompactFolderTab.Visibility = folderStyle ? Visibility.Visible : Visibility.Collapsed;
         CompactFolderPocket.Visibility = folderStyle ? Visibility.Visible : Visibility.Collapsed;
@@ -218,8 +226,11 @@ public sealed partial class MainWindow
         CompactNameShadow1.Visibility = Visibility.Collapsed;
         CompactNameShadow2.Visibility = Visibility.Collapsed;
 
-        // Keep expanded liquid glass sheen disabled in high-contrast accessibility mode.
+        // Honor EdgeGlowEnabled and high-contrast accessibility mode for expanded specular rims.
         ExpandedLiquidSheen.Visibility = highContrast ? Visibility.Collapsed : Visibility.Visible;
+        ExpandedLiquidInnerRim.Visibility = edgeGlow ? Visibility.Visible : Visibility.Collapsed;
+        ExpandedLiquidSheen.BorderThickness = edgeGlow ? new Thickness(0.75) : new Thickness(0);
+        ExpandedLiquidSheen.Opacity = edgeGlow ? 1.0 : 0.25;
 
         EnsureCompactGpuShadowVisuals();
         UpdateCompactNameShadowVisual(style, highContrast);
@@ -778,11 +789,21 @@ public sealed partial class MainWindow
         _compactNameShadowAuraVisual.Size = size;
 
         float opacity = (float)Math.Clamp(CompactVisualStyles.LabelShadowOpacity(style, highContrast), 0.0, 1.0);
-        if (_compactNameAlphaMask is null)
+        string text = CompactNameText.Text;
+        double fontSize = CompactNameText.FontSize;
+        bool contentChanged = !string.Equals(_compactNameMaskText, text, StringComparison.Ordinal) ||
+                              Math.Abs(_compactNameMaskFontSize - fontSize) > 0.01 ||
+                              Math.Abs(_compactNameMaskSize.X - size.X) > 0.25f ||
+                              Math.Abs(_compactNameMaskSize.Y - size.Y) > 0.25f;
+        if (_compactNameAlphaMask is null || contentChanged)
         {
+            // XAML owns TextBlock.GetAlphaMask() brushes; rebind without calling Dispose().
             _compactNameAlphaMask = CompactNameText.GetAlphaMask();
             _compactNameDropShadow.Mask = _compactNameAlphaMask;
             _compactNameDropShadowAura.Mask = _compactNameAlphaMask;
+            _compactNameMaskText = text;
+            _compactNameMaskFontSize = fontSize;
+            _compactNameMaskSize = size;
         }
         _compactNameDropShadow.Opacity = opacity;
         _compactNameDropShadowAura.Opacity = opacity * 0.95f;
@@ -1181,6 +1202,9 @@ public sealed partial class MainWindow
         if (_compactNameDropShadowAura is not null) _compactNameDropShadowAura.Mask = null;
         // XAML owns TextBlock.GetAlphaMask() brushes; detach from DropShadow without calling Dispose().
         _compactNameAlphaMask = null;
+        _compactNameMaskText = null;
+        _compactNameMaskFontSize = 0;
+        _compactNameMaskSize = Vector2.Zero;
         _compactNameShadowAuraVisual?.Dispose();
         _compactNameShadowAuraVisual = null;
         _compactNameDropShadowAura?.Dispose();
@@ -1394,8 +1418,20 @@ public sealed partial class MainWindow
         await RunSafelyAsync(async () =>
         {
             int count = await _host.AlignFloatingToDesktopGridAsync(_definition.Id);
-            if (count > 0 && !_closing)
-                ShowMessage(AppStrings.Format("DesktopGridAlignDoneFormat", count), InfoBarSeverity.Success);
+            if (_closing) return;
+            if (count > 0)
+            {
+                string message = AppStrings.Format("DesktopGridAlignDoneFormat", count);
+                if (_expanded)
+                    message += LocalizeToast("（收起后生效）", " (applies on collapse)", "（収納後に反映）");
+                ShowMessage(message, InfoBarSeverity.Success);
+            }
+            else
+            {
+                ShowMessage(
+                    LocalizeToast("当前已在桌面图标网格位置", "Already aligned to desktop icon grid", "すでにデスクトップグリッドに整列済みです"),
+                    InfoBarSeverity.Informational);
+            }
         }, "对齐桌面图标网格失败");
     }
 

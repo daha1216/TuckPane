@@ -904,15 +904,47 @@ public sealed partial class MainWindow
 
     internal async Task CompactGridGapsAsync()
     {
-        if (_closing || _items.Count == 0) return;
+        if (_closing) return;
+        if (_items.Count == 0)
+        {
+            ShowExpandedToast(
+                LocalizeToast("当前收纳窗暂无项目", "No items in this organizer", "このボックスには項目がありません"),
+                InfoBarSeverity.Informational);
+            return;
+        }
         Dictionary<string, Point>? before = UseCustomAnimations && _expanded ? CaptureRealizedItemPositions() : null;
 
         string[] names = _items.Select(i => i.RelativeName).ToArray();
-        List<string> readingOrder = FreeGridSlotMap.BuildReadingOrder(names, _resolvedItemSlots);
+        int[] priorSlots = _resolvedItemSlots.Length == names.Length
+            ? _resolvedItemSlots
+            : FreeGridSlotMap.ResolveSlots(names, _definition.ItemSlots);
+        List<string> readingOrder = FreeGridSlotMap.BuildReadingOrder(names, priorSlots);
+        Dictionary<string, int> denseSlots = FreeGridSlotMap.CompactToDense(readingOrder);
+        bool slotsChanged = false;
+        for (int i = 0; i < names.Length; i++)
+        {
+            if (!denseSlots.TryGetValue(names[i], out int denseSlot) || priorSlots[i] != denseSlot)
+            {
+                slotsChanged = true;
+                break;
+            }
+        }
+        if (!slotsChanged)
+        {
+            for (int i = 0; i < names.Length && i < readingOrder.Count; i++)
+            {
+                if (!string.Equals(names[i], readingOrder[i], StringComparison.OrdinalIgnoreCase))
+                {
+                    slotsChanged = true;
+                    break;
+                }
+            }
+        }
+
         List<string> previousOrder = _definition.ItemOrder.ToList();
         var previousSlots = new Dictionary<string, int>(_definition.ItemSlots ?? [], StringComparer.OrdinalIgnoreCase);
         _definition.ItemOrder = readingOrder;
-        _definition.ItemSlots = FreeGridSlotMap.CompactToDense(readingOrder);
+        _definition.ItemSlots = denseSlots;
         try
         {
             await _host.SaveStateAsync();
@@ -922,6 +954,14 @@ public sealed partial class MainWindow
             _definition.ItemOrder = previousOrder;
             _definition.ItemSlots = previousSlots;
             throw;
+        }
+
+        if (!slotsChanged)
+        {
+            ShowExpandedToast(
+                LocalizeToast("当前已是紧凑排布，无空位可整理", "Grid is already compact", "すでに隙間なく整列されています"),
+                InfoBarSeverity.Informational);
+            return;
         }
 
         var lookup = new Dictionary<string, WidgetItem>(_items.Count, StringComparer.OrdinalIgnoreCase);
@@ -949,5 +989,8 @@ public sealed partial class MainWindow
         ItemsRepeater.UpdateLayout();
         if (before is not null) ApplyFlipFromCapturedPositions(before);
         _host.NotifyOrganizerPreviewChanged(_definition.Id);
+        ShowExpandedToast(
+            LocalizeToast("已紧凑排布方格空位", "Compacted grid gaps", "グリッドの空きを詰めました"),
+            InfoBarSeverity.Success);
     }
 }

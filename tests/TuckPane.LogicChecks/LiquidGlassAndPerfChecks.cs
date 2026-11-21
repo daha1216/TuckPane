@@ -15,6 +15,7 @@ internal static class LiquidGlassAndPerfChecks
         CheckDedicatedHookThreadArchitecture(Require);
         CheckLiquidGlassAndNativeDesktopContract(Require);
         CheckZeroStutterReorderAndSelectionPerf(Require);
+        CheckV432RetinaMenuAndSettingsContracts(Require);
 
         Console.WriteLine("LiquidGlassAndPerfChecks: all assertions passed.");
         return Task.CompletedTask;
@@ -55,6 +56,17 @@ internal static class LiquidGlassAndPerfChecks
         var (glass200Size, _) = DesktopTypographyService.ResolveCompactLabelTypography(
             CompactVisualStyle.GlassTile, compactScale: 2.0, compactNameScale: 1.2, positioned: false);
         require(glass200Size <= 14.0, $"GlassTile 放大上限保护失效：{glass200Size} DIP。");
+
+        // CompactNameScale slider (60%-100%) must smoothly shrink GlassTile & NativeDesktop labels instead of locking at 12 DIP.
+        var (glass60Size, _) = DesktopTypographyService.ResolveCompactLabelTypography(
+            CompactVisualStyle.GlassTile, compactScale: 1.0, compactNameScale: 0.6, positioned: false);
+        require(glass60Size >= 8.0 && glass60Size < 10.0 && glass60Size < glass156Size - 2.0,
+            $"GlassTile 收起名称缩放 60% 未生效：{glass60Size} DIP（100%={glass156Size} DIP）。");
+
+        var (native60Size, _) = DesktopTypographyService.ResolveCompactLabelTypography(
+            CompactVisualStyle.NativeDesktop, compactScale: 1.0, compactNameScale: 0.6, positioned: false);
+        require(native60Size >= 7.5 && native60Size < native156Size - 2.0,
+            $"NativeDesktop 收起名称缩放 60% 未生效：{native60Size} DIP（100%={native156Size} DIP）。");
     }
 
     private static void CheckDedicatedHookThreadArchitecture(Action<bool, string> require)
@@ -216,5 +228,67 @@ internal static class LiquidGlassAndPerfChecks
                 transitionsCs.Contains("CloakForAtomicRelocation", StringComparison.Ordinal) &&
                 transitionsCs.Contains("CommitCompactHandoffAsync", StringComparison.Ordinal),
             "展开/收起必须通过 TransitionBridgeOverlay + DWMWA_CLOAK 实现零瞬移、零闪烁原子交接。");
+    }
+
+    private static void CheckV432RetinaMenuAndSettingsContracts(Action<bool, string> require)
+    {
+        // 1. Retina supersampled compact mini-icons
+        require(IconCacheService.NormalizeCompactPreviewPixelSize(0) == 12 &&
+                IconCacheService.NormalizeCompactPreviewPixelSize(40) == 40 &&
+                IconCacheService.NormalizeCompactPreviewPixelSize(512) == 128,
+            "IconCacheService.NormalizeCompactPreviewPixelSize 物理像素夹紧区间异常。");
+
+        string srcRoot = Path.Combine(RepoSourceSnapshot.RepoRoot(), "src", "TuckPane");
+        string iconCacheCs = File.ReadAllText(Path.Combine(srcRoot, "Services", "IconCacheService.cs"));
+        string mainCs = File.ReadAllText(Path.Combine(srcRoot, "MainWindow.xaml.cs"));
+        string transCs = File.ReadAllText(Path.Combine(srcRoot, "MainWindow.TransitionsAndResize.cs"));
+        string mainXaml = File.ReadAllText(Path.Combine(srcRoot, "MainWindow.xaml"));
+        string menuCs = File.ReadAllText(Path.Combine(srcRoot, "MainWindow.OrganizerMenu.cs"));
+        string catalogCs = File.ReadAllText(Path.Combine(srcRoot, "OrganizerCatalogController.cs"));
+        string styleCs = File.ReadAllText(Path.Combine(srcRoot, "MainWindow.NativeDesktopStyle.cs"));
+        string hostDesktopCs = File.ReadAllText(Path.Combine(srcRoot, "AppHost.NativeDesktop.cs"));
+        string consoleXaml = File.ReadAllText(Path.Combine(srcRoot, "ConsoleWindow.xaml"));
+        string formXaml = File.ReadAllText(Path.Combine(srcRoot, "Controls", "OrganizerSettingsForm.xaml"));
+
+        require(iconCacheCs.Contains("GetCompactPreviewIconAsync(", StringComparison.Ordinal) &&
+                iconCacheCs.Contains("BitmapInterpolationMode.Fant", StringComparison.Ordinal) &&
+                iconCacheCs.Contains("DecodePixelType.Physical", StringComparison.Ordinal) &&
+                iconCacheCs.Contains("ApplyAlphaSafeMicroUnsharpMask(", StringComparison.Ordinal),
+            "IconCacheService 缺少 Fant 面积超采样、Alpha 安全微锐化或 1:1 物理像素解码链路。");
+
+        require(mainCs.Contains("EnsureCompactPreviewReadyAsync(", StringComparison.Ordinal) &&
+                mainCs.Contains("IsCompactPreviewUpToDate(", StringComparison.Ordinal) &&
+                mainCs.Contains("BuildCompactPreviewSignature(", StringComparison.Ordinal),
+            "MainWindow.xaml.cs 缺少紧凑预览零重载守卫或签名比对，收起后可能异步覆盖导致闪烁。");
+
+        // 2. Post-enlarge collapse zero-flash dead-zone & pre-cloak preview sync
+        require(transCs.Contains("EnsureCompactPreviewReadyAsync(", StringComparison.Ordinal) &&
+                transCs.Contains("GetPixelSnappedCompactTranslation(", StringComparison.Ordinal) &&
+                transCs.Contains("0.06", StringComparison.Ordinal),
+            "MainWindow.TransitionsAndResize.cs 缺少收起前预览同步、物理像素对齐或 0.06 收起静定死区。");
+
+        // 3. Expanded context menu reliability, outside-click pause & floating Toast HUD
+        require(mainXaml.Contains("x:Name=\"ExpandedToastPill\"", StringComparison.Ordinal) &&
+                menuCs.Contains("PauseOutsideClickForOverlay(", StringComparison.Ordinal) &&
+                menuCs.Contains("ResumeOutsideClickAfterOverlay(", StringComparison.Ordinal) &&
+                menuCs.Contains("ShowExpandedToast(", StringComparison.Ordinal),
+            "展开态右键菜单缺少外部点击钩子暂停保护或浮动 Toast 反馈胶囊。");
+
+        require(catalogCs.Contains("YieldForMenuDismissAsync(", StringComparison.Ordinal) &&
+                catalogCs.Contains("IsDialogActive", StringComparison.Ordinal),
+            "OrganizerCatalogController 缺少菜单关闭后安全让步或模态框激活态保护。");
+
+        int alignMethodStart = hostDesktopCs.IndexOf("AlignFloatingToDesktopGridAsync(", StringComparison.Ordinal);
+        require(alignMethodStart > 0, "找不到 AlignFloatingToDesktopGridAsync 方法。");
+        string alignBody = hostDesktopCs[alignMethodStart..Math.Min(hostDesktopCs.Length, alignMethodStart + 1400)];
+        require(!alignBody.Contains("IsEligibleForDesktopMultiSelect", StringComparison.Ordinal),
+            "AlignFloatingToDesktopGridAsync 不应再跳过展开中的悬浮窗。");
+
+        // 4. Settings EdgeGlow wiring & Swiss-grid layout spine
+        require(styleCs.Contains("EdgeGlowEnabled", StringComparison.Ordinal) &&
+                styleCs.Contains("ExpandedLiquidSheen", StringComparison.Ordinal) &&
+                consoleXaml.Contains("Width=\"228\"", StringComparison.Ordinal) &&
+                formXaml.Contains("Width=\"208\"", StringComparison.Ordinal),
+            "设置页缺少边缘弧光开关实时联动或 Swiss-Grid 右列对齐规格。");
     }
 }
