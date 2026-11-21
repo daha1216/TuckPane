@@ -25,16 +25,26 @@ internal sealed class DockTipWindow : Window, IDisposable
         IsHitTestVisible = false,
         HorizontalAlignment = HorizontalAlignment.Left, VerticalAlignment = VerticalAlignment.Top
     };
+    private readonly Grid _edgeOverlay = new()
+    {
+        IsHitTestVisible = false,
+        HorizontalAlignment = HorizontalAlignment.Left, VerticalAlignment = VerticalAlignment.Top
+    };
+    private readonly SolidColorBrush _textBrush = new(Colors.Black);
     private readonly TextBlock _text = new()
     {
-        FontSize = 12, Foreground = new SolidColorBrush(Colors.Black),
+        FontSize = 12,
         TextTrimming = TextTrimming.None, TextWrapping = TextWrapping.NoWrap,
         IsTextSelectionEnabled = false
     };
     private readonly ThemeBackdrop _backdrop = new(surfaceName: "dock-tip", useRoundedMask: true);
+    private readonly ThemeEdgeSurface _edgeSurface;
     private readonly Windows.UI.ViewManagement.UISettings _settings = new();
     private readonly NativeWindowChromeController _chrome;
     private XamlRoot? _xamlRoot;
+    private ThemeValues _theme = new(0xFFF7F9FC, .80, .65);
+    private bool _hasTheme;
+    private string? _appliedFontFamilyName;
     private string? _measuredText;
     private double _measuredWidth, _measuredScale, _measuredTextScale;
     private (int Width, int Height) _clientSize;
@@ -48,9 +58,12 @@ internal sealed class DockTipWindow : Window, IDisposable
 
     internal DockTipWindow(IntPtr owner)
     {
+        _text.Foreground = _textBrush;
+        ApplyTipTypography();
         _root.Children.Add(_surface);
         _body.Child = _text;
         _root.Children.Add(_body);
+        _root.Children.Add(_edgeOverlay);
         _root.Loaded += Root_Loaded;
         _surface.SizeChanged += Surface_SizeChanged;
         Content = _root;
@@ -72,17 +85,55 @@ internal sealed class DockTipWindow : Window, IDisposable
                 NativeMethods.WS_EX_TRANSPARENT) & ~NativeMethods.WS_EX_APPWINDOW));
         SystemBackdrop = new TransparentWindowBackdrop();
         _backdrop.Attach(_surface);
+        _edgeSurface = new ThemeEdgeSurface(_edgeOverlay, _body);
+        _edgeSurface.SetCornerRadius(8);
         _chrome = new(Hwnd, _root.DispatcherQueue, extendClientFrame: false, applyBorderLast: true);
         _settings.AdvancedEffectsEnabledChanged += EffectsChanged;
         _settings.TextScaleFactorChanged += TextScaleChanged;
         ApplyMaterial();
     }
 
+    internal void SetTheme(ThemeValues theme)
+    {
+        if (_disposed) return;
+        _theme = theme;
+        _hasTheme = true;
+        ApplyMaterial();
+    }
+
     private void EffectsChanged(Windows.UI.ViewManagement.UISettings sender, object args) =>
         _root.DispatcherQueue.TryEnqueue(() => { if (!_disposed) ApplyMaterial(); });
 
-    private void ApplyMaterial() => _backdrop.SetTheme(new ThemeValues(0xFFFFFFFF, .78, .65),
-        _settings.AdvancedEffectsEnabled);
+    private void ApplyMaterial()
+    {
+        ThemeValues tipTheme = _hasTheme
+            ? (_theme.FullyTransparent
+                ? new ThemeValues(ThemePalette.IsDark(_theme) ? 0xFF1E222B : 0xFFF7F9FC, .80, .65)
+                : new ThemeValues(
+                    _theme.ColorArgb,
+                    Math.Clamp(ThemePalette.TintOpacity(_theme), .74f, .90f),
+                    Math.Clamp(_theme.BlurStrength, .55, 1.0),
+                    SolidColorMode: _theme.SolidColorMode,
+                    SolidOpacity: Math.Clamp(_theme.SolidOpacity, .82, .96)))
+            : new ThemeValues(0xFFF7F9FC, .80, .65);
+
+        bool dark = ThemePalette.IsDark(tipTheme);
+        _root.RequestedTheme = dark ? ElementTheme.Dark : ElementTheme.Light;
+        _textBrush.Color = ThemePalette.ForegroundColor(tipTheme);
+        bool effects = _settings.AdvancedEffectsEnabled;
+        _backdrop.SetTheme(tipTheme, effects);
+        _edgeSurface.SetTheme(tipTheme, effects);
+        _edgeSurface.SetEnabled(true);
+    }
+
+    private void ApplyTipTypography()
+    {
+        string fontName = AppStrings.FontFamily;
+        if (string.Equals(_appliedFontFamilyName, fontName, StringComparison.Ordinal)) return;
+        _appliedFontFamilyName = fontName;
+        _text.FontFamily = new FontFamily(fontName);
+        _measuredText = null;
+    }
 
     private void TextScaleChanged(Windows.UI.ViewManagement.UISettings sender, object args) => QueueMeasureRefresh();
 
@@ -108,13 +159,18 @@ internal sealed class DockTipWindow : Window, IDisposable
         if (sender.RasterizationScale != _measuredScale) QueueMeasureRefresh();
     }
 
-    private void Surface_SizeChanged(object sender, SizeChangedEventArgs args) =>
-        _backdrop.SetRoundedGeometry(RoundedSurfaceGeometry.Create(args.NewSize.Width, args.NewSize.Height,
-            8, _root.XamlRoot?.RasterizationScale ?? _measuredScale));
+    private void Surface_SizeChanged(object sender, SizeChangedEventArgs args)
+    {
+        RoundedSurfaceGeometry geometry = RoundedSurfaceGeometry.Create(args.NewSize.Width, args.NewSize.Height,
+            8, _root.XamlRoot?.RasterizationScale ?? _measuredScale);
+        _backdrop.SetRoundedGeometry(geometry);
+        _edgeSurface.SetRoundedGeometry(geometry);
+    }
 
     internal void Present(string text, HoverRect iconScreenPixels, NativeMethods.RECT work, bool horizontal, double scale)
     {
         if (_disposed) return;
+        ApplyTipTypography();
         _request = new(text, iconScreenPixels, work, horizontal, scale);
         PresentRequest();
     }
@@ -152,9 +208,11 @@ internal sealed class DockTipWindow : Window, IDisposable
                 _clientSize = DockVisualMath.TipClientPixels(new Vector2(
                     (float)Math.Min(maxBodyWidth, _text.DesiredSize.Width + 20),
                     (float)(_text.DesiredSize.Height + 12)), scale);
-                _body.Width = _surface.Width = _clientSize.Width / scale;
-                _body.Height = _surface.Height = _clientSize.Height / scale;
-                _backdrop.SetRoundedGeometry(RoundedSurfaceGeometry.Create(_body.Width, _body.Height, 8, scale));
+                _body.Width = _surface.Width = _edgeOverlay.Width = _clientSize.Width / scale;
+                _body.Height = _surface.Height = _edgeOverlay.Height = _clientSize.Height / scale;
+                RoundedSurfaceGeometry geometry = RoundedSurfaceGeometry.Create(_body.Width, _body.Height, 8, scale);
+                _backdrop.SetRoundedGeometry(geometry);
+                _edgeSurface.SetRoundedGeometry(geometry);
                 _measuredText = request.Text;
                 _measuredWidth = maxBodyWidth;
                 _measuredScale = scale;
@@ -204,6 +262,7 @@ internal sealed class DockTipWindow : Window, IDisposable
         if (_xamlRoot is not null) _xamlRoot.Changed -= XamlRoot_Changed;
         _settings.AdvancedEffectsEnabledChanged -= EffectsChanged;
         _settings.TextScaleFactorChanged -= TextScaleChanged;
+        _edgeSurface.Dispose();
         _backdrop.DetachAndClose();
         _chrome.Dispose();
         Close();

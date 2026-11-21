@@ -92,6 +92,19 @@ public sealed partial class MainWindow
         session.Track(pointer);
         if (!session.IsActive)
         {
+            if (HasActiveFilter)
+            {
+                double dx = pointer.X - session.PressPointerContent.X;
+                double dy = pointer.Y - session.PressPointerContent.Y;
+                if (dx * dx + dy * dy >= ItemReorderSession.ActivationThresholdDip * ItemReorderSession.ActivationThresholdDip)
+                {
+                    CancelItemReorder();
+                    ShowExpandedToast(
+                        LocalizeToast("筛选状态下暂不支持拖动排序，请先清除筛选", "Clear filter before reordering items", "フィルター中は並び替えできません。先にフィルターを解除してください"),
+                        InfoBarSeverity.Informational);
+                }
+                return;
+            }
             if (_itemDragPointerType == PointerDeviceType.Mouse)
             {
                 if (!session.TryActivate(pointer)) return;
@@ -134,6 +147,18 @@ public sealed partial class MainWindow
             AppLogger.Info($"换序跟踪：释放 source={session.SourceIndex} target={session.TargetIndex} state={session.State}。");
         if (IsCompactList && e.Pointer.PointerDeviceType == PointerDeviceType.Mouse && session.State == ItemDragState.Pressed)
         {
+            if (TryHandleItemSelectionClick(session.RelativeName))
+            {
+                CancelItemReorder(preserveHover: _hoverWave.HasPointer);
+                FocusExpandedItemsForKeyboardInput();
+                e.Handled = true;
+                return;
+            }
+            string clickedName = session.RelativeName;
+            _itemSelection.SelectSingle(clickedName, IndexOfItemInVisualOrder(clickedName));
+            RefreshItemSelectionVisuals();
+            SyncKeyboardFocusToItem(clickedName);
+            FocusExpandedItemsForKeyboardInput();
             await CompleteCompactClickAsync(e);
             return;
         }
@@ -150,20 +175,22 @@ public sealed partial class MainWindow
             CancelItemReorder(preserveHover: UseHoverPresentation && wasPressedClick && _hoverWave.HasPointer);
             if (wasPressedClick && TryHandleItemSelectionClick(session.RelativeName))
             {
+                FocusExpandedItemsForKeyboardInput();
                 e.Handled = true;
                 return;
             }
             if (wasPressedClick && !IsDock && item is not null)
             {
-                _itemSelection.SelectSingle(item.RelativeName, IndexOfItem(item.RelativeName));
+                _itemSelection.SelectSingle(item.RelativeName, IndexOfItemInVisualOrder(item.RelativeName));
                 RefreshItemSelectionVisuals();
+                SyncKeyboardFocusToItem(item.RelativeName);
             }
             if (item is { Kind: WidgetItemKind.Organizer, OrganizerId: Guid } && sender is FrameworkElement host)
             {
                 await OpenTaggedItemAsync(host);
                 e.Handled = true;
             }
-            else if (!IsCompactList && item is { Kind: WidgetItemKind.Note, NoteId: Guid noteId })
+            else if (!IsCompactList && item is { Kind: WidgetItemKind.Note, NoteId: Guid })
             {
                 await OpenItemAsync(item, doubleTap: false);
                 e.Handled = true;
@@ -177,6 +204,10 @@ public sealed partial class MainWindow
             {
                 await OpenItemAsync(item, doubleTap: false);
                 e.Handled = true;
+            }
+            else if (wasPressedClick && !IsDock)
+            {
+                FocusExpandedItemsForKeyboardInput();
             }
         }
         else e.Handled = true;
@@ -201,6 +232,11 @@ public sealed partial class MainWindow
 
     private void ItemTouchHoldTimer_Tick(Microsoft.UI.Dispatching.DispatcherQueueTimer sender, object args)
     {
+        if (HasActiveFilter)
+        {
+            CancelItemReorder();
+            return;
+        }
         if (_itemReorderSession is not { IsActive: false } session || _itemDragHost is null) return;
         session.Activate(session.LatestPointerContent);
         StartItemReorder();
@@ -208,6 +244,11 @@ public sealed partial class MainWindow
 
     private void StartItemReorder()
     {
+        if (HasActiveFilter)
+        {
+            CancelItemReorder();
+            return;
+        }
         if (_itemReorderSession is not { IsActive: true } session || _itemDragHost is null) return;
         _compactClicks.Reset();
         if (_itemCapturedPointer is { } pointer && _itemPointerCaptureOwner is { } previousOwner &&
@@ -286,6 +327,10 @@ public sealed partial class MainWindow
 
         double scale = Math.Max(1, NativeMethods.GetDpiForWindow(_hwnd) / 96d);
         Point viewportOrigin = ItemsScrollView.TransformToVisual(WindowRoot).TransformPoint(new Point());
+        Thickness repeaterMargin = ItemsRepeater.Margin;
+        Thickness scrollPadding = ItemsScrollView.Padding;
+        double contentOffsetX = repeaterMargin.Left + scrollPadding.Left;
+        double contentOffsetY = repeaterMargin.Top + scrollPadding.Top;
         Point pointerInWindow;
         if (_itemDragPointerType == PointerDeviceType.Mouse)
         {
@@ -301,14 +346,14 @@ public sealed partial class MainWindow
         else
         {
             pointerInWindow = new(
-                viewportOrigin.X + session.LatestPointerContent.X - ItemsScrollView.HorizontalOffset,
-                viewportOrigin.Y + session.LatestPointerContent.Y - ItemsScrollView.VerticalOffset);
+                viewportOrigin.X + contentOffsetX + session.LatestPointerContent.X - ItemsScrollView.HorizontalOffset,
+                viewportOrigin.Y + contentOffsetY + session.LatestPointerContent.Y - ItemsScrollView.VerticalOffset);
         }
         Point pointerInViewport = new(pointerInWindow.X - viewportOrigin.X, pointerInWindow.Y - viewportOrigin.Y);
         ApplyItemDragAutoScroll(pointerInViewport.Y, seconds);
         Point pointerContent = new(
-            pointerInViewport.X + ItemsScrollView.HorizontalOffset,
-            pointerInViewport.Y + ItemsScrollView.VerticalOffset);
+            pointerInViewport.X + ItemsScrollView.HorizontalOffset - contentOffsetX,
+            pointerInViewport.Y + ItemsScrollView.VerticalOffset - contentOffsetY);
         if (_freeGridEngine is not null)
         {
             UpdateIosFluidReorderFrame(session, pointerContent, seconds);
@@ -809,6 +854,11 @@ public sealed partial class MainWindow
 
     private async Task CommitItemReorderAsync(ItemReorderSession session, bool nativeDrop = false)
     {
+        if (nativeDrop && ConsumePendingInternalOleFreeGridSlots() is { } oleFreeGridSlots)
+        {
+            await CommitInternalOleFreeGridReorderAsync(session, oleFreeGridSlots);
+            return;
+        }
         if (!nativeDrop && _freeGridEngine is not null)
         {
             await CommitIosFluidReorderAsync(session);
@@ -931,6 +981,8 @@ public sealed partial class MainWindow
             {
                 _itemCollectionMoveInProgress = false;
             }
+            InvalidateActiveSortCriterion();
+            RenderCompactPreview();
             _host.NotifyOrganizerPreviewChanged(_definition.Id);
             if (_itemDragTraceEnabled)
                 AppLogger.Info($"换序跟踪：宿主生命周期 prepared={_itemElementsPrepared - preparedBeforeCommit} " +
@@ -951,6 +1003,10 @@ public sealed partial class MainWindow
             }
             AppLogger.Error("保存项目换序失败。", ex);
             ShowMessage(AppStrings.Get("SaveConfigurationError"), InfoBarSeverity.Warning);
+        }
+        finally
+        {
+            _itemDragLanding = false;
         }
     }
 
@@ -1024,7 +1080,7 @@ public sealed partial class MainWindow
     {
         long now = Stopwatch.GetTimestamp();
         bool activePreview = _itemReorderSession is { IsActive: true };
-        if (_itemReorderSession is { IsActive: true } session)
+        if (_itemReorderSession is { IsActive: true } session && _freeGridEngine is null)
         {
             bool transitionRunning = StepGapTransition(session, now);
             if (!transitionRunning) EnsureGapPreviewMaterialized(session);
@@ -1032,7 +1088,14 @@ public sealed partial class MainWindow
         }
         double seconds = Math.Clamp(Stopwatch.GetElapsedTime(_itemDragLastFrame, now).TotalSeconds, 0, 1d / 20);
         _itemDragLastFrame = now;
-        bool settled = StepItemMotions(seconds, directDragHost: null);
+        bool settled = _freeGridEngine is not null
+            ? StepIosFluidItemSprings(seconds, directDragHost: null)
+            : StepItemMotions(seconds, directDragHost: null);
+        if (_freeGridEngine is not null && activePreview)
+        {
+            StepFreeGridDropGhostSpring(seconds);
+            return;
+        }
         if (!settled && Stopwatch.GetElapsedTime(_nativeItemMotionRenderingStartedAt, now) < TimeSpan.FromMilliseconds(500)) return;
         if (activePreview) StopNativeItemMotionRendering(snapToTargets: !settled);
         else NormalizeItemMotionsToLayout(settled ? "FlipCompleted" : "FlipTimeout");
@@ -1205,6 +1268,7 @@ public sealed partial class MainWindow
         TrySetItemDragClockBoost(false);
         CleanupIosFreeGridOverlays();
         _freeGridEngine = null;
+        _pendingInternalOleFreeGridSlots = null;
         _itemReorderSession = null;
         _itemDragIdentityWarnings.Clear();
         _shellPromotionPending = false;
@@ -1306,6 +1370,12 @@ public sealed partial class MainWindow
     private void ItemsGrid_DragLeave(object sender, DragEventArgs e)
     {
         if (_draggedRelativeName is null || _itemReorderSession is not { NativeDragStarted: true } session) return;
+        if (IsFreeGridLayoutActive)
+        {
+            LeaveInternalOleFreeGridPreview();
+            e.Handled = true;
+            return;
+        }
         session.LeaveInternalPreview();
         ResetGapTransitionState();
         ApplyAllProvisionalItemVisuals(animate: false);
@@ -1314,6 +1384,11 @@ public sealed partial class MainWindow
 
     private void UpdateInternalOleTarget(DragEventArgs e, ItemReorderSession session)
     {
+        if (IsFreeGridLayoutActive)
+        {
+            UpdateInternalOleFreeGridTarget(e, session);
+            return;
+        }
         session.MarkInternalPreview();
         session.UpdateTarget(
             e.GetPosition(ItemsRepeater),
@@ -1357,9 +1432,16 @@ public sealed partial class MainWindow
         {
             if (_itemReorderSession is { NativeDragStarted: true } session)
             {
-                UpdateInternalOleTarget(e, session);
-                CompleteGapTransitionsImmediately(session);
-                session.SealVisualIndices(_items.Count);
+                if (IsFreeGridLayoutActive)
+                {
+                    CaptureInternalOleFreeGridDropSlots(e, session);
+                }
+                else
+                {
+                    UpdateInternalOleTarget(e, session);
+                    CompleteGapTransitionsImmediately(session);
+                    session.SealVisualIndices(_items.Count);
+                }
                 _internalOleDropAccepted = true;
                 e.AcceptedOperation = InternalOleOperation();
             }
@@ -1394,6 +1476,11 @@ public sealed partial class MainWindow
         _externalHoverTimer.Stop();
         _hoverExpandScrollToEnd = false;
         if (_draggedRelativeName is null || _itemReorderSession is not { NativeDragStarted: true } session) return;
+        if (IsFreeGridLayoutActive)
+        {
+            LeaveInternalOleFreeGridPreview();
+            return;
+        }
         session.LeaveInternalPreview();
         ResetGapTransitionState();
         ApplyAllProvisionalItemVisuals(animate: false);

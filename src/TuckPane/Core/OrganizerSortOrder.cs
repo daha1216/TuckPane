@@ -1,6 +1,7 @@
 using System.Runtime.InteropServices;
 using System.Text;
 using TuckPane.Models;
+using TuckPane.Services;
 
 namespace TuckPane.Core;
 
@@ -92,26 +93,31 @@ internal static class OrganizerSortOrder
                 {
                     if (TryResolveShortcutTarget(item.FullPath, out string? targetPath, out bool isDirectoryAttr))
                     {
-                        if (!string.IsNullOrWhiteSpace(targetPath) &&
-                            (Directory.Exists(targetPath) || (isDirectoryAttr && !File.Exists(targetPath))))
+                        if (!string.IsNullOrWhiteSpace(targetPath))
                         {
-                            extension = "lnk:0-folder";
-                        }
-                        else if (!string.IsNullOrWhiteSpace(targetPath) && File.Exists(targetPath))
-                        {
-                            var targetFile = new FileInfo(targetPath);
-                            size = targetFile.Length;
-                            string targetExt = Path.GetExtension(targetPath).ToLowerInvariant();
-                            extension = string.IsNullOrEmpty(targetExt) ? "lnk:1-file" : $"lnk:1-{targetExt}";
-                        }
-                        else if (!string.IsNullOrWhiteSpace(targetPath))
-                        {
-                            string targetExt = Path.GetExtension(targetPath).ToLowerInvariant();
-                            extension = string.IsNullOrEmpty(targetExt) ? "lnk:2-shortcut" : $"lnk:1-{targetExt}";
+                            if (File.Exists(targetPath))
+                            {
+                                var targetFile = new FileInfo(targetPath);
+                                size = targetFile.Length;
+                                string targetExt = Path.GetExtension(targetPath).ToLowerInvariant();
+                                extension = string.IsNullOrEmpty(targetExt) ? "lnk:1-file" : $"lnk:1-{targetExt}";
+                            }
+                            else if (Directory.Exists(targetPath))
+                            {
+                                extension = "lnk:0-folder";
+                            }
+                            else
+                            {
+                                string targetExt = Path.GetExtension(targetPath).ToLowerInvariant();
+                                if (isDirectoryAttr && !IsExecutableExtension(targetExt))
+                                    extension = "lnk:0-folder";
+                                else
+                                    extension = string.IsNullOrEmpty(targetExt) ? "lnk:2-shortcut" : $"lnk:1-{targetExt}";
+                            }
                         }
                         else
                         {
-                            extension = "lnk:2-shortcut";
+                            extension = isDirectoryAttr ? "lnk:0-folder" : "lnk:2-shortcut";
                         }
                     }
                     else
@@ -128,133 +134,249 @@ internal static class OrganizerSortOrder
         return new SortableItemMetadata(item.RelativeName, item.Name, item.Kind, extension, modified, size);
     }
 
+    private const uint CpAcp = 0;
+    private const uint ExpSzLinkSignature = 0xA0000001u;
+
+    [DllImport("kernel32.dll", ExactSpelling = true)]
+    private static extern int MultiByteToWideChar(
+        uint codePage,
+        uint dwFlags,
+        in byte lpMultiByteStr,
+        int cbMultiByte,
+        [Out] char[]? lpWideCharStr,
+        int cchWideChar);
+
+    private static bool IsExecutableExtension(string lowerExtension) =>
+        lowerExtension is ".exe" or ".com" or ".bat" or ".cmd" or ".msi" or ".ps1" or ".scr" or ".lnk";
+
     private static bool TryResolveShortcutTarget(string lnkPath, out string? targetPath, out bool isDirectoryAttribute)
     {
         targetPath = null;
         isDirectoryAttribute = false;
+        string? linkInfoPath = null;
+        string? expSzPath = null;
+
         try
         {
             byte[] bytes = File.ReadAllBytes(lnkPath);
-            if (bytes.Length < 76) return false;
-            uint headerSize = BitConverter.ToUInt32(bytes, 0);
-            if (headerSize != 0x0000004C) return false;
-
-            uint linkFlags = BitConverter.ToUInt32(bytes, 20);
-            uint fileAttributes = BitConverter.ToUInt32(bytes, 24);
-            isDirectoryAttribute = (fileAttributes & 0x10u) != 0;
-
-            int pos = 76;
-            // Skip LinkTargetIDList if HasLinkTargetIDList (0x01) is set.
-            if ((linkFlags & 0x01u) != 0)
+            if (bytes.Length >= 76 && BitConverter.ToUInt32(bytes, 0) == 0x0000004C)
             {
-                if (pos + 2 > bytes.Length) return false;
-                ushort idListSize = BitConverter.ToUInt16(bytes, pos);
-                pos += 2 + idListSize;
-            }
+                uint linkFlags = BitConverter.ToUInt32(bytes, 20);
+                uint fileAttributes = BitConverter.ToUInt32(bytes, 24);
+                isDirectoryAttribute = (fileAttributes & 0x10u) != 0;
 
-            // Parse LinkInfo if HasLinkInfo (0x02) is set.
-            if ((linkFlags & 0x02u) != 0 && pos + 28 <= bytes.Length)
-            {
-                int linkInfoStart = pos;
-                uint linkInfoSize = BitConverter.ToUInt32(bytes, linkInfoStart);
-                uint linkInfoHeaderSize = BitConverter.ToUInt32(bytes, linkInfoStart + 4);
-                uint linkInfoFlags = BitConverter.ToUInt32(bytes, linkInfoStart + 8);
-                if (linkInfoSize >= 28 && linkInfoStart + linkInfoSize <= bytes.Length && (linkInfoFlags & 0x01u) != 0)
+                int pos = 76;
+                bool binaryIntact = true;
+
+                // Skip LinkTargetIDList if HasLinkTargetIDList (0x01) is set.
+                if ((linkFlags & 0x01u) != 0)
                 {
-                    string? basePath = null;
-                    string? commonSuffix = null;
-                    if (linkInfoHeaderSize >= 0x24 && linkInfoStart + 36 <= bytes.Length)
+                    if (pos + 2 <= bytes.Length)
                     {
-                        uint baseOffsetUni = BitConverter.ToUInt32(bytes, linkInfoStart + 28);
-                        uint suffixOffsetUni = BitConverter.ToUInt32(bytes, linkInfoStart + 32);
-                        if (baseOffsetUni > 0 && linkInfoStart + baseOffsetUni < bytes.Length)
-                            basePath = ReadNullTerminatedUtf16(bytes, (int)(linkInfoStart + baseOffsetUni));
-                        if (suffixOffsetUni > 0 && linkInfoStart + suffixOffsetUni < bytes.Length)
-                            commonSuffix = ReadNullTerminatedUtf16(bytes, (int)(linkInfoStart + suffixOffsetUni));
+                        ushort idListSize = BitConverter.ToUInt16(bytes, pos);
+                        pos += 2 + idListSize;
+                        if (pos > bytes.Length) binaryIntact = false;
                     }
-
-                    if (string.IsNullOrWhiteSpace(basePath))
+                    else
                     {
-                        uint baseOffset = BitConverter.ToUInt32(bytes, linkInfoStart + 16);
-                        uint suffixOffset = BitConverter.ToUInt32(bytes, linkInfoStart + 24);
-                        if (baseOffset > 0 && linkInfoStart + baseOffset < bytes.Length)
-                            basePath = ReadNullTerminatedAnsi(bytes, (int)(linkInfoStart + baseOffset));
-                        if (suffixOffset > 0 && linkInfoStart + suffixOffset < bytes.Length)
-                            commonSuffix = ReadNullTerminatedAnsi(bytes, (int)(linkInfoStart + suffixOffset));
-                    }
-
-                    if (!string.IsNullOrWhiteSpace(basePath))
-                    {
-                        string combined = string.IsNullOrEmpty(commonSuffix)
-                            ? basePath
-                            : $"{basePath.TrimEnd('\\')}\\{commonSuffix.TrimStart('\\')}";
-                        targetPath = Environment.ExpandEnvironmentVariables(combined);
-                        return true;
+                        binaryIntact = false;
                     }
                 }
-            }
 
-            // Fallback: scan UTF-16LE strings inside the .lnk payload for a drive-rooted path.
-            string? scanned = ScanForDrivePathUtf16(bytes);
-            if (!string.IsNullOrWhiteSpace(scanned))
-            {
-                targetPath = Environment.ExpandEnvironmentVariables(scanned);
-                return true;
+                // Parse LinkInfo if HasLinkInfo (0x02) is set.
+                if (binaryIntact && (linkFlags & 0x02u) != 0)
+                {
+                    if (pos + 4 <= bytes.Length)
+                    {
+                        int linkInfoStart = pos;
+                        uint linkInfoSize = BitConverter.ToUInt32(bytes, linkInfoStart);
+                        if (linkInfoSize >= 4 && (long)linkInfoStart + linkInfoSize <= bytes.Length)
+                        {
+                            int linkInfoEnd = linkInfoStart + (int)linkInfoSize;
+                            if (linkInfoSize >= 28)
+                            {
+                                uint linkInfoHeaderSize = BitConverter.ToUInt32(bytes, linkInfoStart + 4);
+                                uint linkInfoFlags = BitConverter.ToUInt32(bytes, linkInfoStart + 8);
+                                if ((linkInfoFlags & 0x01u) != 0)
+                                {
+                                    string? basePath = null;
+                                    string? commonSuffix = null;
+                                    if (linkInfoHeaderSize >= 0x24 && linkInfoSize >= 36)
+                                    {
+                                        uint baseOffsetUni = BitConverter.ToUInt32(bytes, linkInfoStart + 28);
+                                        uint suffixOffsetUni = BitConverter.ToUInt32(bytes, linkInfoStart + 32);
+                                        if (baseOffsetUni > 0 && baseOffsetUni < linkInfoSize)
+                                        {
+                                            int start = linkInfoStart + (int)baseOffsetUni;
+                                            basePath = ReadNullTerminatedUtf16(bytes, start, linkInfoEnd - start);
+                                        }
+                                        if (suffixOffsetUni > 0 && suffixOffsetUni < linkInfoSize)
+                                        {
+                                            int start = linkInfoStart + (int)suffixOffsetUni;
+                                            commonSuffix = ReadNullTerminatedUtf16(bytes, start, linkInfoEnd - start);
+                                        }
+                                    }
+
+                                    if (string.IsNullOrWhiteSpace(basePath))
+                                    {
+                                        uint baseOffset = BitConverter.ToUInt32(bytes, linkInfoStart + 16);
+                                        uint suffixOffset = BitConverter.ToUInt32(bytes, linkInfoStart + 24);
+                                        if (baseOffset > 0 && baseOffset < linkInfoSize)
+                                        {
+                                            int start = linkInfoStart + (int)baseOffset;
+                                            basePath = ReadNullTerminatedAnsi(bytes, start, linkInfoEnd - start);
+                                        }
+                                        if (suffixOffset > 0 && suffixOffset < linkInfoSize)
+                                        {
+                                            int start = linkInfoStart + (int)suffixOffset;
+                                            commonSuffix = ReadNullTerminatedAnsi(bytes, start, linkInfoEnd - start);
+                                        }
+                                    }
+
+                                    if (!string.IsNullOrWhiteSpace(basePath))
+                                    {
+                                        string combined = string.IsNullOrEmpty(commonSuffix)
+                                            ? basePath
+                                            : $"{basePath.TrimEnd('\\')}\\{commonSuffix.TrimStart('\\')}";
+                                        linkInfoPath = Environment.ExpandEnvironmentVariables(combined.Trim());
+                                        if (File.Exists(linkInfoPath) || Directory.Exists(linkInfoPath))
+                                        {
+                                            targetPath = linkInfoPath;
+                                            return true;
+                                        }
+                                    }
+                                }
+                            }
+                            pos = linkInfoEnd;
+                        }
+                        else
+                        {
+                            binaryIntact = false;
+                        }
+                    }
+                    else
+                    {
+                        binaryIntact = false;
+                    }
+                }
+
+                // Skip StringData (Name, RelativePath, WorkingDir, Arguments, IconLocation) to reach ExtraData.
+                if (binaryIntact)
+                {
+                    bool isUnicode = (linkFlags & 0x80u) != 0;
+                    int charBytes = isUnicode ? 2 : 1;
+                    ReadOnlySpan<uint> stringFlags = [0x04u, 0x08u, 0x10u, 0x20u, 0x40u];
+                    foreach (uint flag in stringFlags)
+                    {
+                        if ((linkFlags & flag) == 0) continue;
+                        if (pos + 2 > bytes.Length)
+                        {
+                            binaryIntact = false;
+                            break;
+                        }
+                        ushort charCount = BitConverter.ToUInt16(bytes, pos);
+                        pos += 2 + charCount * charBytes;
+                        if (pos > bytes.Length)
+                        {
+                            binaryIntact = false;
+                            break;
+                        }
+                    }
+                }
+
+                // Parse ExtraData blocks for EXP_SZ_LINK (0xA0000001 EnvironmentVariableDataBlock).
+                if (binaryIntact)
+                {
+                    while (pos + 4 <= bytes.Length)
+                    {
+                        uint blockSize = BitConverter.ToUInt32(bytes, pos);
+                        if (blockSize < 4 || (long)pos + blockSize > bytes.Length) break;
+                        if (blockSize >= 788 && BitConverter.ToUInt32(bytes, pos + 4) == ExpSzLinkSignature)
+                        {
+                            string unicodeTarget = ReadNullTerminatedUtf16(bytes, pos + 268, 520);
+                            string rawTarget = !string.IsNullOrWhiteSpace(unicodeTarget)
+                                ? unicodeTarget
+                                : ReadNullTerminatedAnsi(bytes, pos + 8, 260);
+                            if (!string.IsNullOrWhiteSpace(rawTarget))
+                            {
+                                expSzPath = Environment.ExpandEnvironmentVariables(rawTarget.Trim());
+                                if (File.Exists(expSzPath) || Directory.Exists(expSzPath))
+                                {
+                                    targetPath = expSzPath;
+                                    return true;
+                                }
+                            }
+                        }
+                        pos += (int)blockSize;
+                    }
+                }
             }
         }
         catch
         {
-            // Ignore malformed shortcut payloads and fall back safely.
+            // Ignore malformed binary shortcut payloads and fall back safely to COM IShellLinkW.
+        }
+
+        // Authoritative COM IShellLinkW fallback when binary LinkInfo + EXP_SZ_LINK do not yield an existing path.
+        string? comTargetPath = null;
+        try
+        {
+            ShortcutInspection? inspection = ShortcutIntegrityService.InspectLink(lnkPath);
+            if (inspection is not null &&
+                !inspection.IsVirtualShellTarget &&
+                !string.IsNullOrWhiteSpace(inspection.ExpandedTargetPath))
+            {
+                comTargetPath = inspection.ExpandedTargetPath;
+                if (File.Exists(comTargetPath) || Directory.Exists(comTargetPath))
+                {
+                    targetPath = comTargetPath;
+                    return true;
+                }
+            }
+        }
+        catch
+        {
+            // Fall through to best non-existing parsed target below.
+        }
+
+        string? fallback = !string.IsNullOrWhiteSpace(comTargetPath)
+            ? comTargetPath
+            : !string.IsNullOrWhiteSpace(expSzPath)
+                ? expSzPath
+                : linkInfoPath;
+        if (!string.IsNullOrWhiteSpace(fallback))
+        {
+            targetPath = fallback;
+            return true;
         }
         return false;
     }
 
-    private static string ReadNullTerminatedUtf16(byte[] bytes, int offset)
+    private static string ReadNullTerminatedUtf16(byte[] bytes, int offset, int maxBytes = int.MaxValue)
     {
+        if (offset < 0 || offset >= bytes.Length) return string.Empty;
+        int limit = maxBytes == int.MaxValue ? bytes.Length : Math.Min(bytes.Length, offset + maxBytes);
         int end = offset;
-        while (end + 1 < bytes.Length && (bytes[end] != 0 || bytes[end + 1] != 0))
+        while (end + 1 < limit && (bytes[end] != 0 || bytes[end + 1] != 0))
             end += 2;
         return end > offset ? Encoding.Unicode.GetString(bytes, offset, end - offset) : string.Empty;
     }
 
-    private static string ReadNullTerminatedAnsi(byte[] bytes, int offset)
+    private static string ReadNullTerminatedAnsi(byte[] bytes, int offset, int maxBytes = int.MaxValue)
     {
+        if (offset < 0 || offset >= bytes.Length) return string.Empty;
+        int limit = maxBytes == int.MaxValue ? bytes.Length : Math.Min(bytes.Length, offset + maxBytes);
         int end = offset;
-        while (end < bytes.Length && bytes[end] != 0)
+        while (end < limit && bytes[end] != 0)
             end++;
-        return end > offset ? Encoding.Default.GetString(bytes, offset, end - offset) : string.Empty;
-    }
+        int byteCount = end - offset;
+        if (byteCount <= 0) return string.Empty;
 
-    private static string? ScanForDrivePathUtf16(byte[] bytes)
-    {
-        string? bestCandidate = null;
-        for (int i = 76; i + 8 < bytes.Length; i++)
-        {
-            char c0 = (char)(bytes[i] | (bytes[i + 1] << 8));
-            char c1 = (char)(bytes[i + 2] | (bytes[i + 3] << 8));
-            char c2 = (char)(bytes[i + 4] | (bytes[i + 5] << 8));
-            if (!char.IsAsciiLetter(c0) || c1 != ':' || c2 != '\\')
-                continue;
-
-            int end = i;
-            while (end + 1 < bytes.Length)
-            {
-                char ch = (char)(bytes[end] | (bytes[end + 1] << 8));
-                if (ch < 32 || ch is '"' or '<' or '>' or '|' or '*' or '?')
-                    break;
-                end += 2;
-                if (end - i >= 520) break;
-            }
-
-            string candidate = Encoding.Unicode.GetString(bytes, i, end - i).Trim();
-            if (candidate.Length >= 4)
-            {
-                if (File.Exists(candidate) || Directory.Exists(candidate))
-                    return candidate;
-                bestCandidate ??= candidate;
-            }
-        }
-        return bestCandidate;
+        int charCount = MultiByteToWideChar(CpAcp, 0, in bytes[offset], byteCount, null, 0);
+        if (charCount <= 0) return string.Empty;
+        char[] buffer = new char[charCount];
+        int written = MultiByteToWideChar(CpAcp, 0, in bytes[offset], byteCount, buffer, charCount);
+        return written > 0 ? new string(buffer, 0, written) : string.Empty;
     }
 
     private static bool IsContainerKind(WidgetItemKind kind) =>

@@ -83,7 +83,7 @@ public sealed partial class AppHost : IDisposable
 
     internal IReadOnlyList<WidgetItem> GetOrganizerPreviewItems(Guid organizerId) =>
         _windows.TryGetValue(organizerId, out MainWindow? window)
-            ? window.ItemSnapshot.Take(4).Select(item => item.CopyValue()).ToArray()
+            ? window.GetItemsInVisualReadingOrder().Take(4).Select(item => item.CopyValue()).ToArray()
             : [];
 
     internal void NotifyOrganizerPreviewChanged(Guid organizerId)

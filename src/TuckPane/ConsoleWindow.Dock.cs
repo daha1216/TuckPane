@@ -24,6 +24,7 @@ public sealed partial class ConsoleWindow
         if (!_host.DockSettings.Apply(dock, direction, size, spacingFactor)) return;
         _host.Windows.FirstOrDefault(window => window.OrganizerId == dock.Id)?.ApplyDefinition(OrganizerVisualChange.Layout);
         RefreshDockSettings(dock);
+        RefreshManageListItemMetadata(dock);
         _manageChangeVersion++;
         _stateSaveTimer.Stop();
         _stateSaveTimer.Start();
@@ -39,8 +40,8 @@ public sealed partial class ConsoleWindow
             _editing.DockIconSizeDip = dock.DockIconSizeDip;
             _editing.DockOrientation = dock.DockOrientation;
             _editing.DockSpacingFactor = dock.DockSpacingFactor;
-            ManageForm.DockIconSize.Value = dock.DockIconSizeDip;
-            ManageForm.DockSpacing.Value = dock.DockSpacingFactor;
+            ManageForm.DockIconSize.SetModelValue(dock.DockIconSizeDip);
+            ManageForm.DockSpacing.SetModelValue(dock.DockSpacingFactor);
             ManageForm.DockOrientation.SelectedIndex = (int)dock.DockOrientation;
             ManageForm.DockIconSizeLabel.Text = $"{dock.DockIconSizeDip:0} DIP";
             ManageForm.DockSpacingLabel.Text = $"{dock.DockSpacingFactor:0.00}";
@@ -69,6 +70,17 @@ public sealed partial class ConsoleWindow
             ThemeTarget.Dock => "NavDocks",
             _ => "NavOrganizers"
         });
+        if (DeleteOrganizerButton is not null)
+        {
+            string deleteKey = _manageCategory switch
+            {
+                ThemeTarget.Station => "DeleteStation",
+                ThemeTarget.Dock => "DeleteDock",
+                _ => "DeleteOrganizer"
+            };
+            DeleteOrganizerButton.Tag = "loc:" + deleteKey;
+            DeleteOrganizerButton.Content = AppStrings.Get(deleteKey);
+        }
     }
 
     private bool UpdateDockAddControls()

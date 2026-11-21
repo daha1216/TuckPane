@@ -37,7 +37,14 @@ public sealed partial class MainWindow
         }
     }
 
-    private void ShowEnhancedFileContextMenu(FrameworkElement host, WidgetItem item)
+    internal void InvalidateActiveSortCriterion()
+    {
+        if (_activeSortCriterion is null) return;
+        _activeSortCriterion = null;
+        UpdateSortMenuIndicators();
+    }
+
+    private void ShowEnhancedFileContextMenu(FrameworkElement host, WidgetItem item, Point? pointerPoint = null)
     {
         var open = new MenuFlyoutItem { Text = AppStrings.Get("ContextItemOpen"), Icon = new FontIcon { Glyph = "\uE8E5" } };
         var reveal = new MenuFlyoutItem { Text = AppStrings.Get("ContextItemReveal"), Icon = new FontIcon { Glyph = "\uE8DA" } };
@@ -106,7 +113,10 @@ public sealed partial class MainWindow
         };
         try
         {
-            flyout.ShowAt(host);
+            if (pointerPoint is Point pt)
+                flyout.ShowAt(host, pt);
+            else
+                flyout.ShowAt(host);
         }
         catch (Exception ex)
         {
@@ -212,13 +222,14 @@ public sealed partial class MainWindow
             return;
         }
 
-        string[] previousVisibleOrder = _items.Select(i => i.RelativeName).ToArray();
-        var previousSlotByItem = new Dictionary<string, int>(_items.Count, StringComparer.OrdinalIgnoreCase);
-        for (int i = 0; i < _items.Count; i++)
+        string[] previousFullOrder = source.Select(i => i.RelativeName).ToArray();
+        int[] previousFullSlots = FreeGridSlotMap.ResolveSlots(previousFullOrder, _definition.ItemSlots);
+        var previousSlotByItem = new Dictionary<string, int>(previousFullOrder.Length, StringComparer.OrdinalIgnoreCase);
+        for (int i = 0; i < previousFullOrder.Length; i++)
         {
-            string rel = _items[i].RelativeName;
+            string rel = previousFullOrder[i];
             if (!string.IsNullOrEmpty(rel))
-                previousSlotByItem[rel] = i < _resolvedItemSlots.Length ? _resolvedItemSlots[i] : i;
+                previousSlotByItem[rel] = i < previousFullSlots.Length ? previousFullSlots[i] : i;
         }
         Dictionary<string, Point>? before = UseCustomAnimations && _expanded ? CaptureRealizedItemPositions() : null;
 
@@ -229,8 +240,9 @@ public sealed partial class MainWindow
         IReadOnlyList<string> sortedOrder = OrganizerSortOrder.Sort(metadata, criterion);
         List<string> previousOrder = _definition.ItemOrder.ToList();
         var previousSlots = new Dictionary<string, int>(_definition.ItemSlots ?? [], StringComparer.OrdinalIgnoreCase);
+        Dictionary<string, int> nextDenseSlots = FreeGridSlotMap.CompactToDense(sortedOrder);
         _definition.ItemOrder = sortedOrder.ToList();
-        _definition.ItemSlots = FreeGridSlotMap.CompactToDense(sortedOrder);
+        _definition.ItemSlots = nextDenseSlots;
         try
         {
             await _host.SaveStateAsync();
@@ -270,19 +282,23 @@ public sealed partial class MainWindow
         ItemsRepeater.InvalidateMeasure();
         ItemsRepeater.InvalidateArrange();
         ItemsRepeater.UpdateLayout();
+        ReconcileSmoothScrollBounds();
         if (before is not null) ApplyFlipFromCapturedPositions(before);
+        RenderCompactPreview();
         _host.NotifyOrganizerPreviewChanged(_definition.Id);
 
         _activeSortCriterion = criterion;
         UpdateSortMenuIndicators();
 
         int changedCount = 0;
-        int compareLength = Math.Max(previousVisibleOrder.Length, _items.Count);
+        int compareLength = Math.Max(previousFullOrder.Length, reordered.Count);
         for (int index = 0; index < compareLength; index++)
         {
-            string? oldName = index < previousVisibleOrder.Length ? previousVisibleOrder[index] : null;
-            string? newName = index < _items.Count ? _items[index].RelativeName : null;
-            int newSlot = index < _resolvedItemSlots.Length ? _resolvedItemSlots[index] : index;
+            string? oldName = index < previousFullOrder.Length ? previousFullOrder[index] : null;
+            string? newName = index < reordered.Count ? reordered[index].RelativeName : null;
+            int newSlot = newName is not null && nextDenseSlots.TryGetValue(newName, out int assignedSlot)
+                ? assignedSlot
+                : index;
             bool slotChanged = newName is not null &&
                 previousSlotByItem.TryGetValue(newName, out int oldSlot) &&
                 oldSlot != newSlot;

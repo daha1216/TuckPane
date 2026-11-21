@@ -14,9 +14,11 @@ namespace TuckPane.Services;
 public sealed class IconCacheService
 {
     private const int JumboSize = 256;
+    private const int ExtraLargeSize = 48;
     private const int FallbackSize = 32;
+    private const int ShIlExtraLarge = 2;
     private const int MaximumShortcutIconDepth = 4;
-    private const string CacheVersion = "v8-resource-icon-bounds";
+    private const string CacheVersion = "v9-premul-utf8-url-retina";
 
     internal const int MaximumMemoryCachedIcons = 2048;
     internal const int MaximumCachedIcons = 4096;
@@ -538,11 +540,13 @@ public sealed class IconCacheService
     private static async Task RefreshAsync(string path, string cachePath, bool dockPresentation)
     {
         IconSnapshot? thumbnail = await TryExtractImageThumbnailAsync(path).ConfigureAwait(false);
-        IconSnapshot snapshot = thumbnail ?? await Task.Run(() =>
-        {
-            IconSnapshot shellIcon = ExtractShellIconPixels(path);
-            return dockPresentation ? NormalizeDockIcon(shellIcon) : shellIcon;
-        }).ConfigureAwait(false);
+        IconSnapshot snapshot = thumbnail is not null
+            ? (dockPresentation ? await Task.Run(() => NormalizeDockIcon(thumbnail)).ConfigureAwait(false) : thumbnail)
+            : await Task.Run(() =>
+            {
+                IconSnapshot shellIcon = ExtractShellIconPixels(path);
+                return dockPresentation ? NormalizeDockIcon(shellIcon) : shellIcon;
+            }).ConfigureAwait(false);
 
         string directory = Path.GetDirectoryName(cachePath)!;
         Directory.CreateDirectory(directory);
@@ -638,9 +642,9 @@ public sealed class IconCacheService
             }
             if (TryExtractShellItemImage(path, JumboSize, out IconSnapshot shortcutShellItem))
             {
-                return shortcutShellItem;
+                return PreferJumboIfLowRes(path, shortcutShellItem);
             }
-            IntPtr icon = GetPreferredIcon(path, JumboSize, out int sourceSize);
+            IntPtr icon = GetShellFallbackIcon(path, out int sourceSize);
             try
             {
                 return new(DrawIconPixels(icon, sourceSize), sourceSize, sourceSize);
@@ -652,10 +656,10 @@ public sealed class IconCacheService
         }
         if (TryExtractShellItemImage(path, JumboSize, out IconSnapshot shellItemImage))
         {
-            return shellItemImage;
+            return PreferJumboIfLowRes(path, shellItemImage);
         }
 
-        IntPtr fallbackIcon = GetPreferredIcon(path, JumboSize, out int fallbackSourceSize);
+        IntPtr fallbackIcon = GetShellFallbackIcon(path, out int fallbackSourceSize);
         try
         {
             return new(DrawIconPixels(fallbackIcon, fallbackSourceSize), fallbackSourceSize, fallbackSourceSize);
@@ -664,6 +668,29 @@ public sealed class IconCacheService
         {
             _ = NativeMethods.DestroyIcon(fallbackIcon);
         }
+    }
+
+    private static IconSnapshot PreferJumboIfLowRes(string path, IconSnapshot shellItemImage)
+    {
+        if (shellItemImage.Width >= 64 && shellItemImage.Height >= 64)
+            return shellItemImage;
+
+        if (TryGetJumboIcon(path, out IntPtr jumboIcon))
+        {
+            try
+            {
+                return new(DrawIconPixels(jumboIcon, JumboSize), JumboSize, JumboSize);
+            }
+            catch
+            {
+                // Fall back to the ShellItem image if drawing Jumbo fails.
+            }
+            finally
+            {
+                _ = NativeMethods.DestroyIcon(jumboIcon);
+            }
+        }
+        return shellItemImage;
     }
 
     private static IntPtr GetPreferredIcon(string path, int requestedSize, out int sourceSize)
@@ -678,10 +705,20 @@ public sealed class IconCacheService
             sourceSize = requestedSize;
             return resourceIcon;
         }
+        return GetShellFallbackIcon(path, out sourceSize);
+    }
+
+    private static IntPtr GetShellFallbackIcon(string path, out int sourceSize)
+    {
         if (TryGetJumboIcon(path, out IntPtr jumboIcon))
         {
             sourceSize = JumboSize;
             return jumboIcon;
+        }
+        if (TryGetExtraLargeIcon(path, out IntPtr extraLargeIcon))
+        {
+            sourceSize = ExtraLargeSize;
+            return extraLargeIcon;
         }
         sourceSize = FallbackSize;
         return GetFallbackIcon(path);
@@ -715,11 +752,78 @@ public sealed class IconCacheService
         return false;
     }
 
+    private static readonly UTF8Encoding StrictUtf8 = new(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true);
+
     private static string ReadInternetShortcutValue(string path, string key)
     {
+        if (TryReadInternetShortcutValueManaged(path, key, out string managedValue))
+            return managedValue;
+
         var value = new StringBuilder(32768);
         _ = NativeMethods.GetPrivateProfileString("InternetShortcut", key, string.Empty, value, (uint)value.Capacity, path);
         return value.ToString();
+    }
+
+    private static bool TryReadInternetShortcutValueManaged(string path, string key, out string value)
+    {
+        value = string.Empty;
+        try
+        {
+            if (!File.Exists(path)) return false;
+            var info = new FileInfo(path);
+            if (info.Length <= 0 || info.Length > 128 * 1024) return false;
+            byte[] raw = File.ReadAllBytes(path);
+            string text;
+            if (raw.Length >= 2 && raw[0] == 0xFF && raw[1] == 0xFE)
+            {
+                text = Encoding.Unicode.GetString(raw, 2, raw.Length - 2);
+            }
+            else if (raw.Length >= 2 && raw[0] == 0xFE && raw[1] == 0xFF)
+            {
+                text = Encoding.BigEndianUnicode.GetString(raw, 2, raw.Length - 2);
+            }
+            else if (raw.Length >= 3 && raw[0] == 0xEF && raw[1] == 0xBB && raw[2] == 0xBF)
+            {
+                text = StrictUtf8.GetString(raw, 3, raw.Length - 3);
+            }
+            else
+            {
+                // Strict UTF-8 decoding preserves CJK paths in UTF-8 .url files; invalid UTF-8
+                // throws DecoderFallbackException so legacy ANSI .url files fall back cleanly.
+                text = StrictUtf8.GetString(raw);
+            }
+
+            bool inSection = false;
+            using var reader = new StringReader(text);
+            string? line;
+            while ((line = reader.ReadLine()) is not null)
+            {
+                ReadOnlySpan<char> trimmed = line.AsSpan().Trim();
+                if (trimmed.IsEmpty || trimmed[0] == ';' || trimmed[0] == '#') continue;
+                if (trimmed[0] == '[' && trimmed[^1] == ']')
+                {
+                    ReadOnlySpan<char> section = trimmed[1..^1].Trim();
+                    inSection = section.Equals("InternetShortcut", StringComparison.OrdinalIgnoreCase);
+                    continue;
+                }
+                if (!inSection) continue;
+                int eq = trimmed.IndexOf('=');
+                if (eq <= 0) continue;
+                ReadOnlySpan<char> candidateKey = trimmed[..eq].Trim();
+                if (!candidateKey.Equals(key, StringComparison.OrdinalIgnoreCase)) continue;
+                string parsed = trimmed[(eq + 1)..].Trim().ToString();
+                if (parsed.Length > 0)
+                {
+                    value = parsed;
+                    return true;
+                }
+            }
+        }
+        catch
+        {
+            // Fall back to GetPrivateProfileString for legacy ANSI or inaccessible files.
+        }
+        return false;
     }
 
     private static bool TryGetShortcutIcon(string path, int size, out IntPtr icon)
@@ -876,6 +980,7 @@ public sealed class IconCacheService
             }
 
             RepairMissingAlpha(pixels);
+            PremultiplyAlpha(pixels);
             snapshot = new IconSnapshot(pixels, width, height);
             return true;
         }
@@ -890,7 +995,13 @@ public sealed class IconCacheService
         }
     }
 
-    private static bool TryGetJumboIcon(string path, out IntPtr icon)
+    private static bool TryGetJumboIcon(string path, out IntPtr icon) =>
+        TryGetShellImageListIcon(path, NativeMethods.SHIL_JUMBO, out icon);
+
+    private static bool TryGetExtraLargeIcon(string path, out IntPtr icon) =>
+        TryGetShellImageListIcon(path, ShIlExtraLarge, out icon);
+
+    private static bool TryGetShellImageListIcon(string path, int imageListType, out IntPtr icon)
     {
         icon = IntPtr.Zero;
         var shellInfo = new NativeMethods.SHFILEINFO { DisplayName = string.Empty, TypeName = string.Empty };
@@ -905,7 +1016,7 @@ public sealed class IconCacheService
         if (shellInfo.Icon != IntPtr.Zero) _ = NativeMethods.DestroyIcon(shellInfo.Icon);
 
         Guid interfaceId = typeof(NativeMethods.IImageList).GUID;
-        int hr = NativeMethods.SHGetImageList(NativeMethods.SHIL_JUMBO, ref interfaceId, out NativeMethods.IImageList imageList);
+        int hr = NativeMethods.SHGetImageList(imageListType, ref interfaceId, out NativeMethods.IImageList imageList);
         if (hr < 0) return false;
         try
         {
@@ -992,6 +1103,25 @@ public sealed class IconCacheService
         for (int index = 0; index < pixels.Length; index += 4)
         {
             if (pixels[index] != 0 || pixels[index + 1] != 0 || pixels[index + 2] != 0) pixels[index + 3] = 255;
+        }
+    }
+
+    private static void PremultiplyAlpha(byte[] pixels)
+    {
+        for (int index = 0; index < pixels.Length; index += 4)
+        {
+            int alpha = pixels[index + 3];
+            if (alpha == 255) continue;
+            if (alpha == 0)
+            {
+                pixels[index] = 0;
+                pixels[index + 1] = 0;
+                pixels[index + 2] = 0;
+                continue;
+            }
+            pixels[index] = (byte)((pixels[index] * alpha + 127) / 255);
+            pixels[index + 1] = (byte)((pixels[index + 1] * alpha + 127) / 255);
+            pixels[index + 2] = (byte)((pixels[index + 2] * alpha + 127) / 255);
         }
     }
 

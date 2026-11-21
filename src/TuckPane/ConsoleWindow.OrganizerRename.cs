@@ -82,12 +82,8 @@ public sealed partial class ConsoleWindow
     {
         OrganizerDefinition? definition = _host.State.Organizers.FirstOrDefault(item => item.Id == id);
         if (definition is null) return;
-        foreach (ListViewItem item in ManageList.Items.OfType<ListViewItem>())
-        {
-            if (item.Tag is not Guid itemId || itemId != id || item.Content is not Grid grid) continue;
-            TextBlock? label = grid.Children.OfType<StackPanel>().FirstOrDefault()?.Children.OfType<TextBlock>().FirstOrDefault();
-            if (label is not null && definition.PlacementMode != OrganizerPlacementMode.Station) label.Text = definition.Name;
-        }
+        RefreshManageListItemMetadata(definition);
+        RefreshAutoOrganizeTargetName(definition);
         if (_selectedId != id || _editing is null) return;
         _editing.Name = definition.Name;
         _editing.StorageAbsolutePath = definition.StorageAbsolutePath;

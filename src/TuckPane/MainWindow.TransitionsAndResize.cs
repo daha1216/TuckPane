@@ -26,7 +26,7 @@ namespace TuckPane;
 
 public sealed partial class MainWindow
 {
-    private const float ExpandSpringDampingRatio = 0.80f;
+    private const float ExpandSpringDampingRatio = 0.94f;
     private const int ExpandSpringPeriodMs = 44;
     private const float CollapseSpringDampingRatio = 0.94f;
     private const int CollapseSpringPeriodMs = 30;
@@ -111,10 +111,13 @@ public sealed partial class MainWindow
             : (isStation
             ? DisplayPlacementService.GetDisplay(_definition.Position?.MonitorDevice)
             : DisplayPlacementService.ForBounds(compactOrigin));
-        if (rememberedPosition is null) targetDisplay = targetDisplay with
+        if (!double.IsFinite(targetDisplay.Scale) || targetDisplay.Scale <= 0.5)
         {
-            Scale = Math.Max(1, NativeMethods.GetDpiForWindow(_hwnd) / 96d)
-        };
+            targetDisplay = targetDisplay with
+            {
+                Scale = Math.Max(1, NativeMethods.GetDpiForWindow(_hwnd) / 96d)
+            };
+        }
         if (NormalizeVisualScales(targetDisplay))
         {
             UpdateRealizedItems();
@@ -129,8 +132,8 @@ public sealed partial class MainWindow
             RectsEqual(existingCanvas.CompactOrigin, compactOrigin) &&
             _lastTransitionWindowLeft == existingCanvas.CanvasBounds.Left &&
             _lastTransitionWindowTop == existingCanvas.CanvasBounds.Top;
-        bool continuingDwmFlight = continuingCanvas && _dwmTransitionRunning;
-        bool continuingStationFlight = !reducedMotion && isStation && _dwmTransitionRunning && _dwmTransitionStationBound;
+        bool continuingDwmFlight = continuingCanvas && _dwmTransitionRunning && _dwmTransitionExpressionsBound && !_dwmTransitionStationBound;
+        bool continuingStationFlight = !reducedMotion && isStation && _dwmTransitionRunning && _dwmTransitionExpressionsBound && _dwmTransitionStationBound;
         CancellationTokenSource transition = StartTransition(modeCancellation);
         _expanded = true;
         _animating = true;
@@ -148,17 +151,30 @@ public sealed partial class MainWindow
                 RectsEqual(currentBounds, _compactBounds)) _compactBounds = currentBounds;
             NativeMethods.RECT expandedBounds = CalculateExpandedBounds(
                 compactOrigin,
-                rememberedPosition is null ? null : targetDisplay);
+                targetDisplay);
             if (rememberedPosition is not null)
             {
-                expandedBounds = DisplayPlacementService.RestoreToDisplay(
-                    rememberedPosition,
-                    targetDisplay,
-                    expandedBounds.Width,
-                    expandedBounds.Height);
-                expandedBounds = DisplayPlacementService.Clamp(
-                    expandedBounds,
-                    DisplayPlacementService.GetExpandedWorkArea(targetDisplay));
+                if (IsPermanentlyExpanded)
+                {
+                    var permanentInsets = new WindowAlignmentInsets(0, GetExpandedTitleBandPx(targetDisplay.Scale), 0, 0);
+                    expandedBounds = DisplayPlacementService.RestoreToDisplay(
+                        rememberedPosition,
+                        targetDisplay,
+                        expandedBounds.Width,
+                        expandedBounds.Height,
+                        permanentInsets);
+                }
+                else
+                {
+                    expandedBounds = DisplayPlacementService.RestoreToDisplay(
+                        rememberedPosition,
+                        targetDisplay,
+                        expandedBounds.Width,
+                        expandedBounds.Height);
+                    expandedBounds = DisplayPlacementService.Clamp(
+                        expandedBounds,
+                        DisplayPlacementService.GetExpandedWorkArea(targetDisplay));
+                }
             }
 
             if (continuingCanvas) expandedBounds = _activeTransitionCanvas!.Value.ExpandedBounds;
@@ -174,6 +190,12 @@ public sealed partial class MainWindow
                 CompactView.Visibility = Visibility.Collapsed;
                 if (!continuingStationFlight)
                 {
+                    if (_dwmTransitionRunning || _dwmTransitionExpressionsBound)
+                    {
+                        StopTransitionCompositionAnimations();
+                        ClearExpandedTransitionSweep();
+                        _dwmTransitionRunning = false;
+                    }
                     ExpandedView.Opacity = 1;
                     ResetExpandedTransitionOpacities();
                     Visual expandedVisual = GetExpandedCompositionVisual();
@@ -197,9 +219,10 @@ public sealed partial class MainWindow
             }
             else
             {
+                double planScale = ResolveTransitionCanvasScale(expandedBounds, compactOrigin, reducedMotion, targetDisplay);
                 TransitionCanvasPlan plan = continuingCanvas
                     ? _activeTransitionCanvas!.Value
-                    : BuildTransitionCanvasPlan(expandedBounds, compactOrigin, contained, reducedMotion);
+                    : BuildTransitionCanvasPlan(expandedBounds, compactOrigin, contained, reducedMotion, targetDisplay, planScale);
                 _activeTransitionCanvas = plan;
                 _collapseTransitionGeometry = plan.IsUnionNeeded
                     ? CreateCollapseTransitionGeometry(expandedBounds, compactOrigin)
@@ -209,6 +232,12 @@ public sealed partial class MainWindow
 
                 if (!continuingDwmFlight)
                 {
+                    if (_dwmTransitionRunning || _dwmTransitionExpressionsBound)
+                    {
+                        StopTransitionCompositionAnimations();
+                        ClearExpandedTransitionSweep();
+                        _dwmTransitionRunning = false;
+                    }
                     EnsureTransitionVisualTranslationEnabled();
                     Visual expandedVisual = GetExpandedCompositionVisual();
                     Visual compactVisual = GetCompactCompositionVisual();
@@ -237,7 +266,7 @@ public sealed partial class MainWindow
                     compactVisual.Scale = Vector3.One;
                     compactVisual.CenterPoint = plan.CompactCenterPointDip;
                     compactVisual.IsVisible = true;
-                    SetCompactVisualTranslation(showCompactDuringTransition ? GetPixelSnappedCompactTranslation(plan) : Vector3.Zero);
+                    SetCompactVisualTranslation(showCompactDuringTransition ? GetPixelSnappedCompactTranslation(plan, planScale) : Vector3.Zero);
 
                     if (plan.IsUnionNeeded)
                     {
@@ -261,6 +290,20 @@ public sealed partial class MainWindow
                     _lastTransitionWindowLeft = plan.CanvasBounds.Left;
                     _lastTransitionWindowTop = plan.CanvasBounds.Top;
 
+                    double liveScale = NativeMethods.GetDpiForWindow(_hwnd) / 96d;
+                    if (!continuingCanvas && double.IsFinite(liveScale) && liveScale > 0.5 &&
+                        Math.Abs(liveScale - planScale) > 0.01)
+                    {
+                        plan = BuildTransitionCanvasPlan(expandedBounds, compactOrigin, contained, reducedMotion, targetDisplay, liveScale);
+                        _activeTransitionCanvas = plan;
+                        if (plan.IsUnionNeeded)
+                            ApplyExpandedViewCanvasLayout(plan);
+                        else
+                            RestoreExpandedViewDefaultLayout();
+                        compactVisual.CenterPoint = plan.CompactCenterPointDip;
+                        SetCompactVisualTranslation(showCompactDuringTransition ? GetPixelSnappedCompactTranslation(plan, liveScale) : Vector3.Zero);
+                    }
+
                     ConfigureItemsLayout();
                     WindowRoot.UpdateLayout();
                     UpdateSurfaceClips();
@@ -281,7 +324,7 @@ public sealed partial class MainWindow
             }
 
             trace?.Advance(AnimationTraceStage.Animation);
-            await RunVisualTransitionAsync(1, transition.Token);
+            await RunVisualTransitionAsync(1, isStation ? continuingStationFlight : continuingDwmFlight, transition.Token);
             if (!IsCurrent() || transition.IsCancellationRequested) return;
 
             if (_activeTransitionCanvas is { IsUnionNeeded: true } expandedUnionPlan &&
@@ -374,9 +417,12 @@ public sealed partial class MainWindow
                     TryGetVisibleAlignmentFrame(ExpandedPanel, out NativeMethods.RECT restoredFrame))
                 {
                     // Allow the title band outside the work area when the visible panel is aligned to its edge.
-                    ApplyBounds(DisplayPlacementService.RestoreToDisplay(rememberedPosition, targetDisplay,
+                    NativeMethods.RECT alignedRestored = DisplayPlacementService.RestoreToDisplay(
+                        rememberedPosition, targetDisplay,
                         restoredWindow.Width, restoredWindow.Height,
-                        WindowAlignmentInsets.From(restoredWindow, restoredFrame)), show: _runtimeVisible);
+                        WindowAlignmentInsets.From(restoredWindow, restoredFrame));
+                    if (!RectsEqual(alignedRestored, restoredWindow))
+                        ApplyBounds(alignedRestored, show: _runtimeVisible);
                 }
                 ApplyOutsideClickSetting();
                 if (scrollToEnd) ScrollToEnd(animated: false);
@@ -419,8 +465,8 @@ public sealed partial class MainWindow
             RectsEqual(existingCanvas.CompactOrigin, compactTarget) &&
             _lastTransitionWindowLeft == existingCanvas.CanvasBounds.Left &&
             _lastTransitionWindowTop == existingCanvas.CanvasBounds.Top;
-        bool continuingDwmFlight = continuingCanvas && _dwmTransitionRunning;
-        bool continuingStationFlight = !reducedMotion && isStation && _dwmTransitionRunning && _dwmTransitionStationBound;
+        bool continuingDwmFlight = continuingCanvas && _dwmTransitionRunning && _dwmTransitionExpressionsBound && !_dwmTransitionStationBound;
+        bool continuingStationFlight = !reducedMotion && isStation && _dwmTransitionRunning && _dwmTransitionExpressionsBound && _dwmTransitionStationBound;
         CancellationTokenSource transition = StartTransition(modeCancellation);
         _expanded = false;
         _animating = true;
@@ -428,7 +474,10 @@ public sealed partial class MainWindow
         try
         {
             RefreshPerformanceSettings();
-            _canvasResizeInputTimer.Stop();
+            if (_canvasResize is not null)
+                StopCanvasResizeForHide();
+            else
+                _canvasResizeInputTimer.Stop();
             UpdateCanvasResizeEdgeWindows(show: false);
             _externalHoverTimer.Stop();
 
@@ -436,6 +485,12 @@ public sealed partial class MainWindow
             {
                 if (!continuingStationFlight)
                 {
+                    if (_dwmTransitionRunning || _dwmTransitionExpressionsBound)
+                    {
+                        StopTransitionCompositionAnimations();
+                        ClearExpandedTransitionSweep();
+                        _dwmTransitionRunning = false;
+                    }
                     _activeTransitionCanvas = null;
                     _collapseTransitionGeometry = null;
                     CompactView.Visibility = Visibility.Collapsed;
@@ -447,15 +502,20 @@ public sealed partial class MainWindow
             else
             {
                 TransitionCanvasPlan plan;
+                DisplayInfo? collapseDisplay = null;
+                double planScale = 1.0;
                 if (continuingCanvas)
                 {
                     plan = _activeTransitionCanvas!.Value;
+                    planScale = ResolveTransitionCanvasScale(plan.ExpandedBounds, compactTarget, reducedMotion);
                 }
                 else
                 {
                     if (!TryGetLogicalWindowRect(out NativeMethods.RECT expandedBounds))
                         expandedBounds = CalculateExpandedBounds(compactTarget);
-                    plan = BuildTransitionCanvasPlan(expandedBounds, compactTarget, contained, reducedMotion);
+                    collapseDisplay = DisplayPlacementService.ForBounds(expandedBounds);
+                    planScale = ResolveTransitionCanvasScale(expandedBounds, compactTarget, reducedMotion, collapseDisplay);
+                    plan = BuildTransitionCanvasPlan(expandedBounds, compactTarget, contained, reducedMotion, collapseDisplay, planScale);
                     _activeTransitionCanvas = plan;
                     _collapseTransitionGeometry = plan.IsUnionNeeded
                         ? CreateCollapseTransitionGeometry(expandedBounds, compactTarget)
@@ -465,6 +525,12 @@ public sealed partial class MainWindow
 
                 if (!continuingDwmFlight)
                 {
+                    if (_dwmTransitionRunning || _dwmTransitionExpressionsBound)
+                    {
+                        StopTransitionCompositionAnimations();
+                        ClearExpandedTransitionSweep();
+                        _dwmTransitionRunning = false;
+                    }
                     EnsureTransitionVisualTranslationEnabled();
                     Visual compactVisual = GetCompactCompositionVisual();
                     Visual expandedVisual = GetExpandedCompositionVisual();
@@ -493,7 +559,7 @@ public sealed partial class MainWindow
                         // never flashes on top of ExpandedView before ExpressionAnimations take over.
                         compactVisual.IsVisible = false;
                         compactVisual.CenterPoint = plan.CompactCenterPointDip;
-                        SetCompactVisualTranslation(GetPixelSnappedCompactTranslation(plan));
+                        SetCompactVisualTranslation(GetPixelSnappedCompactTranslation(plan, planScale));
                     }
                     else
                     {
@@ -506,6 +572,19 @@ public sealed partial class MainWindow
                         ApplyBounds(plan.CanvasBounds, show: true, preserveZOrder: true);
                         _lastTransitionWindowLeft = plan.CanvasBounds.Left;
                         _lastTransitionWindowTop = plan.CanvasBounds.Top;
+                        double liveScale = NativeMethods.GetDpiForWindow(_hwnd) / 96d;
+                        if (!continuingCanvas && double.IsFinite(liveScale) && liveScale > 0.5 &&
+                            Math.Abs(liveScale - planScale) > 0.01)
+                        {
+                            plan = BuildTransitionCanvasPlan(plan.ExpandedBounds, compactTarget, contained, reducedMotion, collapseDisplay, liveScale);
+                            _activeTransitionCanvas = plan;
+                            ApplyExpandedViewCanvasLayout(plan);
+                            if (showCompactDuringTransition)
+                            {
+                                compactVisual.CenterPoint = plan.CompactCenterPointDip;
+                                SetCompactVisualTranslation(GetPixelSnappedCompactTranslation(plan, liveScale));
+                            }
+                        }
                         WindowRoot.UpdateLayout();
                         UpdateSurfaceClips();
                     }
@@ -513,6 +592,7 @@ public sealed partial class MainWindow
                     {
                         _lastTransitionWindowLeft = plan.CanvasBounds.Left;
                         _lastTransitionWindowTop = plan.CanvasBounds.Top;
+                        UpdateSurfaceClips();
                     }
 
                     if (showCompactDuringTransition || plan.IsUnionNeeded)
@@ -524,7 +604,7 @@ public sealed partial class MainWindow
             }
 
             trace?.Advance(AnimationTraceStage.Animation);
-            await RunVisualTransitionAsync(0, transition.Token);
+            await RunVisualTransitionAsync(0, isStation ? continuingStationFlight : continuingDwmFlight, transition.Token);
             if (!IsCurrent() || transition.IsCancellationRequested) return;
 
             if (!isStation && !contained)
@@ -613,23 +693,26 @@ public sealed partial class MainWindow
     private void CloakForAtomicRelocation(NativeMethods.RECT? bridgeRect, bool topmost = false)
     {
         if (_closing || _hwnd == IntPtr.Zero || !NativeMethods.IsWindow(_hwnd)) return;
+        if (_transitionWindowCloaked)
+        {
+            // Never re-BitBlt the screen DC while _hwnd is already cloaked: preserve any existing
+            // valid bridge snapshot rather than capturing raw wallpaper over a different rect.
+            return;
+        }
         bool bridgeShown = false;
         if (bridgeRect is { Width: > 0, Height: > 0 } rect)
         {
             _transitionBridge ??= new TransitionBridgeOverlay();
             bridgeShown = _transitionBridge.CaptureAndShow(rect, _hwnd, topmost);
         }
-        if (!_transitionWindowCloaked)
+        if (NativeMethods.SetWindowCloaked(_hwnd, true))
         {
-            if (NativeMethods.SetWindowCloaked(_hwnd, true))
-            {
-                _transitionWindowCloaked = true;
-                _ = NativeMethods.DwmFlush();
-            }
-            else if (bridgeShown)
-            {
-                _transitionBridge?.Hide();
-            }
+            _transitionWindowCloaked = true;
+            _ = NativeMethods.DwmFlush();
+        }
+        else if (bridgeShown)
+        {
+            _transitionBridge?.Hide();
         }
     }
 
@@ -693,6 +776,7 @@ public sealed partial class MainWindow
             UpdateSurfaceClips();
         }
         _desktopLayer?.SetExpanded(false, showWindow: false);
+        ReleaseKeyboardItemsInputActivation();
         ForceRestoreUncloakedState();
         RefreshPerformanceSettings();
         _host.NotifyCollapsed(this);
@@ -717,6 +801,7 @@ public sealed partial class MainWindow
             _collapseTransitionGeometry = null;
             CommitCompactHandoff(compactTarget);
             ClearExpandedFilter(releaseInputActivation: true);
+            ReleaseKeyboardItemsInputActivation();
             _desktopLayer?.SetExpanded(false, showWindow: false);
 
             if (cloakedHere)
@@ -815,13 +900,56 @@ public sealed partial class MainWindow
         inner.Left >= outer.Left && inner.Top >= outer.Top &&
         inner.Right <= outer.Right && inner.Bottom <= outer.Bottom;
 
+    private double ResolveTransitionCanvasScale(
+        NativeMethods.RECT expandedBounds,
+        NativeMethods.RECT compactOrigin,
+        bool reducedMotion,
+        DisplayInfo? preferredDisplay = null)
+    {
+        if (preferredDisplay is { Scale: > 0.5 } preferred && double.IsFinite(preferred.Scale))
+        {
+            if (reducedMotion || ContainsRect(expandedBounds, compactOrigin))
+                return preferred.Scale;
+
+            var unionRect = new NativeMethods.RECT
+            {
+                Left = Math.Min(expandedBounds.Left, compactOrigin.Left),
+                Top = Math.Min(expandedBounds.Top, compactOrigin.Top),
+                Right = Math.Max(expandedBounds.Right, compactOrigin.Right),
+                Bottom = Math.Max(expandedBounds.Bottom, compactOrigin.Bottom)
+            };
+            DisplayInfo unionDisplay = DisplayPlacementService.ForBounds(unionRect);
+            if (double.IsFinite(unionDisplay.Scale) && unionDisplay.Scale > 0.5)
+                return unionDisplay.Scale;
+            return preferred.Scale;
+        }
+
+        NativeMethods.RECT sampleRect = reducedMotion
+            ? expandedBounds
+            : new NativeMethods.RECT
+            {
+                Left = Math.Min(expandedBounds.Left, compactOrigin.Left),
+                Top = Math.Min(expandedBounds.Top, compactOrigin.Top),
+                Right = Math.Max(expandedBounds.Right, compactOrigin.Right),
+                Bottom = Math.Max(expandedBounds.Bottom, compactOrigin.Bottom)
+            };
+        DisplayInfo display = DisplayPlacementService.ForBounds(sampleRect);
+        if (double.IsFinite(display.Scale) && display.Scale > 0.5)
+            return display.Scale;
+        return Math.Max(1.0, NativeMethods.GetDpiForWindow(_hwnd) / 96d);
+    }
+
     private TransitionCanvasPlan BuildTransitionCanvasPlan(
         NativeMethods.RECT expandedBounds,
         NativeMethods.RECT compactOrigin,
         bool contained,
-        bool reducedMotion)
+        bool reducedMotion,
+        DisplayInfo? targetDisplay = null,
+        double? scaleOverride = null)
     {
-        double scale = Math.Max(1.0, NativeMethods.GetDpiForWindow(_hwnd) / 96d);
+        double scale = scaleOverride is > 0.5 && double.IsFinite(scaleOverride.Value)
+            ? scaleOverride.Value
+            : ResolveTransitionCanvasScale(expandedBounds, compactOrigin, reducedMotion, targetDisplay);
         double compactWidthDip = contained
             ? Math.Max(1.0, compactOrigin.Width / scale)
             : Math.Max(1.0, GetCompactWidthDip());
@@ -878,9 +1006,11 @@ public sealed partial class MainWindow
     private Visual GetExpandedNameShadowCompositionVisual() =>
         _expandedNameShadowCompositionVisual ??= ElementCompositionPreview.GetElementVisual(ExpandedNameShadowHost);
 
-    private Vector3 GetPixelSnappedCompactTranslation(TransitionCanvasPlan plan)
+    private Vector3 GetPixelSnappedCompactTranslation(TransitionCanvasPlan plan, double? scaleOverride = null)
     {
-        double scale = GetCompactDpiScale();
+        double scale = scaleOverride is > 0.5 && double.IsFinite(scaleOverride.Value)
+            ? scaleOverride.Value
+            : GetCompactDpiScale();
         int canvasW = plan.CanvasBounds.Width;
         int canvasH = plan.CanvasBounds.Height;
         int compactW = plan.CompactOrigin.Width;
@@ -977,7 +1107,7 @@ public sealed partial class MainWindow
         compactVisual.IsVisible = true;
         if (_transitionVisualTranslationEnabled)
             compactVisual.Properties.InsertVector3("Translation", Vector3.Zero);
-        ResetCompactHoverSpringToRestIfIdle();
+        ForceResetCompactHoverVisuals();
     }
 
     private void CleanupAbortedTransitionVisuals()
@@ -1004,11 +1134,11 @@ public sealed partial class MainWindow
         _transitionProps.InsertScalar("Progress", 0f);
 
         _expandedScaleExpr = compositor.CreateExpressionAnimation(
-            "Vector3(Max(0.02, Lerp(sx, 1.0, props.Progress)), Max(0.02, Lerp(sy, 1.0, props.Progress)), 1.0)");
+            "Vector3(Max(0.02, Lerp(sx, 1.0, Clamp(props.Progress, 0.0, 1.0))), Max(0.02, Lerp(sy, 1.0, Clamp(props.Progress, 0.0, 1.0))), 1.0)");
         _expandedScaleExpr.SetReferenceParameter("props", _transitionProps);
 
         _expandedTranslationExpr = compositor.CreateExpressionAnimation(
-            "Vector3(Lerp(tx, 0.0, props.Progress), Lerp(ty, 0.0, props.Progress), 0.0)");
+            "Vector3(Lerp(tx, 0.0, Clamp(props.Progress, 0.0, 1.0)), Lerp(ty, 0.0, Clamp(props.Progress, 0.0, 1.0)), 0.0)");
         _expandedTranslationExpr.SetReferenceParameter("props", _transitionProps);
 
         _expandedOpacityExpr = compositor.CreateExpressionAnimation(
@@ -1405,12 +1535,19 @@ public sealed partial class MainWindow
         double target,
         bool isStation,
         bool reducedMotion,
+        bool continuingDwmFlight,
         CancellationToken cancellationToken)
     {
         bool expanding = target >= 0.5;
         bool contained = IsContained;
-        bool continuingDwmFlight = _dwmTransitionRunning && _dwmTransitionExpressionsBound &&
+        bool canContinueFlight = continuingDwmFlight && _dwmTransitionRunning && _dwmTransitionExpressionsBound &&
             (_dwmTransitionStationBound == isStation);
+        if (!canContinueFlight && (_dwmTransitionRunning || _dwmTransitionExpressionsBound))
+        {
+            StopTransitionCompositionAnimations();
+            ClearExpandedTransitionSweep();
+            _dwmTransitionRunning = false;
+        }
         float initialProgress = (float)Math.Clamp(_transitionProgress, 0.0, 1.0);
 
         if (!isStation && _activeTransitionCanvas is null)
@@ -1420,7 +1557,7 @@ public sealed partial class MainWindow
         {
             if (isStation)
             {
-                BindStationTransitionExpressions(reducedMotion, initialProgress, continuingDwmFlight);
+                BindStationTransitionExpressions(reducedMotion, initialProgress, canContinueFlight);
             }
             else
             {
@@ -1429,7 +1566,7 @@ public sealed partial class MainWindow
                     reducedMotion,
                     contained,
                     initialProgress,
-                    continuingDwmFlight);
+                    canContinueFlight);
             }
         }
         catch (Exception ex)
@@ -1441,7 +1578,7 @@ public sealed partial class MainWindow
             return false;
         }
 
-        if (!continuingDwmFlight && Math.Abs(target - initialProgress) <= 0.0005)
+        if (!canContinueFlight && Math.Abs(target - initialProgress) <= 0.0005)
         {
             _transitionProps!.StopAnimation("Progress");
             _transitionProps.InsertScalar("Progress", (float)target);
@@ -1472,7 +1609,7 @@ public sealed partial class MainWindow
             SpringScalarNaturalMotionAnimation stationSpring = _stationProgressSpring!;
             stationSpring.FinalValue = (float)target;
             // Omit InitialValue on mid-flight reversal so dwm.exe inherits live GPU position & velocity!
-            stationSpring.InitialValue = continuingDwmFlight ? null : initialProgress;
+            stationSpring.InitialValue = canContinueFlight ? null : initialProgress;
             animation = stationSpring;
         }
         else
@@ -1482,7 +1619,7 @@ public sealed partial class MainWindow
                 : _collapseProgressSpring!;
             spring.FinalValue = (float)target;
             // Omit InitialValue on mid-flight reversal so dwm.exe inherits live GPU position & velocity!
-            spring.InitialValue = continuingDwmFlight ? null : initialProgress;
+            spring.InitialValue = canContinueFlight ? null : initialProgress;
             animation = spring;
         }
 
@@ -1635,11 +1772,11 @@ public sealed partial class MainWindow
         if (_expandedNameShadowCompositionVisual is not null) _expandedNameShadowCompositionVisual.Opacity = 1f;
     }
 
-    private async Task RunVisualTransitionAsync(double target, CancellationToken cancellationToken)
+    private async Task RunVisualTransitionAsync(double target, bool continuingDwmFlight, CancellationToken cancellationToken)
     {
         bool reducedMotion = !UseCustomAnimations;
         bool isStation = _definition.PlacementMode == OrganizerPlacementMode.Station;
-        if (WindowRoot.IsLoaded && await TryRunDwmCompositorTransitionAsync(target, isStation, reducedMotion, cancellationToken))
+        if (WindowRoot.IsLoaded && await TryRunDwmCompositorTransitionAsync(target, isStation, reducedMotion, continuingDwmFlight, cancellationToken))
         {
             return;
         }
@@ -1691,7 +1828,7 @@ public sealed partial class MainWindow
                         : expanding ? ExpandTransitionResponseSeconds : CollapseTransitionResponseSeconds;
                     double damping = isStation
                         ? 0.98
-                        : expanding ? 0.86 : 0.96;
+                        : expanding ? ExpandSpringDampingRatio : CollapseSpringDampingRatio;
                     // Scale by 100 so ItemMotionMath.StepScalarSpring's snap threshold equals 0.0002 normalized precision.
                     float scaledPos = (float)(_transitionProgress * 100.0);
                     float scaledVel = (float)(_transitionVelocity * 100.0);
@@ -1702,9 +1839,7 @@ public sealed partial class MainWindow
                         delta,
                         responseSeconds: response,
                         dampingFraction: damping);
-                    _transitionProgress = isStation
-                        ? Math.Clamp(scaledPos / 100.0, 0.0, 1.0)
-                        : Math.Clamp(scaledPos / 100.0, 0.0, 1.06);
+                    _transitionProgress = Math.Clamp(scaledPos / 100.0, 0.0, 1.0);
                     _transitionVelocity = scaledVel / 100.0;
                 }
                 ApplyTransitionFrame(_transitionProgress, reducedMotion);
@@ -1789,8 +1924,8 @@ public sealed partial class MainWindow
             expandedVisual.Scale = reducedMotion
                 ? Vector3.One
                 : new Vector3(
-                    MathF.Max(0.02f, plan.StartScale.X + (1f - plan.StartScale.X) * (float)progress),
-                    MathF.Max(0.02f, plan.StartScale.Y + (1f - plan.StartScale.Y) * (float)progress),
+                    MathF.Max(0.02f, plan.StartScale.X + (1f - plan.StartScale.X) * (float)clamped),
+                    MathF.Max(0.02f, plan.StartScale.Y + (1f - plan.StartScale.Y) * (float)clamped),
                     1f);
             EnsureTransitionVisualTranslationEnabled();
             expandedVisual.Properties.InsertVector3(
@@ -1798,8 +1933,8 @@ public sealed partial class MainWindow
                 reducedMotion
                     ? Vector3.Zero
                     : new Vector3(
-                        plan.StartTranslationDip.X * (1f - (float)progress),
-                        plan.StartTranslationDip.Y * (1f - (float)progress),
+                        plan.StartTranslationDip.X * (1f - (float)clamped),
+                        plan.StartTranslationDip.Y * (1f - (float)clamped),
                         0f));
             SetCompactVisualTranslation(GetPixelSnappedCompactTranslation(plan));
         }
@@ -1810,8 +1945,8 @@ public sealed partial class MainWindow
             expandedVisual.Scale = reducedMotion
                 ? Vector3.One
                 : new Vector3(
-                    MathF.Max(0.02f, _transitionStartScale.X + (1f - _transitionStartScale.X) * (float)progress),
-                    MathF.Max(0.02f, _transitionStartScale.Y + (1f - _transitionStartScale.Y) * (float)progress),
+                    MathF.Max(0.02f, _transitionStartScale.X + (1f - _transitionStartScale.X) * (float)clamped),
+                    MathF.Max(0.02f, _transitionStartScale.Y + (1f - _transitionStartScale.Y) * (float)clamped),
                     1f);
         }
 
@@ -1905,26 +2040,26 @@ public sealed partial class MainWindow
         return IconCacheService.NormalizeCompactPreviewPixelSize((int)Math.Ceiling(subSlotDip * dpiScale));
     }
 
-    private static string BuildOrganizerPreviewSubIconKey(WidgetItem item, bool compactVisual, int compactPhysicalPx)
+    private static string BuildOrganizerPreviewSubIconKey(WidgetItem item, bool compactVisual, int previewPhysicalPx)
     {
         string baseKey = item.Kind == WidgetItemKind.Organizer
             ? $"organizer:{item.OrganizerId:N}"
             : IsDocumentItem(item)
                 ? $"doc:{item.Kind}:{item.RelativeName}"
                 : item.FullPath;
-        return compactVisual ? $"{baseKey}|cpx={compactPhysicalPx}" : baseKey;
+        return $"{baseKey}|{(compactVisual ? "c" : "e")}px={previewPhysicalPx}";
     }
 
     private bool IsOrganizerPreviewContentCurrent(OrganizerPreviewControl preview, Guid organizerId)
     {
         WidgetItem[] items = _host.GetOrganizerPreviewItems(organizerId).Take(CompactPreviewItemCount).ToArray();
-        int compactPhysicalPx = preview.IsCompactVisual ? GetNestedOrganizerPreviewPhysicalPx(preview, items.Length) : 0;
+        int previewPhysicalPx = GetNestedOrganizerPreviewPhysicalPx(preview, items.Length);
         for (int index = 0; index < CompactPreviewItemCount; index++)
         {
             Image image = preview.Images[index];
             if (index < items.Length)
             {
-                string expectedKey = BuildOrganizerPreviewSubIconKey(items[index], preview.IsCompactVisual, compactPhysicalPx);
+                string expectedKey = BuildOrganizerPreviewSubIconKey(items[index], preview.IsCompactVisual, previewPhysicalPx);
                 if (image.Visibility != Visibility.Visible ||
                     image.Source is null ||
                     !string.Equals(image.Tag as string, expectedKey, StringComparison.OrdinalIgnoreCase))
@@ -1944,7 +2079,7 @@ public sealed partial class MainWindow
     {
         WidgetItem[] items = _host.GetOrganizerPreviewItems(organizerId).Take(CompactPreviewItemCount).ToArray();
         bool compactVisual = preview.IsCompactVisual;
-        int compactPhysicalPx = compactVisual ? GetNestedOrganizerPreviewPhysicalPx(preview, items.Length) : 0;
+        int previewPhysicalPx = GetNestedOrganizerPreviewPhysicalPx(preview, items.Length);
 
         for (int index = 0; index < CompactPreviewItemCount; index++)
         {
@@ -1956,7 +2091,7 @@ public sealed partial class MainWindow
                 continue;
             }
 
-            string expectedKey = BuildOrganizerPreviewSubIconKey(items[index], compactVisual, compactPhysicalPx);
+            string expectedKey = BuildOrganizerPreviewSubIconKey(items[index], compactVisual, previewPhysicalPx);
             if (!string.Equals(image.Tag as string, expectedKey, StringComparison.OrdinalIgnoreCase))
             {
                 image.Tag = expectedKey;
@@ -1970,7 +2105,7 @@ public sealed partial class MainWindow
         {
             Image image = preview.Images[index];
             WidgetItem item = items[index];
-            string iconKey = BuildOrganizerPreviewSubIconKey(item, compactVisual, compactPhysicalPx);
+            string iconKey = BuildOrganizerPreviewSubIconKey(item, compactVisual, previewPhysicalPx);
             if (string.Equals(image.Tag as string, iconKey, StringComparison.OrdinalIgnoreCase) &&
                 image.Source is not null)
             {
@@ -1980,17 +2115,17 @@ public sealed partial class MainWindow
             image.Tag = iconKey;
             if (item.Kind == WidgetItemKind.Organizer)
             {
-                BitmapImage orgIcon = compactVisual ? GetCompactOrganizerFallbackIcon(compactPhysicalPx) : _organizerIcon;
+                BitmapImage orgIcon = compactVisual ? GetCompactOrganizerFallbackIcon(previewPhysicalPx) : _organizerIcon;
                 if (!ReferenceEquals(image.Source, orgIcon)) image.Source = orgIcon;
             }
             else if (IsDocumentItem(item))
             {
-                BitmapImage docIcon = compactVisual ? GetCompactDocumentIcon(item, compactPhysicalPx) : GetDocumentIcon(item);
+                BitmapImage docIcon = compactVisual ? GetCompactDocumentIcon(item, previewPhysicalPx) : GetDocumentIcon(item);
                 if (!ReferenceEquals(image.Source, docIcon)) image.Source = docIcon;
             }
-            else if (compactVisual)
+            else
             {
-                BitmapImage? bitmap = await GetCompactPreviewIconThrottledAsync(item.FullPath, compactPhysicalPx);
+                BitmapImage? bitmap = await GetCompactPreviewIconThrottledAsync(item.FullPath, previewPhysicalPx);
                 if (_closing || !ReferenceEquals(preview.RequestToken, requestToken)) return;
                 if (string.Equals(image.Tag as string, iconKey, StringComparison.OrdinalIgnoreCase))
                 {
@@ -2003,10 +2138,6 @@ public sealed partial class MainWindow
                         image.ClearValue(Image.SourceProperty);
                     }
                 }
-            }
-            else
-            {
-                await LoadIconAsync(image, item.FullPath);
             }
             if (!ReferenceEquals(preview.RequestToken, requestToken)) return;
         }
@@ -2149,12 +2280,16 @@ public sealed partial class MainWindow
 
     private NativeMethods.RECT CalculateExpandedBounds(NativeMethods.RECT compact, DisplayInfo? targetDisplay = null)
     {
-        DisplayInfo display = targetDisplay ?? ((_definition.PlacementMode == OrganizerPlacementMode.Station
-                ? DisplayPlacementService.GetDisplay(_definition.Position?.MonitorDevice)
-                : DisplayPlacementService.ForBounds(compact)) with
+        DisplayInfo display = targetDisplay ?? (_definition.PlacementMode == OrganizerPlacementMode.Station
+            ? DisplayPlacementService.GetDisplay(_definition.Position?.MonitorDevice)
+            : DisplayPlacementService.ForBounds(compact));
+        if (!double.IsFinite(display.Scale) || display.Scale <= 0.5)
+        {
+            display = display with
             {
                 Scale = Math.Max(1, NativeMethods.GetDpiForWindow(_hwnd) / 96d)
-            });
+            };
+        }
         if (_definition.PlacementMode == OrganizerPlacementMode.Station)
         {
             return DisplayPlacementService.CalculateStationBounds(
@@ -2467,7 +2602,7 @@ public sealed partial class MainWindow
 
     private void CollapseButton_PointerPressed(object sender, PointerRoutedEventArgs e)
     {
-        CollapseDash.CenterPoint = new Vector3(6, 1, 0);
+        CollapseDash.CenterPoint = new Vector3(6, 0.75f, 0);
         CollapseDash.Scale = UseCustomAnimations ? new Vector3(.92f, .92f, 1) : Vector3.One;
         CollapseButtonSurface.Background = _collapsePressedBrush;
     }
@@ -2476,13 +2611,13 @@ public sealed partial class MainWindow
     {
         CollapseDash.Scale = Vector3.One;
         CollapseButtonSurface.Background = CollapseButton.IsPointerOver ? _collapseHoverBrush : _transparentItemBrush;
-        CollapseDash.Opacity = CollapseButton.IsPointerOver ? 1 : .78;
+        CollapseDash.Opacity = CollapseButton.IsPointerOver ? 1 : .84;
     }
 
     private void CollapseButton_PointerExited(object sender, PointerRoutedEventArgs e)
     {
         CollapseDash.Scale = Vector3.One;
-        CollapseDash.Opacity = .78;
+        CollapseDash.Opacity = .84;
         CollapseButtonSurface.Background = _transparentItemBrush;
     }
 
@@ -2827,7 +2962,7 @@ public sealed partial class MainWindow
             clockBoosted = _dragClockBoosted;
             dragDurationMs = Stopwatch.GetElapsedTime(_dragStartedAt).TotalMilliseconds;
         }
-        ResetCompactPress();
+        ResetCompactPress(suppressRebound: canOpen && !wasExpandedDrag && !wasDragging);
         if (editTitle) { BeginOrganizerTitleEdit(); return; }
         if (IsDock && !wasDragging) ApplyDockLayout();
         if (wasDragging)
@@ -2932,9 +3067,12 @@ public sealed partial class MainWindow
         }
     }
 
-    private void ResetCompactPress()
+    private void ResetCompactPress(bool suppressRebound = false)
     {
-        SetCompactPressVisualState(false);
+        if (suppressRebound)
+            ForceResetCompactHoverVisuals();
+        else
+            SetCompactPressVisualState(false);
         _pressedOrganizerTitle = false;
         _widgetMousePress = false;
         _longPressTimer.Stop();

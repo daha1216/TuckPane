@@ -22,19 +22,48 @@ public sealed partial class ConsoleWindow
         UpdateNavItem.Content = AppStrings.Get("NavUpdate");
         UpdateVersionText.Text = AppStrings.Format("UpdateCurrentVersion", update.CurrentVersion,
             AppStrings.Get(update.Installed ? "UpdateInstalledEdition" : "UpdatePortableEdition"));
-        UpdateStatusText.Text = AppStrings.Get(update.StatusKey) + (update.Available is { } release ? "  " + release.Version : "");
+        double progress = Math.Clamp(update.Progress, 0, 100);
+        string statusBase = AppStrings.Get(update.StatusKey);
+        if (update.Downloading)
+        {
+            UpdateStatusText.Text = update.Available is { } downloadingRelease
+                ? $"{statusBase}  {Math.Round(progress):0}%  ({downloadingRelease.Version})"
+                : $"{statusBase}  {Math.Round(progress):0}%";
+        }
+        else
+        {
+            UpdateStatusText.Text = statusBase + (update.Available is { } release ? "  " + release.Version : "");
+        }
         UpdateLastCheckText.Text = AppStrings.Format("UpdateLastCheck", update.LastCheck is { } last ? AppStrings.FormatDate(last) : AppStrings.Get("UpdateNeverChecked"));
         UpdateBadge.Visibility = update.Available is null ? Visibility.Collapsed : Visibility.Visible;
         UpdateCheckButton.IsEnabled = !update.Busy;
-        UpdateInstallButton.IsEnabled = !update.Busy && update.Available is not null;
+        bool canInstall = !update.Busy && update.Available is not null;
+        UpdateInstallButton.IsEnabled = canInstall;
+        if (canInstall && Application.Current.Resources.TryGetValue("AccentButtonStyle", out object? accentResource) && accentResource is Style accentStyle)
+        {
+            UpdateInstallButton.Style = accentStyle;
+        }
+        else
+        {
+            UpdateInstallButton.ClearValue(FrameworkElement.StyleProperty);
+        }
         UpdateCancelButton.Visibility = update.Downloading ? Visibility.Visible : Visibility.Collapsed;
+        UpdateProgressRow.Visibility = update.Downloading ? Visibility.Visible : Visibility.Collapsed;
         UpdateProgress.Visibility = update.Downloading ? Visibility.Visible : Visibility.Collapsed;
-        UpdateProgress.Value = update.Progress;
+        UpdateProgress.Value = progress;
+        UpdateProgressText.Text = update.Downloading ? $"{Math.Round(progress):0}%" : string.Empty;
         UpdateErrorText.Text = update.Error ?? "";
         UpdateErrorText.Visibility = string.IsNullOrEmpty(update.Error) ? Visibility.Collapsed : Visibility.Visible;
         UpdateNotesText.Text = update.Available?.Notes ?? AppStrings.Get("UpdateNoNotes");
-        UpdateRecoveryText.Text = string.Join(Environment.NewLine, new[] { update.PreviousResult,
-            string.IsNullOrEmpty(update.BackupPath) ? null : AppStrings.Format("UpdateBackupLocation", update.BackupPath) }.Where(s => !string.IsNullOrEmpty(s)));
+        string recovery = string.Join(Environment.NewLine, new[]
+        {
+            update.PreviousResult,
+            string.IsNullOrEmpty(update.BackupPath) ? null : AppStrings.Format("UpdateBackupLocation", update.BackupPath)
+        }.Where(s => !string.IsNullOrEmpty(s)));
+        UpdateRecoveryText.Text = recovery;
+        Visibility recoveryVisibility = string.IsNullOrWhiteSpace(recovery) ? Visibility.Collapsed : Visibility.Visible;
+        UpdateRecoveryText.Visibility = recoveryVisibility;
+        UpdateRecoveryRow.Visibility = recoveryVisibility;
     }
 
     private async void UpdateCheck_Click(object sender, RoutedEventArgs e) => await _host.Updates.CheckAsync(true);

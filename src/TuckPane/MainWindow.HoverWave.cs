@@ -33,6 +33,7 @@ public sealed partial class MainWindow
 
     private readonly OrganizerHoverWave _hoverWave = new();
     private readonly Dictionary<Border, HoverItemVisual> _hoverItems = new();
+    private readonly BrushTransition _itemHoverBrushTransition = new() { Duration = TimeSpan.FromMilliseconds(120) };
     private Border? _hoverPressedHost;
     private bool _hoverRenderingSubscribed;
     private IDisposable? _hoverWaveClockBoost;
@@ -81,6 +82,7 @@ public sealed partial class MainWindow
         internal Vector2 Translation;
         internal Border? Proxy;
         internal Action? DetachProxyHandlers;
+        internal Action? DetachProxyShadow;
         internal string? DockToolTipText;
         internal bool Presented;
         internal float RenderScale = 1;
@@ -165,7 +167,7 @@ public sealed partial class MainWindow
         content.Scale = Vector3.One;
         content.Translation = Vector3.Zero;
         // Compact feedback is rendered once, against the visible row geometry.
-        host.BackgroundTransition = IsCompactList ? null : new BrushTransition { Duration = TimeSpan.FromMilliseconds(120) };
+        host.BackgroundTransition = IsCompactList ? null : _itemHoverBrushTransition;
         host.Background = _transparentItemBrush;
         _hoverItems.Add(host, new HoverItemVisual(content, icon));
         host.SizeChanged += HoverElement_SizeChanged;
@@ -287,11 +289,39 @@ public sealed partial class MainWindow
 
     private void ReturnHoverWave()
     {
+        if (IsDock) ClearExpandedEdgePointer();
         if (!_hoverWave.HasPointer && _hoverPressedHost is null && !HasHoverMotionToFinish()) return;
         _hoverWave.Leave();
+        if (_hoverPressedHost is { } oldPressed && _hoverItems.TryGetValue(oldPressed, out HoverItemVisual? oldItem))
+            ApplyDockPressFeedback(oldItem, pressed: false);
         _hoverPressedHost = null;
         _hoverTargetsDirty = true;
         WakeHoverWave();
+    }
+
+    private void ApplyDockPressFeedback(HoverItemVisual item, bool pressed)
+    {
+        if (!IsDock) return;
+        FrameworkElement target = item.ProxyIcon ?? item.Icon;
+        if (pressed)
+        {
+            double w = target.ActualWidth > 1 ? target.ActualWidth : target.Width;
+            double h = target.ActualHeight > 1 ? target.ActualHeight : target.Height;
+            if (double.IsFinite(w) && double.IsFinite(h) && w > 1 && h > 1)
+                target.CenterPoint = new Vector3((float)(w / 2.0), (float)(h / 2.0), 0f);
+            target.Scale = UseCustomAnimations ? new Vector3(0.94f, 0.94f, 1f) : Vector3.One;
+            target.Opacity = 0.86;
+        }
+        else
+        {
+            target.Scale = Vector3.One;
+            target.Opacity = 1.0;
+            if (item.ProxyIcon is not null && !ReferenceEquals(item.ProxyIcon, item.Icon))
+            {
+                item.Icon.Scale = Vector3.One;
+                item.Icon.Opacity = 1.0;
+            }
+        }
     }
 
     private void SetHoverPressed(Border host, bool pressed)
@@ -300,8 +330,23 @@ public sealed partial class MainWindow
         {
             // Preserve the clicked presentation until drag activation. The original host
             // owns capture, so quick taps/double taps do not chase a moving visual.
-            if (pressed) _hoverPressedHost = host;
-            else if (ReferenceEquals(_hoverPressedHost, host)) _hoverPressedHost = null;
+            if (pressed)
+            {
+                if (_hoverPressedHost is { } prev && !ReferenceEquals(prev, host) &&
+                    _hoverItems.TryGetValue(prev, out HoverItemVisual? prevItem))
+                {
+                    ApplyDockPressFeedback(prevItem, pressed: false);
+                }
+                _hoverPressedHost = host;
+                if (_hoverItems.TryGetValue(host, out HoverItemVisual? pressedItem))
+                    ApplyDockPressFeedback(pressedItem, pressed: true);
+            }
+            else if (ReferenceEquals(_hoverPressedHost, host))
+            {
+                _hoverPressedHost = null;
+                if (_hoverItems.TryGetValue(host, out HoverItemVisual? releasedItem))
+                    ApplyDockPressFeedback(releasedItem, pressed: false);
+            }
             _hoverTargetsDirty = true;
             WakeHoverWave();
             return;
@@ -719,6 +764,7 @@ public sealed partial class MainWindow
 
     private void ResetHoverVisual(Border host, HoverItemVisual item)
     {
+        ApplyDockPressFeedback(item, pressed: false);
         HideHoverProxy(item);
         item.Motion.Reset();
         if (item.AppliedContentScale != 1)

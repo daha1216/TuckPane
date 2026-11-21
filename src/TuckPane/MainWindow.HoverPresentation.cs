@@ -1,8 +1,11 @@
 using System.Numerics;
 using System.Text;
+using Microsoft.UI;
+using Microsoft.UI.Composition;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Data;
+using Microsoft.UI.Xaml.Hosting;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using TuckPane.Controls;
@@ -126,7 +129,24 @@ public sealed partial class MainWindow
                 Mirror(textCopy, TextBlock.FontSizeProperty, text, nameof(TextBlock.FontSize));
                 Mirror(textCopy, TextBlock.MaxWidthProperty, text, nameof(TextBlock.MaxWidth));
                 Mirror(textCopy, TextBlock.TextAlignmentProperty, text, nameof(TextBlock.TextAlignment));
-                copy = textCopy;
+                if (source.Name == "ItemNameText")
+                {
+                    var shadowHost = new Grid
+                    {
+                        HorizontalAlignment = HorizontalAlignment.Left,
+                        VerticalAlignment = VerticalAlignment.Center,
+                        IsHitTestVisible = false
+                    };
+                    var wrapper = new Grid { IsHitTestVisible = false };
+                    wrapper.Children.Add(shadowHost);
+                    wrapper.Children.Add(textCopy);
+                    AttachHoverTextShadow(textCopy, shadowHost, item);
+                    copy = wrapper;
+                }
+                else
+                {
+                    copy = textCopy;
+                }
                 break;
             default:
                 throw new InvalidOperationException($"Unsupported hover content: {source.GetType().Name}");
@@ -245,11 +265,86 @@ public sealed partial class MainWindow
         args.Handled = true;
     }
 
+    private static void AttachHoverTextShadow(TextBlock textCopy, Grid shadowHost, HoverItemVisual item)
+    {
+        SpriteVisual? shadowVisual = null;
+        DropShadow? dropShadow = null;
+        string? maskText = null;
+        double maskFontSize = 0;
+        Vector2 maskSize = Vector2.Zero;
+
+        void SyncShadow()
+        {
+            bool visible = !DesktopTypographyService.IsHighContrast() &&
+                           textCopy.Visibility == Visibility.Visible &&
+                           !string.IsNullOrEmpty(textCopy.Text) &&
+                           textCopy.ActualWidth > 1 &&
+                           textCopy.ActualHeight > 1;
+            if (!visible)
+            {
+                if (shadowVisual is not null) shadowVisual.IsVisible = false;
+                return;
+            }
+            Vector2 size = new((float)textCopy.ActualWidth, (float)textCopy.ActualHeight);
+            if (shadowVisual is null)
+            {
+                Visual hostVisual = ElementCompositionPreview.GetElementVisual(shadowHost);
+                Compositor compositor = hostVisual.Compositor;
+                dropShadow = compositor.CreateDropShadow();
+                dropShadow.Color = ColorHelper.FromArgb(255, 0, 0, 0);
+                dropShadow.BlurRadius = 1.6f;
+                dropShadow.Offset = new Vector3(0f, 1.0f, 0f);
+                shadowVisual = compositor.CreateSpriteVisual();
+                shadowVisual.Shadow = dropShadow;
+                ElementCompositionPreview.SetElementChildVisual(shadowHost, shadowVisual);
+            }
+            shadowHost.Width = size.X;
+            shadowHost.Height = size.Y;
+            shadowVisual.Size = size;
+            bool changed = !string.Equals(maskText, textCopy.Text, StringComparison.Ordinal) ||
+                           Math.Abs(maskFontSize - textCopy.FontSize) > 0.01 ||
+                           Math.Abs(maskSize.X - size.X) > 0.25f ||
+                           Math.Abs(maskSize.Y - size.Y) > 0.25f;
+            if (dropShadow!.Mask is null || changed)
+            {
+                // XAML owns TextBlock.GetAlphaMask() brushes; never call Dispose() on them.
+                dropShadow.Mask = textCopy.GetAlphaMask();
+                maskText = textCopy.Text;
+                maskFontSize = textCopy.FontSize;
+                maskSize = size;
+            }
+            shadowVisual.IsVisible = true;
+        }
+
+        SizeChangedEventHandler onSize = (_, _) => SyncShadow();
+        textCopy.SizeChanged += onSize;
+        Action? prevDetach = item.DetachProxyShadow;
+        item.DetachProxyShadow = () =>
+        {
+            prevDetach?.Invoke();
+            textCopy.SizeChanged -= onSize;
+            if (shadowVisual is not null)
+            {
+                ElementCompositionPreview.SetElementChildVisual(shadowHost, null);
+                shadowVisual.Dispose();
+                shadowVisual = null;
+            }
+            if (dropShadow is not null)
+            {
+                dropShadow.Mask = null;
+                dropShadow.Dispose();
+                dropShadow = null;
+            }
+        };
+    }
+
     private void RemoveHoverProxy(HoverItemVisual item)
     {
         HideHoverProxy(item);
         item.DetachProxyHandlers?.Invoke();
         item.DetachProxyHandlers = null;
+        item.DetachProxyShadow?.Invoke();
+        item.DetachProxyShadow = null;
         if (item.Proxy is { } proxy)
         {
             proxy.ClearValue(UIElement.OpacityProperty);
@@ -491,6 +586,33 @@ public sealed partial class MainWindow
             // Region changes send native window-position notifications. Apply the
             // border suppression last, without another frame/size change.
             _desktopLayer?.ApplyTransparentChrome();
+        }
+    }
+
+    private async Task LoadCompactListIconAsync(Image image, string path, FontIcon? fallback = null, bool refresh = false)
+    {
+        _pendingIconLoads[image] = path;
+        if (fallback is not null) fallback.Visibility = Visibility.Collapsed;
+        try
+        {
+            double iconDip = Math.Max(12, 20 * _definition.CompactListItemScale * ContentScale);
+            int targetPx = IconCacheService.NormalizeCompactPreviewPixelSize((int)Math.Ceiling(iconDip * GetCompactDpiScale()));
+            var bitmap = await GetCompactPreviewIconThrottledAsync(path, targetPx, refresh);
+            if (_closing || !_pendingIconLoads.TryGetValue(image, out string? current) || current != path) return;
+            if (bitmap is not null)
+            {
+                image.Source = bitmap;
+                if (fallback is not null) fallback.Visibility = Visibility.Collapsed;
+            }
+            else if (fallback is not null)
+            {
+                fallback.Visibility = Visibility.Visible;
+            }
+        }
+        finally
+        {
+            if (_pendingIconLoads.TryGetValue(image, out string? current) && current == path)
+                _pendingIconLoads.Remove(image);
         }
     }
 }

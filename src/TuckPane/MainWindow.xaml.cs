@@ -78,15 +78,18 @@ public sealed partial class MainWindow : Window
     private readonly SolidColorBrush _warningIconFgBrush = new(ColorHelper.FromArgb(255, 255, 200, 87));
     private readonly BitmapImage _noteIcon = new(new Uri("ms-appx:///Assets/Note.png"))
     {
-        DecodePixelWidth = 128
+        DecodePixelWidth = 256,
+        DecodePixelType = DecodePixelType.Physical
     };
     private readonly BitmapImage _todoIcon = new(new Uri("ms-appx:///Assets/Todo.png"))
     {
-        DecodePixelWidth = 128
+        DecodePixelWidth = 256,
+        DecodePixelType = DecodePixelType.Physical
     };
     private readonly BitmapImage _organizerIcon = new(new Uri("ms-appx:///Assets/TuckPane.png"))
     {
-        DecodePixelWidth = 128
+        DecodePixelWidth = 256,
+        DecodePixelType = DecodePixelType.Physical
     };
     private readonly NativeMethods.SubclassProc _gestureWindowProc;
     private readonly NativeMethods.WindowProc _canvasResizeWindowProc;
@@ -148,6 +151,7 @@ public sealed partial class MainWindow : Window
     private XamlRoot? _subscribedXamlRoot;
     private readonly PointerEventHandler _expandedPointerPressedHandler;
     private readonly PointerEventHandler _expandedPointerMovedHandler;
+    private readonly PointerEventHandler _expandedPointerExitedHandler;
     private readonly PointerEventHandler _expandedPointerReleasedHandler;
     private readonly PointerEventHandler _expandedPointerCanceledHandler;
     private readonly PointerEventHandler _expandedPointerCaptureLostHandler;
@@ -280,6 +284,9 @@ public sealed partial class MainWindow : Window
         internal SpriteVisual? NameShadowVisual;
         internal DropShadow? NameDropShadow;
         internal CompositionBrush? NameAlphaMask;
+        internal string? NameMaskText;
+        internal double NameMaskFontSize;
+        internal Vector2 NameMaskSize;
         internal SizeChangedEventHandler? NameSizeChangedHandler;
     }
 
@@ -315,7 +322,7 @@ public sealed partial class MainWindow : Window
         _host = host;
         _iconCache = host.SharedIconCache;
         _definition = definition;
-        _expandedBackdrop = new(ThemeTarget.Organizer, "expanded", useRoundedMask: IsDock);
+        _expandedBackdrop = new(ThemeTarget.Organizer, "expanded", useRoundedMask: true);
         _storage = new StorageService(AppPaths.ResolveStoragePath(definition), createIfMissing: false);
         _gestureWindowProc = GestureWindowProc;
         _canvasResizeWindowProc = CanvasResizeWindowProc;
@@ -332,16 +339,19 @@ public sealed partial class MainWindow : Window
         _expandedEdgeSurface = new ThemeEdgeSurface(ExpandedEdgeOverlay, IsDock ? ExpandedPanel : null);
         CompactThumbnailHost.SizeChanged += SurfaceHost_SizeChanged;
         ExpandedPanel.SizeChanged += SurfaceHost_SizeChanged;
+        ExpandedContentLayer.SizeChanged += SurfaceHost_SizeChanged;
         WindowRoot.SizeChanged += SurfaceHost_SizeChanged;
         WindowRoot.Loaded += WindowRoot_Loaded;
         _expandedPointerPressedHandler = new PointerEventHandler(ExpandedView_PointerPressed);
         _expandedPointerMovedHandler = new PointerEventHandler(ExpandedView_PointerMoved);
+        _expandedPointerExitedHandler = new PointerEventHandler(ExpandedView_PointerExited);
         _expandedPointerReleasedHandler = new PointerEventHandler(ExpandedView_PointerReleased);
         _expandedPointerCanceledHandler = new PointerEventHandler(ExpandedView_PointerCanceled);
         _expandedPointerCaptureLostHandler = new PointerEventHandler(ExpandedView_PointerCaptureLost);
         _expandedPointerWheelChangedHandler = new PointerEventHandler(ExpandedView_PointerWheelChanged);
         ExpandedView.AddHandler(UIElement.PointerPressedEvent, _expandedPointerPressedHandler, handledEventsToo: true);
         ExpandedView.AddHandler(UIElement.PointerMovedEvent, _expandedPointerMovedHandler, handledEventsToo: true);
+        ExpandedView.AddHandler(UIElement.PointerExitedEvent, _expandedPointerExitedHandler, handledEventsToo: true);
         ExpandedView.AddHandler(UIElement.PointerReleasedEvent, _expandedPointerReleasedHandler, handledEventsToo: true);
         ExpandedView.AddHandler(UIElement.PointerCanceledEvent, _expandedPointerCanceledHandler, handledEventsToo: true);
         ExpandedView.AddHandler(UIElement.PointerCaptureLostEvent, _expandedPointerCaptureLostHandler, handledEventsToo: true);
@@ -595,16 +605,13 @@ public sealed partial class MainWindow : Window
             ApplyCompactScale(repositionWindow: false);
 
             DisplayInfo display = DisplayPlacementService.GetDisplay(_definition.Position?.MonitorDevice);
-            double windowScale = Math.Max(1, WindowRoot.XamlRoot?.RasterizationScale ?? 1);
-            if (_hwnd != IntPtr.Zero)
+            if (!double.IsFinite(display.Scale) || display.Scale <= 0.5)
             {
-                windowScale = Math.Max(windowScale, NativeMethods.GetDpiForWindow(_hwnd) / 96d);
+                double windowScale = Math.Max(1, WindowRoot.XamlRoot?.RasterizationScale ?? 1);
+                if (_hwnd != IntPtr.Zero)
+                    windowScale = Math.Max(windowScale, NativeMethods.GetDpiForWindow(_hwnd) / 96d);
+                display = display with { Scale = windowScale };
             }
-            if (display.Monitor.Left == 0 && display.Monitor.Top == 0)
-            {
-                windowScale = Math.Max(windowScale, NativeMethods.GetDpiForSystem() / 96d);
-            }
-            display = display with { Scale = Math.Max(display.Scale, windowScale) };
             bool normalizedVisualScales = NormalizeVisualScales(display);
             _compactBounds = RestoreCompactBoundsForDisplay(display, _appliedCompactScale);
             if (!IsContained && _definition.PlacementMode == OrganizerPlacementMode.Positioned &&
@@ -975,7 +982,7 @@ public sealed partial class MainWindow : Window
     {
         if (_compactPreviewPhysicalPx <= 0 || _lastCompactPreviewSignature is null) return false;
         bool storageExists = _storage.Exists;
-        WidgetItem[] preview = _items.Take(CompactPreviewItemCount).ToArray();
+        WidgetItem[] preview = GetItemsInVisualReadingOrder().Take(CompactPreviewItemCount).ToArray();
         string currentSignature = BuildCompactPreviewSignature(storageExists, _compactPreviewPhysicalPx, preview);
         if (!string.Equals(_lastCompactPreviewSignature, currentSignature, StringComparison.Ordinal))
             return false;
@@ -1057,7 +1064,7 @@ public sealed partial class MainWindow : Window
         int targetPhysicalPx = _compactPreviewPhysicalPx > 0
             ? _compactPreviewPhysicalPx
             : IconCacheService.NormalizeCompactPreviewPixelSize((int)Math.Round(16 * GetCompactDpiScale()));
-        WidgetItem[] preview = _items.Take(CompactPreviewItemCount).ToArray();
+        WidgetItem[] preview = GetItemsInVisualReadingOrder().Take(CompactPreviewItemCount).ToArray();
         string targetSignature = BuildCompactPreviewSignature(storageExists, targetPhysicalPx, preview);
 
         var bitmaps = new BitmapImage?[preview.Length];
@@ -1150,7 +1157,9 @@ public sealed partial class MainWindow : Window
             if (GetOrResolveItemHostParts(host) is { } parts)
             {
                 parts.ItemImage.ClearValue(Image.SourceProperty);
-                _ = LoadIconAsync(parts.ItemImage, item.FullPath, parts.FallbackIcon, refresh: true, dockPresentation: IsDock);
+                _ = IsCompactList
+                    ? LoadCompactListIconAsync(parts.ItemImage, item.FullPath, parts.FallbackIcon, refresh: true)
+                    : LoadIconAsync(parts.ItemImage, item.FullPath, parts.FallbackIcon, refresh: true, dockPresentation: IsDock);
             }
         }
         if (!IsDock && !_animating) RenderCompactPreview(forceRefresh: true);
@@ -1501,7 +1510,12 @@ public sealed partial class MainWindow : Window
             {
                 organizerPreview.RequestToken = null;
                 if (IsDocumentItem(item)) image.Source = GetDocumentIcon(item);
-                else if (loadIcon && (itemChanged || image.Source is null)) _ = LoadIconAsync(image, item.FullPath, fallback, dockPresentation: IsDock);
+                else if (loadIcon && (itemChanged || image.Source is null))
+                {
+                    _ = IsCompactList
+                        ? LoadCompactListIconAsync(image, item.FullPath, fallback)
+                        : LoadIconAsync(image, item.FullPath, fallback, dockPresentation: IsDock);
+                }
             }
             bool iconLoadPending = _pendingIconLoads.TryGetValue(image, out string? pendingPath) &&
                 pendingPath.Equals(iconKey, StringComparison.OrdinalIgnoreCase);
@@ -1570,7 +1584,9 @@ public sealed partial class MainWindow : Window
                 image.ClearValue(Image.SourceProperty);
             }
             if (IsDocumentItem(item)) image.Source = GetDocumentIcon(item);
-            else _ = LoadIconAsync(image, item.FullPath, fallback, dockPresentation: IsDock);
+            else _ = IsCompactList
+                ? LoadCompactListIconAsync(image, item.FullPath, fallback)
+                : LoadIconAsync(image, item.FullPath, fallback, dockPresentation: IsDock);
             bool iconLoadPending = _pendingIconLoads.TryGetValue(image, out string? pendingPath) &&
                 pendingPath.Equals(iconKey, StringComparison.OrdinalIgnoreCase);
             fallback.Visibility = OrganizerInteractionMath.ShouldShowItemFallback(
@@ -1652,10 +1668,20 @@ public sealed partial class MainWindow : Window
         parts.NameShadowHost.Width = size.X;
         parts.NameShadowHost.Height = size.Y;
         parts.NameShadowVisual.Size = size;
-        if (parts.NameAlphaMask is null)
+        string text = parts.NameText.Text;
+        double fontSize = parts.NameText.FontSize;
+        bool maskChanged = parts.NameAlphaMask is null ||
+                           !string.Equals(parts.NameMaskText, text, StringComparison.Ordinal) ||
+                           Math.Abs(parts.NameMaskFontSize - fontSize) > 0.01 ||
+                           Math.Abs(parts.NameMaskSize.X - size.X) > 0.25f ||
+                           Math.Abs(parts.NameMaskSize.Y - size.Y) > 0.25f;
+        if (maskChanged)
         {
             parts.NameAlphaMask = parts.NameText.GetAlphaMask();
             parts.NameDropShadow!.Mask = parts.NameAlphaMask;
+            parts.NameMaskText = text;
+            parts.NameMaskFontSize = fontSize;
+            parts.NameMaskSize = size;
         }
         parts.NameShadowVisual.IsVisible = true;
     }
@@ -1701,6 +1727,9 @@ public sealed partial class MainWindow : Window
         // Never Dispose() the brush returned by TextBlock.GetAlphaMask():
         // XAML owns its lifetime across ItemsRepeater recycling (disposing causes RO_E_CLOSED).
         parts.NameAlphaMask = null;
+        parts.NameMaskText = null;
+        parts.NameMaskFontSize = 0;
+        parts.NameMaskSize = Vector2.Zero;
     }
 
     private static T? FindItemPart<T>(DependencyObject root, string name) where T : FrameworkElement
@@ -2060,13 +2089,14 @@ public sealed partial class MainWindow : Window
             candidate.RelativeName.Equals(relativeName, StringComparison.OrdinalIgnoreCase));
         if (item is null) return;
         if (item.Kind == WidgetItemKind.Organizer) return;
+        Point? pointerPoint = e.TryGetPosition(host, out Point localPt) ? localPt : null;
         if (item is { Kind: WidgetItemKind.Note, NoteId: Guid noteId })
         {
-            ShowNoteContextMenu(host, noteId);
+            ShowNoteContextMenu(host, noteId, pointerPoint);
             return;
         }
-        if (TryShowBatchItemContextMenu(host, item)) return;
-        ShowFileContextMenu(host, item);
+        if (TryShowBatchItemContextMenu(host, item, pointerPoint)) return;
+        ShowFileContextMenu(host, item, pointerPoint);
     }
 
     private bool TryGetElementScreenBounds(FrameworkElement element, out NativeMethods.RECT bounds)
@@ -2095,8 +2125,8 @@ public sealed partial class MainWindow : Window
         return bounds.Width > 0 && bounds.Height > 0;
     }
 
-    private void ShowFileContextMenu(FrameworkElement host, WidgetItem item) =>
-        ShowEnhancedFileContextMenu(host, item);
+    private void ShowFileContextMenu(FrameworkElement host, WidgetItem item, Point? pointerPoint = null) =>
+        ShowEnhancedFileContextMenu(host, item, pointerPoint);
 
     private MenuFlyout CreateOrganizerContextMenu()
     {
@@ -2111,30 +2141,41 @@ public sealed partial class MainWindow : Window
         return flyout;
     }
 
-    private void ShowNoteContextMenu(FrameworkElement host, Guid noteId)
+    private void ShowNoteContextMenu(FrameworkElement host, Guid noteId, Point? pointerPoint = null)
     {
-        var rename = new MenuFlyoutItem { Text = AppStrings.Get("ContextRenameNote") };
-        var delete = new MenuFlyoutItem { Text = AppStrings.Get("ContextDeleteNote") };
+        var rename = new MenuFlyoutItem { Text = AppStrings.Get("ContextRenameNote"), Icon = new FontIcon { Glyph = "\uE8AC" } };
+        var delete = new MenuFlyoutItem { Text = AppStrings.Get("ContextDeleteNote"), Icon = new FontIcon { Glyph = "\uE74D" } };
+        if (WindowRoot.Resources.TryGetValue("OrganizerMenuItemStyle", out object? styleObj) && styleObj is Style itemStyle)
+        {
+            rename.Style = itemStyle;
+            delete.Style = itemStyle;
+        }
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetAutomationId(rename, "RenameNoteMenuItem");
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetAutomationId(delete, "DeleteNoteMenuItem");
         rename.Click += async (_, _) => await _catalogController.ShowRenameNoteDialogAsync(noteId);
         delete.Click += async (_, _) => await _catalogController.ShowDeleteNoteDialogAsync(noteId);
         MenuFlyout flyout = CreateOrganizerContextMenu();
+        flyout.ShouldConstrainToRootBounds = false;
         flyout.Items.Add(rename);
         flyout.Items.Add(delete);
         _shellContextMenuOpen = true;
+        PauseOutsideClickForOverlay();
+        flyout.Opening += OrganizerMenu_PauseOutsideClick;
         flyout.Closed += (_, _) =>
         {
             _shellContextMenuOpen = false;
+            ResumeOutsideClickAfterOverlay();
         };
         try
         {
-            flyout.ShowAt(host);
+            if (pointerPoint is Point pt) flyout.ShowAt(host, pt);
+            else flyout.ShowAt(host);
         }
         catch
         {
             _shellContextMenuOpen = false;
             RestoreContextMenuHost();
+            ResumeOutsideClickAfterOverlay();
             throw;
         }
     }
@@ -2145,6 +2186,7 @@ public sealed partial class MainWindow : Window
         if (e.Pointer.PointerDeviceType == PointerDeviceType.Mouse &&
             sender is Border host && !ReferenceEquals(host, _itemDragHost))
         {
+            _hoveredItemHost = host;
             SetItemInteractionVisual(host, pressed: false);
         }
     }
@@ -2152,9 +2194,10 @@ public sealed partial class MainWindow : Window
     private void Item_PointerExited(object sender, PointerRoutedEventArgs e)
     {
         if (IsCompactList) return;
-        if (sender is Border host && !ReferenceEquals(host, _itemDragHost))
+        if (sender is Border host)
         {
-            ResetItemInteractionVisual(host);
+            if (ReferenceEquals(_hoveredItemHost, host)) _hoveredItemHost = null;
+            if (!ReferenceEquals(host, _itemDragHost)) ResetItemInteractionVisual(host);
         }
     }
 
@@ -2183,8 +2226,12 @@ public sealed partial class MainWindow : Window
         }
     }
 
+    private void ExpandedView_PointerExited(object sender, PointerRoutedEventArgs e) =>
+        ClearExpandedEdgePointer();
+
     private void WindowRoot_PointerExited(object sender, PointerRoutedEventArgs e)
     {
+        ClearExpandedEdgePointer();
         if (!CanActivateHover(e.GetCurrentPoint(ItemsScrollView).Position)) ReturnHoverWave();
         if (NativeMethods.GetCursorPos(out NativeMethods.POINT cursor) &&
             TryGetLogicalWindowRect(out NativeMethods.RECT bounds))
@@ -2236,6 +2283,7 @@ public sealed partial class MainWindow : Window
         TimeSpan iconTransitionDuration = UseCustomAnimations ? TimeSpan.FromMilliseconds(120) : TimeSpan.Zero;
         if (CollapseDash.ScaleTransition is not null) CollapseDash.ScaleTransition.Duration = iconTransitionDuration;
         RefreshHoverAvailability();
+        RefreshOverlayImplicitAnimations();
         if (!UseCustomAnimations)
         {
             CollapseDash.Scale = Vector3.One;
@@ -2539,6 +2587,7 @@ public sealed partial class MainWindow : Window
         Activated -= OrganizerTitleWindow_Activated;
         CompactThumbnailHost.SizeChanged -= SurfaceHost_SizeChanged;
         ExpandedPanel.SizeChanged -= SurfaceHost_SizeChanged;
+        ExpandedContentLayer.SizeChanged -= SurfaceHost_SizeChanged;
         WindowRoot.SizeChanged -= SurfaceHost_SizeChanged;
         WindowRoot.Loaded -= WindowRoot_Loaded;
         if (_subscribedXamlRoot is not null)
@@ -2548,6 +2597,7 @@ public sealed partial class MainWindow : Window
         }
         ExpandedView.RemoveHandler(UIElement.PointerPressedEvent, _expandedPointerPressedHandler);
         ExpandedView.RemoveHandler(UIElement.PointerMovedEvent, _expandedPointerMovedHandler);
+        ExpandedView.RemoveHandler(UIElement.PointerExitedEvent, _expandedPointerExitedHandler);
         ExpandedView.RemoveHandler(UIElement.PointerReleasedEvent, _expandedPointerReleasedHandler);
         ExpandedView.RemoveHandler(UIElement.PointerCanceledEvent, _expandedPointerCanceledHandler);
         ExpandedView.RemoveHandler(UIElement.PointerCaptureLostEvent, _expandedPointerCaptureLostHandler);
@@ -2925,6 +2975,7 @@ public sealed partial class MainWindow : Window
             ++_transitionRequestVersion;
             _transitionCancellation?.Cancel();
             _animating = false;
+            CleanupAbortedTransitionVisuals();
             _host.NotifyDockOpenStateChanged();
         }
         if (visible)
@@ -2994,6 +3045,7 @@ public sealed partial class MainWindow : Window
             _transitionCancellation?.Cancel();
             _expanded = false;
             _animating = false;
+            CleanupAbortedTransitionVisuals();
             _host.NotifyDockOpenStateChanged();
             CompactView.Visibility = Visibility.Collapsed;
             ExpandedView.Visibility = Visibility.Collapsed;
@@ -3059,12 +3111,13 @@ public sealed partial class MainWindow : Window
             _transitionCancellation?.Cancel();
             _transitionCancellation?.Dispose();
             _transitionCancellation = null;
+            _expanded = true;
+            _animating = false;
+            CleanupAbortedTransitionVisuals();
             if (!TryGetLogicalWindowRect(out NativeMethods.RECT current)) current = CalculateExpandedBounds(_compactBounds);
             NativeMethods.RECT target = _definition.PlacementMode == OrganizerPlacementMode.Station
                 ? CalculateExpandedBounds(_compactBounds)
                 : CalculateExpandedBoundsAroundCenter(current);
-            _expanded = true;
-            _animating = false;
             _host.NotifyDockOpenStateChanged();
             _transitionProgress = 1;
             _transitionVelocity = 0;
@@ -3108,6 +3161,7 @@ public sealed partial class MainWindow : Window
         _expandedEdgeSurface.SetTheme(theme, useEffects);
         _compactEdgeSurface.SetEnabled(_host.State.GlobalSettings.EdgeGlowEnabled);
         _expandedEdgeSurface.SetEnabled(_host.State.GlobalSettings.EdgeGlowEnabled);
+        if (IsDock) UpdateDockToolTipTheme(theme);
         var foregroundColor = ThemePalette.ForegroundColor(theme);
         _dockEmptyAddBrush.Color = foregroundColor;
         DockEmptyAddIcon.Foreground = _dockEmptyAddBrush;
@@ -3173,6 +3227,7 @@ public sealed partial class MainWindow : Window
         UpdateCanvasResizeEdgeWindows(show: false);
         _expanded = false;
         _animating = false;
+        CleanupAbortedTransitionVisuals();
         _host.NotifyDockOpenStateChanged();
         _transitionProgress = 0;
         _transitionVelocity = 0;
@@ -3208,6 +3263,7 @@ public sealed partial class MainWindow : Window
         UpdateCanvasResizeEdgeWindows(show: false);
         _expanded = false;
         _animating = false;
+        CleanupAbortedTransitionVisuals();
         _host.NotifyDockOpenStateChanged();
         _transitionProgress = 0;
         _transitionVelocity = 0;
@@ -3461,6 +3517,13 @@ public sealed partial class MainWindow : Window
         }
         else
         {
+            if (_canvasResize is null)
+            {
+                RoundedSurfaceGeometry expandedSurface = RoundedSurfaceGeometry.Create(
+                    ExpandedPanel.ActualWidth, ExpandedPanel.ActualHeight,
+                    expandedRadius, WindowRoot.XamlRoot?.RasterizationScale ?? 1);
+                _expandedBackdrop.SetRoundedGeometry(expandedSurface);
+            }
             var expandedCorner = new CornerRadius(expandedRadius);
             if (ExpandedSurfaceHost.CornerRadius != expandedCorner)
                 ExpandedSurfaceHost.CornerRadius = expandedCorner;

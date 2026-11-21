@@ -384,8 +384,8 @@ public sealed partial class OrganizerSettingsForm : UserControl
         RowsSlider.Maximum = station ? OrganizerLimits.MaximumStationRows : OrganizerLimits.MaximumLayoutDimension;
         ColumnsSlider.Minimum = station ? OrganizerLimits.MinimumStationColumns : OrganizerLimits.MinimumGridDimension;
         ColumnsSlider.Maximum = station ? OrganizerLimits.MaximumStationColumns : OrganizerLimits.MaximumLayoutDimension;
-        RowsSlider.Value = Math.Clamp(RowsSlider.Value, RowsSlider.Minimum, RowsSlider.Maximum);
-        ColumnsSlider.Value = Math.Clamp(ColumnsSlider.Value, ColumnsSlider.Minimum, ColumnsSlider.Maximum);
+        RowsSlider.SetModelValue(Math.Clamp(RowsSlider.Value, RowsSlider.Minimum, RowsSlider.Maximum));
+        ColumnsSlider.SetModelValue(Math.Clamp(ColumnsSlider.Value, ColumnsSlider.Minimum, ColumnsSlider.Maximum));
     }
 
     private void RefreshSeparators()

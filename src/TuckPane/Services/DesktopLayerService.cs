@@ -11,6 +11,7 @@ internal enum DesktopAttachmentState
 public sealed class DesktopLayerService : IDisposable
 {
     private const uint SpawnWorkerMessage = 0x052C;
+    private const long WsExTopmost = 0x00000008L;
     private static readonly UIntPtr ActivationSubclassId = new(0x47464C59UL);
     private static readonly object CachedViewGate = new();
     [ThreadStatic]
@@ -108,7 +109,7 @@ public sealed class DesktopLayerService : IDisposable
 
     public void SetExpanded(bool expanded, bool stayTopmost = false, bool showWindow = false)
     {
-        if (!expanded && _stayTopmost)
+        if (!expanded && _stayTopmost && !_peekTopmost)
         {
             _ = NativeMethods.SetWindowPos(
                 _window,
@@ -124,7 +125,7 @@ public sealed class DesktopLayerService : IDisposable
         _expanded = expanded;
         _stayTopmost = expanded && stayTopmost;
         Reattach(showWindow);
-        if (expanded && !stayTopmost) RaiseAboveNormalWindows();
+        if (expanded && !stayTopmost && !_peekTopmost) RaiseAboveNormalWindows();
     }
 
     public void BringAboveDesktopPeers()
@@ -309,7 +310,7 @@ public sealed class DesktopLayerService : IDisposable
                 continue;
             }
             if (!NativeMethods.IsWindow(above) || above == NativeMethods.HWND_BOTTOM) return false;
-            anchor = above;
+            anchor = IsTopmostWindow(above) ? NativeMethods.HWND_TOP : above;
             return true;
         }
         return TryGetDesktopInsertAnchor(out anchor);
@@ -338,11 +339,16 @@ public sealed class DesktopLayerService : IDisposable
         // front of the host is the right anchor for "immediately above the host".
         IntPtr above = NativeMethods.GetWindow(root, NativeMethods.GW_HWNDPREV);
         if (above != IntPtr.Zero && !NativeMethods.IsWindow(above)) return false;
-        anchor = above == IntPtr.Zero ? NativeMethods.HWND_TOP : above;
+        anchor = above == IntPtr.Zero || IsTopmostWindow(above)
+            ? NativeMethods.HWND_TOP
+            : above;
         // HWND_BOTTOM is 1, not 0, so it would sail past a plain "anchor == IntPtr.Zero" check.
         // Burying the window is the exact state this service exists to prevent.
         return anchor != NativeMethods.HWND_BOTTOM && anchor != _window;
     }
+
+    private static bool IsTopmostWindow(IntPtr window) =>
+        (NativeMethods.GetWindowLongPtr(window, NativeMethods.GWL_EXSTYLE).ToInt64() & WsExTopmost) != 0;
 
     private IntPtr DesktopHostRoot()
     {

@@ -11,8 +11,6 @@ public sealed partial class MainWindow
         ClearWindowAlignment();
         if (_canvasResize is null) return;
         StopCanvasResizeRendering();
-        CommitPendingCanvasResizeMetrics();
-        RestoreCanvasResizeGpuScaling();
         _canvasResize = null;
         _canvasResizeCenterSymmetric = false;
         _canvasResizeInputTimer.Stop();
@@ -20,7 +18,10 @@ public sealed partial class MainWindow
         _canvasResizeClockBoost = null;
         _resizeGesture.Invalidate();
         if (NativeMethods.GetCapture() == _hwnd) _ = NativeMethods.ReleaseCapture();
+        CommitPendingCanvasResizeMetrics();
         ApplyExpandedContentInset();
+        RestoreCanvasResizeGpuScaling();
+        WindowRoot.UpdateLayout();
         ConfigureItemsLayout();
         UpdateCompactPreviewItemScale();
         UpdateSurfaceClips();

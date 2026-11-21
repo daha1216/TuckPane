@@ -122,17 +122,18 @@ public sealed partial class MainWindow
     private double ResolveCompactDisplayScale(NativeMethods.RECT bounds)
     {
         DisplayInfo display = DisplayPlacementService.ForBounds(bounds);
-        double scale = display.Scale;
+        if (double.IsFinite(display.Scale) && display.Scale > 0.5)
+            return display.Scale;
         if (_hwnd != IntPtr.Zero && NativeMethods.IsWindow(_hwnd))
         {
             double windowDpiScale = NativeMethods.GetDpiForWindow(_hwnd) / 96d;
-            if (double.IsFinite(windowDpiScale) && windowDpiScale > 0)
-                scale = Math.Max(scale, windowDpiScale);
+            if (double.IsFinite(windowDpiScale) && windowDpiScale > 0.5)
+                return windowDpiScale;
         }
         double xamlScale = WindowRoot.XamlRoot?.RasterizationScale ?? 0;
-        if (double.IsFinite(xamlScale) && xamlScale > 0)
-            scale = Math.Max(scale, xamlScale);
-        return Math.Max(1.0, scale);
+        if (double.IsFinite(xamlScale) && xamlScale > 0.5)
+            return xamlScale;
+        return 1.0;
     }
 
     private WindowAlignmentInsets CalculateDeterministicCompactAlignmentInsets(
@@ -172,12 +173,13 @@ public sealed partial class MainWindow
         }
 
         DisplayInfo display = DisplayPlacementService.GetDisplay(_definition.Position?.MonitorDevice);
-        double windowScale = Math.Max(1.0, NativeMethods.GetDpiForWindow(_hwnd) / 96d);
-        if (display.Monitor.Left == 0 && display.Monitor.Top == 0)
-            windowScale = Math.Max(windowScale, NativeMethods.GetDpiForSystem() / 96d);
-        if (WindowRoot.XamlRoot is { RasterizationScale: > 0 } xamlRoot)
-            windowScale = Math.Max(windowScale, xamlRoot.RasterizationScale);
-        display = display with { Scale = Math.Max(display.Scale, windowScale) };
+        if (!double.IsFinite(display.Scale) || display.Scale <= 0.5)
+        {
+            double fallbackScale = NativeMethods.GetDpiForWindow(_hwnd) / 96d;
+            if (!double.IsFinite(fallbackScale) || fallbackScale <= 0.5)
+                fallbackScale = WindowRoot.XamlRoot?.RasterizationScale ?? 1.0;
+            display = display with { Scale = double.IsFinite(fallbackScale) && fallbackScale > 0.5 ? fallbackScale : 1.0 };
+        }
 
         if (_definition.PlacementMode == OrganizerPlacementMode.Floating)
         {

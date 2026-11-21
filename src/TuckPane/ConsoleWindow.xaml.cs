@@ -89,6 +89,7 @@ public sealed partial class ConsoleWindow : Window
     private readonly SolidColorBrush _closePressedBrush = new(ColorHelper.FromArgb(255, 164, 38, 25));
     private readonly SolidColorBrush _closeHighContrastHoverBrush = new(Colors.Transparent);
     private readonly SolidColorBrush _closeHoverForegroundBrush = new(Colors.White);
+    private readonly SolidColorBrush _customThemeColorDotBrush = new();
     private string _defaultAddName = string.Empty;
     private Guid _addOrganizerId = Guid.NewGuid();
     private string? _addStoragePath;
@@ -333,7 +334,7 @@ public sealed partial class ConsoleWindow : Window
         UpdateFolderMenuControls();
         PopulateDisplayCombos();
         ApplyTypography(ConsoleRoot);
-        foreach (Control control in new Control[] { SystemNavItem, DisplayNavItem, MenuNavItem, InteractionNavItem, ThemeNavItem, ManageNavItem, StationNavItem, DockNavItem })
+        foreach (Control control in new Control[] { SystemNavItem, DisplayNavItem, MenuNavItem, InteractionNavItem, ThemeNavItem, ManageNavItem, StationNavItem, DockNavItem, UpdateNavItem })
         {
             control.FontFamily = new FontFamily(AppStrings.FontFamily);
             control.CharacterSpacing = AppStrings.CharacterSpacing;
@@ -1604,14 +1605,23 @@ public sealed partial class ConsoleWindow : Window
 
     private void ThemeColorSwatch_Click(object sender, RoutedEventArgs e)
     {
-        if (!_componentReady || _settingBinder.IsSuppressed || sender is not FrameworkElement { Tag: string hex }) return;
-        ApplyThemeChange(colorArgb: ParseThemeColor(hex), immediate: true);
+        if (!_componentReady || _settingBinder.IsSuppressed || sender is not ToggleButton { Tag: string hex } button) return;
+        uint colorArgb = ParseThemeColor(hex);
+        if (_host.State.GlobalSettings.GetTheme(_themeTarget).ColorArgb == colorArgb)
+        {
+            button.IsChecked = true;
+            return;
+        }
+        ApplyThemeChange(colorArgb: colorArgb, immediate: true);
+        UpdateThemeControls();
     }
 
     private void ThemeColorPicker_ColorChanged(ColorPicker sender, ColorChangedEventArgs args)
     {
         if (!_componentReady || _settingBinder.IsSuppressed) return;
-        ApplyThemeChange(colorArgb: ToArgb(args.NewColor));
+        uint argb = ToArgb(args.NewColor);
+        ApplyThemeChange(colorArgb: argb);
+        UpdateCustomThemeColorIndicator(argb, _host.State.GlobalSettings.GetTheme(_themeTarget).FullyTransparent);
     }
 
     private void ThemeTransparencySlider_ValueChanged(object sender, object e)
@@ -1748,11 +1758,11 @@ public sealed partial class ConsoleWindow : Window
         foreach (ToggleButton button in ColorSwatchesPanel.Children.OfType<ToggleButton>())
         {
             string hex = (string)button.Tag;
-            button.IsChecked = ParseThemeColor(hex) == theme.ColorArgb;
             Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(
                 button,
                 AppStrings.Format("ThemeColorPresetFormat", hex));
         }
+        UpdateCustomThemeColorIndicator(theme.ColorArgb, theme.FullyTransparent);
         if (ToArgb(ThemeColorPicker.Color) != theme.ColorArgb)
             ThemeColorPicker.Color = FromArgb(theme.ColorArgb);
         ThemeTransparencySlider.Maximum = GlobalSettings.MaximumThemeTransparency;
@@ -1765,9 +1775,37 @@ public sealed partial class ConsoleWindow : Window
         ThemeSolidModeButton.IsChecked = !theme.FullyTransparent && theme.SolidColorMode;
         ThemeTransparencyRow.Visibility = theme.FullyTransparent ? Visibility.Collapsed : Visibility.Visible;
         ThemeBlurStrengthRow.Visibility = theme.FullyTransparent || theme.SolidColorMode ? Visibility.Collapsed : Visibility.Visible;
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(CustomThemeColorButton, AppStrings.Get("ThemeCustomColor"));
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(ThemeColorPicker, AppStrings.Get("ThemeCustomColor"));
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(ThemeTransparencySlider, AppStrings.Get("ThemeTransparencyLabel"));
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(ThemeBlurStrengthSlider, AppStrings.Get("ThemeBlurStrengthLabel"));
+    }
+
+    private void UpdateCustomThemeColorIndicator(uint colorArgb, bool fullyTransparent)
+    {
+        if (ColorSwatchesPanel is null || CustomThemeColorButton is null) return;
+        using var _ = _settingBinder.Suppress();
+        bool matchesPreset = false;
+        foreach (ToggleButton button in ColorSwatchesPanel.Children.OfType<ToggleButton>())
+        {
+            string hex = (string)button.Tag;
+            bool matched = ParseThemeColor(hex) == colorArgb;
+            if (matched) matchesPreset = true;
+            button.IsChecked = matched;
+        }
+        bool isCustomColor = !matchesPreset && !fullyTransparent;
+        if (CustomThemeColorDot is not null)
+        {
+            CustomThemeColorDot.Visibility = isCustomColor ? Visibility.Visible : Visibility.Collapsed;
+            if (isCustomColor)
+            {
+                _customThemeColorDotBrush.Color = FromArgb(colorArgb);
+                CustomThemeColorDot.Background = _customThemeColorDotBrush;
+            }
+        }
+        CustomThemeColorButton.BorderBrush = isCustomColor
+            ? GetSurfaceBrush("ConsoleSelectionAccentBrush")
+            : GetSurfaceBrush("ButtonBorderBrush");
     }
 
     private async void ThemeSaveTimer_Tick(Microsoft.UI.Dispatching.DispatcherQueueTimer sender, object args) =>
@@ -1947,9 +1985,7 @@ public sealed partial class ConsoleWindow : Window
             string compactSubtitle = $"{layout} · {itemCount}";
             string fullSummary = AppStrings.Format("ManageItemSummaryFormat", layout, itemCount, AppStrings.FormatDate(definition.CreatedAtUtc));
             var panel = new StackPanel { Spacing = 2, VerticalAlignment = VerticalAlignment.Center };
-            string displayName = definition.PlacementMode == OrganizerPlacementMode.Station
-                ? AppStrings.Format("StationListNameFormat", DockEdgeName(definition.DockEdge))
-                : definition.Name;
+            string displayName = FormatOrganizerDisplayName(definition);
             panel.Children.Add(new TextBlock
             {
                 Text = displayName,
@@ -1998,7 +2034,74 @@ public sealed partial class ConsoleWindow : Window
         ManageDetailCard.Visibility = _creating || ManageList.SelectedItem is null ? Visibility.Collapsed : Visibility.Visible;
         UpdateManageListItemSurfaces();
         _suppressSelection = false;
-        if (!preserveEditor && ManageList.SelectedItem is ListViewItem { Tag: Guid id }) LoadManageEditor(id);
+        if (!preserveEditor)
+        {
+            if (ManageList.SelectedItem is ListViewItem { Tag: Guid id })
+            {
+                LoadManageEditor(id);
+            }
+            else if (!_creating)
+            {
+                ClearManageSelection();
+            }
+        }
+    }
+
+    private void ClearManageSelection()
+    {
+        _selectedId = null;
+        _editing = null;
+        _manageNameDirty = false;
+        _pendingVisualChanges = OrganizerVisualChange.None;
+        ++_manageStorageCheckVersion;
+        MissingStorageInfo.IsOpen = false;
+        RecreateStorageButton.Visibility = Visibility.Collapsed;
+        ManageEditor.Visibility = Visibility.Collapsed;
+        ManageDetailCard.Visibility = Visibility.Collapsed;
+        UpdateTransferState();
+    }
+
+    internal void RefreshManageListItemMetadata(OrganizerDefinition definition)
+    {
+        if (ManageList is null) return;
+        foreach (ListViewItem item in ManageList.Items.OfType<ListViewItem>())
+        {
+            if (item.Tag is not Guid itemId || itemId != definition.Id || item.Content is not Grid grid) continue;
+            StackPanel? panel = grid.Children.OfType<StackPanel>().FirstOrDefault();
+            if (panel is null) continue;
+            TextBlock? titleText = panel.Children.OfType<TextBlock>().FirstOrDefault();
+            TextBlock? subtitleText = panel.Children.OfType<TextBlock>()
+                .FirstOrDefault(text => Equals(text.Tag, "subtitle"));
+            MainWindow? window = _host.Windows.FirstOrDefault(w => w.OrganizerId == definition.Id);
+            string layout = definition.PlacementMode == OrganizerPlacementMode.Dock
+                ? AppStrings.Get(definition.DockOrientation == DockOrientation.Horizontal ? "DockHorizontal" : "DockVertical")
+                : AppStrings.Format("GridLayoutFormat", definition.Layout.Columns, definition.Layout.Rows);
+            string itemCount = AppStrings.FormatItemCount(window?.FileCount ?? 0);
+            if (titleText is not null)
+                titleText.Text = FormatOrganizerDisplayName(definition);
+            if (subtitleText is not null)
+                subtitleText.Text = $"{layout} · {itemCount}";
+            string fullSummary = AppStrings.Format("ManageItemSummaryFormat", layout, itemCount, AppStrings.FormatDate(definition.CreatedAtUtc));
+            ToolTipService.SetToolTip(item, fullSummary);
+            break;
+        }
+    }
+
+    private static string FormatOrganizerDisplayName(OrganizerDefinition definition)
+    {
+        if (definition.PlacementMode == OrganizerPlacementMode.Station)
+        {
+            string edgeLabel = AppStrings.Format("StationListNameFormat", DockEdgeName(definition.DockEdge));
+            string trimmed = (definition.Name ?? string.Empty).Trim();
+            if (!string.IsNullOrEmpty(trimmed) &&
+                !string.Equals(trimmed, AppStrings.Get("StationDefaultName"), StringComparison.OrdinalIgnoreCase) &&
+                !string.Equals(trimmed, edgeLabel, StringComparison.OrdinalIgnoreCase))
+            {
+                return $"{edgeLabel} · {trimmed}";
+            }
+            return edgeLabel;
+        }
+        return definition.Name;
     }
 
     private async void ManageList_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -2208,6 +2311,12 @@ public sealed partial class ConsoleWindow : Window
             {
                 ShowError(AppStrings.Get("OrganizerModeErrorTitle"), error);
                 LoadManageEditor(draft.Id);
+            }
+            else
+            {
+                RefreshManageListItemMetadata(draft);
+                if (draft.PlacementMode == OrganizerPlacementMode.Station && (changes & OrganizerVisualChange.Docking) != 0)
+                    RefreshAutoOrganizeTargetName(draft);
             }
         }
     }

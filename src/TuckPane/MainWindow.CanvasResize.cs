@@ -16,6 +16,8 @@ namespace TuckPane;
 public sealed partial class MainWindow
 {
     private const int VkMenu = 0x12;
+    private const uint WmMouseLeave = 0x02A3;
+    private const uint TmeLeave = 0x00000002;
     private bool _canvasResizeRenderingHooked;
     private bool _canvasResizeGpuScaling;
     private bool _canvasResizeCenterSymmetric;
@@ -23,6 +25,20 @@ public sealed partial class MainWindow
     private double _pendingCanvasResizeContentScale = 1;
     private double _pendingCanvasResizePanelWidthDip;
     private double _pendingCanvasResizePanelHeightDip;
+    private IntPtr _trackedCanvasResizeEdgeWindow;
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct TrackMouseEventInfo
+    {
+        public uint Size;
+        public uint Flags;
+        public IntPtr HwndTrack;
+        public uint HoverTime;
+    }
+
+    [DllImport("user32.dll", EntryPoint = "TrackMouseEvent", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool TrackMouseEvent(ref TrackMouseEventInfo eventTrack);
 
     private bool TryBeginCanvasResize(CanvasResizeEdge requestedEdge = CanvasResizeEdge.None)
     {
@@ -104,6 +120,8 @@ public sealed partial class MainWindow
             alignmentInsets,
             display);
         ResetHoverWave();
+        ClearExpandedEdgePointer();
+        _trackedCanvasResizeEdgeWindow = IntPtr.Zero;
         SetCanvasResizeCursor(edge);
         // Hide the 4 native child edge windows once for the duration of the drag to eliminate
         // 4x per-frame synchronous SetWindowPos calls.
@@ -192,6 +210,7 @@ public sealed partial class MainWindow
         if (_hwnd == IntPtr.Zero || !NativeMethods.IsWindow(_hwnd)) return;
         if (!show || _canvasResize is not null || IsDock || _definition.PlacementMode == OrganizerPlacementMode.Station)
         {
+            _trackedCanvasResizeEdgeWindow = IntPtr.Zero;
             foreach (IntPtr edgeWindow in _canvasResizeEdgeWindows)
             {
                 _ = NativeMethods.SetWindowPos(
@@ -258,6 +277,7 @@ public sealed partial class MainWindow
 
     private void RestoreCanvasResizeWindowProc(IntPtr window)
     {
+        if (_trackedCanvasResizeEdgeWindow == window) _trackedCanvasResizeEdgeWindow = IntPtr.Zero;
         if (!_canvasResizeOriginalWindowProcs.Remove(window, out IntPtr previous) || !NativeMethods.IsWindow(window)) return;
         IntPtr current = NativeMethods.GetWindowLongPtr(window, NativeMethods.GWLP_WNDPROC);
         if (current == Marshal.GetFunctionPointerForDelegate(_canvasResizeWindowProc))
@@ -481,6 +501,7 @@ public sealed partial class MainWindow
             CommitPendingCanvasResizeMetrics();
             ApplyExpandedContentInset();
             RestoreCanvasResizeGpuScaling();
+            WindowRoot.UpdateLayout();
             RefreshPerformanceSettings();
         }
         ConfigureItemsLayout();
@@ -735,6 +756,7 @@ public sealed partial class MainWindow
         try
         {
             if (TryHandleCanvasResizeWindowMessage(hWnd, message, wParam, out IntPtr result)) return result;
+            HandleCanvasResizeEdgeHoverMessage(hWnd, message);
         }
         catch (Exception ex)
         {
@@ -743,6 +765,71 @@ public sealed partial class MainWindow
         return _canvasResizeOriginalWindowProcs.TryGetValue(hWnd, out IntPtr previous)
             ? NativeMethods.CallWindowProc(previous, hWnd, message, wParam, lParam)
             : IntPtr.Zero;
+    }
+
+    private void HandleCanvasResizeEdgeHoverMessage(IntPtr hWnd, uint message)
+    {
+        if (_closing || _canvasResize is not null || hWnd == _hwnd) return;
+        if (message == NativeMethods.WM_MOUSEMOVE)
+        {
+            if (!_expanded || _animating || !NativeMethods.GetCursorPos(out NativeMethods.POINT hoverCursor))
+                return;
+            if (_trackedCanvasResizeEdgeWindow != hWnd)
+            {
+                var track = new TrackMouseEventInfo
+                {
+                    Size = (uint)Marshal.SizeOf<TrackMouseEventInfo>(),
+                    Flags = TmeLeave,
+                    HwndTrack = hWnd
+                };
+                if (TrackMouseEvent(ref track))
+                    _trackedCanvasResizeEdgeWindow = hWnd;
+            }
+            UpdateExpandedEdgePointerFromScreenCursor(hoverCursor);
+            return;
+        }
+        if (message == WmMouseLeave)
+        {
+            if (_trackedCanvasResizeEdgeWindow == hWnd)
+                _trackedCanvasResizeEdgeWindow = IntPtr.Zero;
+            if (!NativeMethods.GetCursorPos(out NativeMethods.POINT leaveCursor) ||
+                !IsCursorInsideExpandedWindow(leaveCursor))
+            {
+                ClearExpandedEdgePointer();
+            }
+        }
+    }
+
+    private void UpdateExpandedEdgePointerFromScreenCursor(NativeMethods.POINT cursor)
+    {
+        if (_closing || !_expanded || _animating) return;
+        if (!_host.State.GlobalSettings.EdgeGlowEnabled || !UseCustomAnimations || DesktopTypographyService.IsHighContrast())
+        {
+            ClearExpandedEdgePointer();
+            return;
+        }
+        if (!TryGetElementScreenBounds(ExpandedEdgeOverlay, out NativeMethods.RECT edgeBounds)) return;
+        double scale = Math.Max(1.0, ExpandedEdgeOverlay.XamlRoot?.RasterizationScale
+            ?? (NativeMethods.GetDpiForWindow(_hwnd) / 96d));
+        double xDip = (cursor.X - edgeBounds.Left) / scale;
+        double yDip = (cursor.Y - edgeBounds.Top) / scale;
+        _expandedEdgeSurface.UpdatePointerRim(xDip, yDip);
+    }
+
+    private bool IsCursorInsideExpandedWindow(NativeMethods.POINT cursor)
+    {
+        if (_hwnd == IntPtr.Zero || !NativeMethods.IsWindow(_hwnd) ||
+            !TryGetLogicalWindowRect(out NativeMethods.RECT bounds))
+        {
+            return false;
+        }
+        if (cursor.X < bounds.Left || cursor.X >= bounds.Right ||
+            cursor.Y < bounds.Top || cursor.Y >= bounds.Bottom)
+        {
+            return false;
+        }
+        IntPtr overWindow = NativeMethods.WindowFromPoint(cursor);
+        return overWindow == _hwnd || (overWindow != IntPtr.Zero && NativeMethods.IsChild(_hwnd, overWindow));
     }
 
     private bool TryHandleCanvasResizeWindowMessage(IntPtr hWnd, uint message, UIntPtr wParam, out IntPtr result)

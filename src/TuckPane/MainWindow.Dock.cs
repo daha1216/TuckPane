@@ -112,6 +112,9 @@ public sealed partial class MainWindow
         _dockGeometry = DockLayoutMath.Calculate(_items.Count, _definition.DockIconSizeDip,
             _definition.DockOrientation, _definition.DockSpacingFactor);
         OrganizerContextMenu.ShouldConstrainToRootBounds = false;
+        // Keep the glass edge rim behind Dock icons so bouncing icons leap cleanly above the top glass rim.
+        Canvas.SetZIndex(ExpandedEdgeOverlay, 0);
+        Canvas.SetZIndex(ExpandedContentLayer, 10);
         ExpandedTitleRow.Height = new GridLength(0);
         ExpandedNameText.Visibility = Visibility.Collapsed;
         CollapseButton.Visibility = Visibility.Collapsed;

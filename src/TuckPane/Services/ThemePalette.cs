@@ -41,6 +41,9 @@ internal static class ThemePalette
     internal const float GlassEdgeCounterArcInsetDip = 0.0f;
     internal const float GlassEdgeTextureThicknessDip = 0.75f;
     internal const float GlassEdgeTextureInsetDip = 0.25f;
+    internal const float GlassEdgeLightMeniscusThicknessDip = 0.65f;
+    internal const float GlassEdgeLightMeniscusInsetDip = 0.0f;
+    internal const float GlassEdgeLightInnerInsetDip = 0.60f;
     internal const float GlassEdgePointerRimThicknessDip = 1.55f;
     internal const float GlassEdgePointerRimInsetDip = 0.0f;
     internal const float GlassEdgeMinimumOpacity = .92f;
@@ -201,6 +204,14 @@ internal static class ThemePalette
         (0f, Color.FromArgb(150, 255, 255, 255)),
         (.48f, Color.FromArgb(44, 255, 255, 255)),
         (1f, Color.FromArgb(96, 248, 252, 255))
+    ];
+
+    // High-luminance cool ice-crystal outer refraction hairline for light surfaces (>62% luminance, never dark/muddy).
+    internal static IReadOnlyList<(float Offset, Color Color)> GlassEdgeLightMeniscusStops { get; } =
+    [
+        (0f, Color.FromArgb(50, 152, 174, 200)),
+        (.50f, Color.FromArgb(56, 144, 166, 192)),
+        (1f, Color.FromArgb(60, 138, 160, 186))
     ];
 
     internal static IReadOnlyList<(float Offset, Color Color)> GlassEdgeHighlightStops { get; } =

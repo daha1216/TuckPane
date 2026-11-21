@@ -340,5 +340,31 @@ internal static class LiquidGlassAndPerfChecks
                 transCs.Contains("NativeMethods.DwmFlush()", StringComparison.Ordinal) &&
                 styleCs.Contains("ResetCompactHoverSpringToRestIfIdle(", StringComparison.Ordinal),
             "悬停展开缺少 SWP_NOCOPYBITS、DwmFlush 预提交护航或紧凑态悬停弹簧防抖锁。");
+
+        // 7. End-to-end 46-item polish contracts (ACP .lnk resolution, straight-alpha icon fix,
+        //    8-dir resize layout sync, zero-leak hover reset, clamped spring, Todo Enter commit, 2D arrow nav)
+        string sortOrderCs = File.ReadAllText(Path.Combine(srcRoot, "Core", "OrganizerSortOrder.cs"));
+        string canvasResizeCs = File.ReadAllText(Path.Combine(srcRoot, "MainWindow.CanvasResize.cs"));
+        string keyboardCs = File.ReadAllText(Path.Combine(srcRoot, "MainWindow.KeyboardFilter.cs"));
+        string todoXaml = File.ReadAllText(Path.Combine(srcRoot, "TodoWindow.xaml"));
+        string noteTitleCs = File.ReadAllText(Path.Combine(srcRoot, "MainWindow.OrganizerTitle.cs"));
+
+        require(sortOrderCs.Contains("MultiByteToWideChar", StringComparison.Ordinal) &&
+                !sortOrderCs.Contains("Encoding.Default.GetString", StringComparison.Ordinal),
+            "OrganizerSortOrder 必须通过 Win32 CP_ACP 解析 ANSI .lnk 路径，避免 .NET 10 UTF-8 Encoding.Default 造成中文路径乱码。");
+        require(iconCacheCs.Contains("PremultiplyAlpha(pixels)", StringComparison.Ordinal) &&
+                iconCacheCs.Contains("StrictUtf8", StringComparison.Ordinal),
+            "IconCacheService 必须对 IShellItemImageFactory 输出执行 PremultiplyAlpha 并支持 UTF-8 .url 路径解析，避免文件夹/文档泛白光晕或丢图。");
+        require(canvasResizeCs.Contains("WindowRoot.UpdateLayout();", StringComparison.Ordinal) &&
+                mainCs.Contains("ExpandedContentLayer.SizeChanged += SurfaceHost_SizeChanged;", StringComparison.Ordinal),
+            "8 向画布缩放收尾缺少同步布局刷新或 ExpandedContentLayer.SizeChanged 裁剪订阅。");
+        require(styleCs.Contains("ForceResetCompactHoverVisuals()", StringComparison.Ordinal) &&
+                mainCs.Contains("ExpandedView_PointerExited", StringComparison.Ordinal) &&
+                transCs.Contains("Clamp(props.Progress, 0.0, 1.0)", StringComparison.Ordinal),
+            "缺少无条件悬停弹簧复位、展开态指针离窗流光熄灭或 DWM 表达式进度钳位。");
+        require(keyboardCs.Contains("MoveKeyboardFocusDirectional(", StringComparison.Ordinal) &&
+                todoXaml.Contains("UpdateSourceTrigger=PropertyChanged", StringComparison.Ordinal) &&
+                noteTitleCs.Contains("ExpandedNameEditorCapsule.Visibility = Visibility.Visible;", StringComparison.Ordinal),
+            "缺少 2D 自由网格方向键导航、待办回车即时绑定更新或内联标题编辑高对比度磨砂胶囊。");
     }
 }

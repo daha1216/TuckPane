@@ -216,8 +216,11 @@ public sealed partial class MainWindow
             ExpandedToastPill.Translation = new Vector3(0f, 10f, 0f);
             ExpandedToastPill.Visibility = Visibility.Visible;
 
-            if (!DispatcherQueue.TryEnqueue(() =>
+            // Wait 1 real compositor frame before animating in so Opacity=0 -> 1 never collapses into a single frame.
+            EventHandler<object>? onNextFrame = null;
+            onNextFrame = (_, _) =>
             {
+                CompositionTarget.Rendering -= onNextFrame;
                 if (_closing || version != _expandedToastVersion) return;
                 if (ExpandedToastPill.OpacityTransition is not null)
                     ExpandedToastPill.OpacityTransition.Duration = TimeSpan.FromMilliseconds(180);
@@ -225,11 +228,8 @@ public sealed partial class MainWindow
                     ExpandedToastPill.TranslationTransition.Duration = TimeSpan.FromMilliseconds(220);
                 ExpandedToastPill.Opacity = 1;
                 ExpandedToastPill.Translation = Vector3.Zero;
-            }))
-            {
-                ExpandedToastPill.Opacity = 1;
-                ExpandedToastPill.Translation = Vector3.Zero;
-            }
+            };
+            CompositionTarget.Rendering += onNextFrame;
         }
         else
         {
@@ -286,6 +286,8 @@ public sealed partial class MainWindow
         if (_closing) return;
         if (ExpandedToastPill.Opacity < 0.05)
         {
+            if (ExpandedToastPill.TranslationTransition is not null)
+                ExpandedToastPill.TranslationTransition.Duration = TimeSpan.Zero;
             ExpandedToastPill.Visibility = Visibility.Collapsed;
             ExpandedToastPill.Translation = Vector3.Zero;
         }
@@ -296,10 +298,16 @@ public sealed partial class MainWindow
         EnsureOrganizerMenuHooksAndIcons();
         var settings = _host.State.GlobalSettings;
         string[] visible = OrganizerMenuVisibility.VisibleActions(settings, _definition.PlacementMode);
+        bool showCompactGridGaps = !IsCompactList && settings.FreeGridPlacementEnabled;
         // Side stations can be narrower than the menu; let the popup use the screen.
         OrganizerContextMenu.ShouldConstrainToRootBounds = false;
         foreach (MenuFlyoutItemBase item in OrganizerContextMenu.Items)
         {
+            if (ReferenceEquals(item, CompactGridGapsMenuItem) && !showCompactGridGaps)
+            {
+                item.Visibility = Visibility.Collapsed;
+                continue;
+            }
             item.Visibility = item is MenuFlyoutSeparator
                 ? OrganizerMenuVisibility.ShowSeparator(visible) ? Visibility.Visible : Visibility.Collapsed
                 : visible.Contains(ReferenceEquals(item, ToggleExpansionModeMenuItem)

@@ -37,8 +37,9 @@ public sealed partial class MainWindow
         _desktopLayer?.SetInputActivation(true);
         ExpandedNameEditor.Text = _definition.Name;
         ExpandedNameEditor.FontSize = ExpandedNameText.FontSize;
-        ExpandedNameEditor.Foreground = ExpandedNameText.Foreground;
+        ExpandedNameEditor.Foreground = _expandedNameEditorFgBrush;
         ExpandedNameText.Visibility = Visibility.Collapsed;
+        ExpandedNameEditorCapsule.Visibility = Visibility.Visible;
         ExpandedNameEditor.Visibility = Visibility.Visible;
         SyncExpandedNameShadow();
         ExpandedNameEditor.Focus(FocusState.Programmatic);
@@ -61,6 +62,7 @@ public sealed partial class MainWindow
         string draft = ExpandedNameEditor.Text;
         bool save = _organizerTitleEdit.Finish(commit);
         ExpandedNameEditor.Visibility = Visibility.Collapsed;
+        ExpandedNameEditorCapsule.Visibility = Visibility.Collapsed;
         ApplyOrganizerNameVisibility();
         SyncExpandedNameShadow();
         try

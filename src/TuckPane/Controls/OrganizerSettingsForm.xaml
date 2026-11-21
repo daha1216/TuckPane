@@ -153,7 +153,7 @@
                                     <ColumnDefinition Width="56" />
                                 </Grid.ColumnDefinitions>
                                 <TextBlock x:Name="DockSizeLabelText" VerticalAlignment="Center" Tag="loc:DockSizeLabel" Text="Dock 大小" TextWrapping="Wrap" Foreground="{StaticResource FormPrimaryTextBrush}" />
-                                <controls:ConsoleSlider x:Name="DockIconSizeSlider" Grid.Column="1" Style="{StaticResource Pct}" Minimum="32" Maximum="128" StepFrequency="4" Value="64" VerticalAlignment="Center" ValueChanged="FormControl_Changed" />
+                                <controls:ConsoleSlider x:Name="DockIconSizeSlider" Grid.Column="1" Minimum="32" Maximum="128" StepFrequency="4" SmallChange="4" Value="64" VerticalAlignment="Center" ValueChanged="FormControl_Changed" />
                                 <TextBlock x:Name="DockIconSizeValue" Grid.Column="2" VerticalAlignment="Center" TextAlignment="Right" FontSize="13" Text="64 DIP" Foreground="{StaticResource FormSecondaryTextBrush}" />
                             </Grid>
                         </Border>
@@ -165,7 +165,7 @@
                                     <ColumnDefinition Width="56" />
                                 </Grid.ColumnDefinitions>
                                 <TextBlock VerticalAlignment="Center" Tag="loc:DockSpacingLabel" Text="图标间隔" TextWrapping="Wrap" Foreground="{StaticResource FormPrimaryTextBrush}" />
-                                <controls:ConsoleSlider x:Name="DockSpacingSlider" Grid.Column="1" Style="{StaticResource Pct}" Minimum="0.5" Maximum="2" StepFrequency="0.05" Value="0.75" VerticalAlignment="Center" ValueChanged="FormControl_Changed" />
+                                <controls:ConsoleSlider x:Name="DockSpacingSlider" Grid.Column="1" Minimum="0.5" Maximum="2" StepFrequency="0.05" SmallChange="0.05" Value="0.75" VerticalAlignment="Center" ValueChanged="FormControl_Changed" />
                                 <TextBlock x:Name="DockSpacingValue" Grid.Column="2" VerticalAlignment="Center" TextAlignment="Right" FontSize="13" Text="0.75" Foreground="{StaticResource FormSecondaryTextBrush}" />
                             </Grid>
                         </Border>
@@ -204,7 +204,7 @@
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
                         <TextBlock VerticalAlignment="Center" Tag="loc:DisplayLabel" Text="显示器" TextWrapping="Wrap" Foreground="{StaticResource FormPrimaryTextBrush}" />
-                        <ComboBox x:Name="DisplayCombo" Grid.Column="1" Width="240" Height="32" HorizontalAlignment="Right" SelectionChanged="FormControl_Changed" />
+                        <ComboBox x:Name="DisplayCombo" Grid.Column="1" Width="208" Height="32" HorizontalAlignment="Right" SelectionChanged="FormControl_Changed" />
                     </Grid>
                 </Border>
                 <Border x:Name="DockEdgeCard" Style="{StaticResource Row}" Visibility="Collapsed">
@@ -230,7 +230,7 @@
                             <ColumnDefinition Width="48" />
                         </Grid.ColumnDefinitions>
                         <TextBlock VerticalAlignment="Center" Tag="loc:RowsLabel" Text="行数" TextWrapping="Wrap" Foreground="{StaticResource FormPrimaryTextBrush}" />
-                        <controls:ConsoleSlider x:Name="RowsSlider" Grid.Column="1" Minimum="2" Maximum="8" StepFrequency="1" Value="3" VerticalAlignment="Center" ValueChanged="FormControl_Changed" />
+                        <controls:ConsoleSlider x:Name="RowsSlider" Grid.Column="1" Minimum="2" Maximum="8" StepFrequency="1" SmallChange="1" Value="3" VerticalAlignment="Center" ValueChanged="FormControl_Changed" />
                         <TextBlock x:Name="RowsValueText" Grid.Column="2" VerticalAlignment="Center" TextAlignment="Right" FontSize="13" Text="3" Foreground="{StaticResource FormSecondaryTextBrush}" />
                     </Grid>
                 </Border>
@@ -242,7 +242,7 @@
                             <ColumnDefinition Width="48" />
                         </Grid.ColumnDefinitions>
                         <TextBlock VerticalAlignment="Center" Tag="loc:ColumnsLabel" Text="列数" TextWrapping="Wrap" Foreground="{StaticResource FormPrimaryTextBrush}" />
-                        <controls:ConsoleSlider x:Name="ColumnsSlider" Grid.Column="1" Minimum="2" Maximum="8" StepFrequency="1" Value="3" VerticalAlignment="Center" ValueChanged="FormControl_Changed" />
+                        <controls:ConsoleSlider x:Name="ColumnsSlider" Grid.Column="1" Minimum="2" Maximum="8" StepFrequency="1" SmallChange="1" Value="3" VerticalAlignment="Center" ValueChanged="FormControl_Changed" />
                         <TextBlock x:Name="ColumnsValueText" Grid.Column="2" VerticalAlignment="Center" TextAlignment="Right" FontSize="13" Text="3" Foreground="{StaticResource FormSecondaryTextBrush}" />
                     </Grid>
                 </Border>

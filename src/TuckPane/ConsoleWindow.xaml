@@ -331,26 +331,47 @@
                         <Grid HorizontalAlignment="Stretch">
                         <StackPanel Spacing="14" HorizontalAlignment="Stretch">
                             <TextBlock Tag="loc:NavUpdate" Text="更新" FontSize="24" FontWeight="SemiBold" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
-                            <Border Style="{StaticResource SettingsGroup}" Loaded="SettingsGroup_Loaded" Padding="18,16">
-                                <StackPanel Spacing="10">
-                                    <TextBlock x:Name="UpdateVersionText" FontSize="16" FontWeight="SemiBold" TextWrapping="Wrap" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
-                                    <TextBlock x:Name="UpdateStatusText" FontSize="14" TextWrapping="Wrap" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
-                                    <TextBlock x:Name="UpdateLastCheckText" FontSize="12" TextWrapping="Wrap" Foreground="{StaticResource ConsoleSecondaryTextBrush}"/>
-                                    <TextBlock Tag="loc:UpdateDescription" FontSize="12.5" Text="每天自动检查正式版。更新前保存数据并备份配置，完成后重新启动。" TextWrapping="Wrap" Foreground="{StaticResource ConsoleSecondaryTextBrush}"/>
-                                    <ProgressBar x:Name="UpdateProgress" Minimum="0" Maximum="100" Visibility="Collapsed"/>
-                                    <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,2,0,0">
-                                        <Button x:Name="UpdateCheckButton" Tag="loc:UpdateCheck" Content="检查更新" Click="UpdateCheck_Click"/>
-                                        <Button x:Name="UpdateInstallButton" Tag="loc:UpdateInstall" Content="更新并重启" Click="UpdateInstall_Click"/>
-                                        <Button x:Name="UpdateCancelButton" Tag="loc:UpdateCancel" Content="取消下载" Click="UpdateCancel_Click" Visibility="Collapsed"/>
-                                    </StackPanel>
-                                    <TextBlock x:Name="UpdateErrorText" FontSize="13" TextWrapping="Wrap" IsTextSelectionEnabled="True" Foreground="#FFC42B1C"/>
+                            <Border Style="{StaticResource SettingsGroup}" Loaded="SettingsGroup_Loaded">
+                                <StackPanel Spacing="0">
+                                    <Border Style="{StaticResource GeneralRow}" Padding="0,12">
+                                        <StackPanel Spacing="4">
+                                            <TextBlock x:Name="UpdateVersionText" FontSize="15" FontWeight="SemiBold" TextWrapping="Wrap" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
+                                            <TextBlock x:Name="UpdateStatusText" FontSize="13.5" TextWrapping="Wrap" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
+                                            <TextBlock x:Name="UpdateLastCheckText" FontSize="12" TextWrapping="Wrap" Foreground="{StaticResource ConsoleSecondaryTextBrush}"/>
+                                        </StackPanel>
+                                    </Border>
+                                    <Border Style="{StaticResource GeneralRow}" Padding="0,12" BorderThickness="0">
+                                        <StackPanel Spacing="10">
+                                            <TextBlock Tag="loc:UpdateDescription" FontSize="12.5" Text="每天自动检查正式版。更新前保存数据并备份配置，完成后重新启动。" TextWrapping="Wrap" Foreground="{StaticResource ConsoleSecondaryTextBrush}"/>
+                                            <Grid x:Name="UpdateProgressRow" ColumnSpacing="10" Visibility="Collapsed">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*"/>
+                                                    <ColumnDefinition Width="Auto"/>
+                                                </Grid.ColumnDefinitions>
+                                                <ProgressBar x:Name="UpdateProgress" Minimum="0" Maximum="100" VerticalAlignment="Center" Visibility="Collapsed"/>
+                                                <TextBlock x:Name="UpdateProgressText" Grid.Column="1" MinWidth="36" FontSize="12.5" FontWeight="SemiBold" TextAlignment="Right" VerticalAlignment="Center" Foreground="{StaticResource ConsoleSecondaryTextBrush}"/>
+                                            </Grid>
+                                            <local:FlowWrapPanel HorizontalSpacing="8" VerticalSpacing="8">
+                                                <Button x:Name="UpdateCheckButton" Tag="loc:UpdateCheck" Content="检查更新" Click="UpdateCheck_Click"/>
+                                                <Button x:Name="UpdateInstallButton" CornerRadius="8" MinHeight="32" Tag="loc:UpdateInstall" Content="更新并重启" Click="UpdateInstall_Click"/>
+                                                <Button x:Name="UpdateCancelButton" Tag="loc:UpdateCancel" Content="取消下载" Click="UpdateCancel_Click" Visibility="Collapsed"/>
+                                            </local:FlowWrapPanel>
+                                            <TextBlock x:Name="UpdateErrorText" FontSize="12.5" TextWrapping="Wrap" IsTextSelectionEnabled="True" Visibility="Collapsed" Foreground="#FFC42B1C"/>
+                                        </StackPanel>
+                                    </Border>
                                 </StackPanel>
                             </Border>
-                            <Border Style="{StaticResource SettingsGroup}" Loaded="SettingsGroup_Loaded" Padding="18,16">
-                                <StackPanel Spacing="8">
-                                    <TextBlock Tag="loc:UpdateReleaseNotes" Text="版本说明" FontSize="15" FontWeight="SemiBold" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
-                                    <TextBlock x:Name="UpdateNotesText" FontSize="13.5" TextWrapping="Wrap" IsTextSelectionEnabled="True" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
-                                    <TextBlock x:Name="UpdateRecoveryText" FontSize="12" TextWrapping="Wrap" IsTextSelectionEnabled="True" Foreground="{StaticResource ConsoleSecondaryTextBrush}"/>
+                            <Border Style="{StaticResource SettingsGroup}" Loaded="SettingsGroup_Loaded">
+                                <StackPanel Spacing="0">
+                                    <Border Style="{StaticResource GeneralRow}" Padding="0,12">
+                                        <StackPanel Spacing="8">
+                                            <TextBlock Tag="loc:UpdateReleaseNotes" Text="版本说明" FontSize="14" FontWeight="SemiBold" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
+                                            <TextBlock x:Name="UpdateNotesText" FontSize="13.5" LineHeight="20" TextWrapping="Wrap" IsTextSelectionEnabled="True" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
+                                        </StackPanel>
+                                    </Border>
+                                    <Border x:Name="UpdateRecoveryRow" Style="{StaticResource GeneralRow}" Padding="0,10" BorderThickness="0" Visibility="Collapsed">
+                                        <TextBlock x:Name="UpdateRecoveryText" FontSize="12" TextWrapping="Wrap" IsTextSelectionEnabled="True" Visibility="Collapsed" Foreground="{StaticResource ConsoleSecondaryTextBrush}"/>
+                                    </Border>
                                 </StackPanel>
                             </Border>
                         </StackPanel>
@@ -467,10 +488,10 @@
                                             </Grid.RowDefinitions>
                                             <TextBlock FontSize="14" FontWeight="Medium" Tag="loc:DefaultStorageDirectoryTitle" Text="默认存储与目录" TextWrapping="Wrap" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
                                             <TextBox x:Name="DefaultStorageDirectoryBox" Grid.Row="1" Height="32" IsReadOnly="True" Style="{StaticResource FlatTextBoxStyle}" AutomationProperties.AutomationId="DefaultStorageDirectoryBox"/>
-                                            <StackPanel Grid.Row="2" Orientation="Horizontal" Spacing="8">
+                                            <local:FlowWrapPanel Grid.Row="2" HorizontalSpacing="8" VerticalSpacing="8">
                                                 <Button MinHeight="30" Height="30" Padding="12,3" Click="ChooseDefaultStorageDirectoryButton_Click" Content="选择目录" Tag="loc:ChooseFolder"/>
                                                 <Button MinHeight="30" Height="30" Padding="12,3" Click="ResetDefaultStorageDirectoryButton_Click" Content="恢复默认" Tag="loc:UseDefaultLocation"/>
-                                            </StackPanel>
+                                            </local:FlowWrapPanel>
                                         </Grid>
                                     </Border>
                                 </StackPanel>
@@ -486,25 +507,31 @@
                                                     <ColumnDefinition Width="156"/>
                                                 </Grid.ColumnDefinitions>
                                                 <ComboBox x:Name="AutoOrganizeTargetCombo" HorizontalAlignment="Stretch" Height="32" SelectionChanged="AutoOrganizeTargetCombo_SelectionChanged"/>
-                                                <ComboBox x:Name="AutoOrganizeSourceCombo" Grid.Column="1" HorizontalAlignment="Stretch" Height="32">
+                                                <ComboBox x:Name="AutoOrganizeSourceCombo" Grid.Column="1" HorizontalAlignment="Stretch" Height="32" SelectionChanged="AutoOrganizeSourceCombo_SelectionChanged">
                                                     <ComboBoxItem Tag="loc:AutoOrganizeSourceDesktop" Content="桌面"/>
                                                     <ComboBoxItem Tag="loc:AutoOrganizeSourceDownloads" Content="下载"/>
                                                 </ComboBox>
                                             </Grid>
-                                            <TextBox x:Name="AutoOrganizeExtensionsBox" Height="32" Style="{StaticResource FlatTextBoxStyle}" PlaceholderText=".pdf, .docx, .png"/>
-                                            <TextBox x:Name="AutoOrganizePatternsBox" Height="32" Style="{StaticResource FlatTextBoxStyle}" PlaceholderText="Screenshot*, *.zip"/>
-                                            <StackPanel Orientation="Horizontal" Spacing="6">
+                                            <StackPanel Spacing="4">
+                                                <TextBlock FontSize="12" Tag="loc:AutoOrganizeExtensionsLabel" Text="文件扩展名" Foreground="{StaticResource ConsoleSecondaryTextBrush}"/>
+                                                <TextBox x:Name="AutoOrganizeExtensionsBox" Height="32" Style="{StaticResource FlatTextBoxStyle}" PlaceholderText=".pdf, .docx, .png" TextChanged="AutoOrganizeDraft_TextChanged"/>
+                                            </StackPanel>
+                                            <StackPanel Spacing="4">
+                                                <TextBlock FontSize="12" Tag="loc:AutoOrganizePatternsLabel" Text="文件名通配符" Foreground="{StaticResource ConsoleSecondaryTextBrush}"/>
+                                                <TextBox x:Name="AutoOrganizePatternsBox" Height="32" Style="{StaticResource FlatTextBoxStyle}" PlaceholderText="Screenshot*, *.zip" TextChanged="AutoOrganizeDraft_TextChanged"/>
+                                            </StackPanel>
+                                            <local:FlowWrapPanel x:Name="AutoOrganizePresetsPanel" HorizontalSpacing="6" VerticalSpacing="6">
                                                 <Button MinHeight="28" Height="28" Padding="10,2" FontSize="12.5" Tag="loc:AutoOrganizePresetDocs" Content="文档" Click="AutoOrganizePreset_Click" DataContext="documents"/>
                                                 <Button MinHeight="28" Height="28" Padding="10,2" FontSize="12.5" Tag="loc:AutoOrganizePresetImages" Content="图片" Click="AutoOrganizePreset_Click" DataContext="images"/>
                                                 <Button MinHeight="28" Height="28" Padding="10,2" FontSize="12.5" Tag="loc:AutoOrganizePresetArchives" Content="压缩包" Click="AutoOrganizePreset_Click" DataContext="archives"/>
                                                 <Button MinHeight="28" Height="28" Padding="10,2" FontSize="12.5" Tag="loc:AutoOrganizePresetShortcuts" Content="快捷方式" Click="AutoOrganizePreset_Click" DataContext="shortcuts"/>
-                                            </StackPanel>
-                                            <StackPanel Orientation="Horizontal" Spacing="8">
-                                                <Button MinHeight="30" Height="30" Padding="12,3" Tag="loc:AutoOrganizeSaveRule" Content="保存规则" Click="AutoOrganizeSaveRuleButton_Click"/>
+                                            </local:FlowWrapPanel>
+                                            <local:FlowWrapPanel HorizontalSpacing="8" VerticalSpacing="8">
+                                                <Button x:Name="AutoOrganizeSaveRuleButton" MinHeight="30" Height="30" Padding="12,3" Tag="loc:AutoOrganizeSaveRule" Content="保存规则" Click="AutoOrganizeSaveRuleButton_Click"/>
                                                 <Button x:Name="PreviewAutoOrganizeButton" MinHeight="30" Height="30" Padding="12,3" Tag="loc:AutoOrganizePreview" Content="试运行预览" Click="PreviewAutoOrganizeButton_Click"/>
                                                 <Button x:Name="RunAutoOrganizeButton" MinHeight="30" Height="30" Padding="12,3" Tag="loc:AutoOrganizeRun" Content="立即归类" Click="RunAutoOrganizeButton_Click"/>
                                                 <Button x:Name="UndoAutoOrganizeButton" MinHeight="30" Height="30" Padding="12,3" Tag="loc:AutoOrganizeUndo" Content="撤销上次" Click="UndoAutoOrganizeButton_Click" IsEnabled="False"/>
-                                            </StackPanel>
+                                            </local:FlowWrapPanel>
                                             <TextBlock x:Name="AutoOrganizeStatusText" FontSize="12" TextWrapping="Wrap" Visibility="Collapsed" Foreground="{StaticResource ConsoleSecondaryTextBrush}"/>
                                         </StackPanel>
                                     </Border>
@@ -643,7 +670,7 @@
                                                 <ColumnDefinition Width="Auto"/>
                                             </Grid.ColumnDefinitions>
                                             <TextBlock VerticalAlignment="Center" FontSize="14" Tag="loc:CompactVisualStyleTitle" Text="收缩外观融合风格" TextWrapping="Wrap" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
-                                            <ComboBox x:Name="CompactVisualStyleCombo" Grid.Column="1" Width="228" Height="32" HorizontalAlignment="Right" SelectionChanged="CompactVisualStyleCombo_SelectionChanged">
+                                            <ComboBox x:Name="CompactVisualStyleCombo" Grid.Column="1" MinWidth="228" MaxWidth="320" Height="32" HorizontalAlignment="Right" SelectionChanged="CompactVisualStyleCombo_SelectionChanged">
                                                 <ComboBoxItem Tag="loc:CompactVisualStyleGlassTile" Content="经典毛玻璃卡片"/>
                                                 <ComboBoxItem Tag="loc:CompactVisualStyleNativeDesktop" Content="原生桌面融合"/>
                                                 <ComboBoxItem Tag="loc:CompactVisualStyleFluentFolder" Content="Fluent 立体文件夹"/>
@@ -651,16 +678,27 @@
                                         </Grid>
                                     </Border>
                                     <Border Style="{StaticResource GeneralRow}">
-                                        <Grid ColumnSpacing="10">
+                                        <Grid ColumnSpacing="12">
                                             <Grid.ColumnDefinitions>
                                                 <ColumnDefinition Width="*"/>
                                                 <ColumnDefinition Width="Auto"/>
-                                                <ColumnDefinition Width="Auto"/>
                                             </Grid.ColumnDefinitions>
                                             <TextBlock VerticalAlignment="Center" FontSize="14" Tag="loc:SnapFloatingToDesktopGridTitle" Text="悬浮窗自动吸附桌面图标网格" TextWrapping="Wrap" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
-                                            <Button x:Name="AlignDesktopGridButton" Grid.Column="1" MinHeight="30" Height="30" Padding="10,3" FontSize="12.5" Tag="loc:ContextAlignToDesktopGrid" Content="对齐桌面网格" Click="AlignDesktopGridButton_Click"/>
-                                            <ToggleSwitch x:Name="SnapFloatingToDesktopGridToggle" Grid.Column="2" VerticalAlignment="Center" Toggled="SnapFloatingToDesktopGridToggle_Toggled"/>
+                                            <ToggleSwitch x:Name="SnapFloatingToDesktopGridToggle" Grid.Column="1" VerticalAlignment="Center" Toggled="SnapFloatingToDesktopGridToggle_Toggled"/>
                                         </Grid>
+                                    </Border>
+                                    <Border Style="{StaticResource GeneralRow}">
+                                        <StackPanel Spacing="6">
+                                            <Grid ColumnSpacing="12">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*"/>
+                                                    <ColumnDefinition Width="Auto"/>
+                                                </Grid.ColumnDefinitions>
+                                                <TextBlock VerticalAlignment="Center" FontSize="14" Tag="loc:ContextAlignToDesktopGrid" Text="对齐桌面图标网格" TextWrapping="Wrap" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
+                                                <Button x:Name="AlignDesktopGridButton" Grid.Column="1" MinHeight="30" Height="30" Padding="12,3" FontSize="12.5" Tag="loc:DesktopGridAlignNow" Content="立即对齐" Click="AlignDesktopGridButton_Click"/>
+                                            </Grid>
+                                            <TextBlock x:Name="DesktopGridAlignStatusText" FontSize="12" TextWrapping="Wrap" Visibility="Collapsed" Foreground="{StaticResource ConsoleSecondaryTextBrush}"/>
+                                        </StackPanel>
                                     </Border>
                                     <Border Style="{StaticResource GeneralRow}" BorderThickness="0">
                                         <Grid ColumnSpacing="12">
@@ -698,12 +736,12 @@
                                                 <Button x:Name="RestoreLayoutSnapshotButton" Grid.Column="1" Height="32" Tag="loc:LayoutSnapshotRestore" Content="恢复" Click="RestoreLayoutSnapshotButton_Click"/>
                                                 <Button x:Name="DeleteLayoutSnapshotButton" Grid.Column="2" Height="32" Tag="loc:Delete" Content="删除" Click="DeleteLayoutSnapshotButton_Click"/>
                                             </Grid>
-                                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                            <local:FlowWrapPanel HorizontalSpacing="8" VerticalSpacing="8">
                                                 <Button x:Name="SaveLayoutSnapshotButton" MinHeight="30" Height="30" Padding="12,3" Tag="loc:LayoutSnapshotSave" Content="保存当前快照" Click="SaveLayoutSnapshotButton_Click"/>
                                                 <Button x:Name="TidyEdgeStackButton" MinHeight="30" Height="30" Padding="12,3" Tag="loc:ContextTidyEdgeStack" Content="整齐贴边排列" Click="TidyEdgeStackButton_Click"/>
                                                 <Button x:Name="ExportLayoutSnapshotsButton" MinHeight="30" Height="30" Padding="12,3" Tag="loc:LayoutSnapshotExport" Content="导出" Click="ExportLayoutSnapshotsButton_Click"/>
                                                 <Button x:Name="ImportLayoutSnapshotsButton" MinHeight="30" Height="30" Padding="12,3" Tag="loc:LayoutSnapshotImport" Content="导入" Click="ImportLayoutSnapshotsButton_Click"/>
-                                            </StackPanel>
+                                            </local:FlowWrapPanel>
                                             <TextBlock x:Name="LayoutSnapshotStatusText" FontSize="12" TextWrapping="Wrap" Visibility="Collapsed" Foreground="{StaticResource ConsoleSecondaryTextBrush}"/>
                                         </StackPanel>
                                     </Border>
@@ -859,7 +897,7 @@
                                                     <ColumnDefinition Width="56"/>
                                                 </Grid.ColumnDefinitions>
                                                 <TextBlock VerticalAlignment="Center" FontSize="13" Tag="loc:HoverExpandDelayLabel" Text="展开判定时间" TextWrapping="Wrap" Foreground="{StaticResource ConsoleSecondaryTextBrush}"/>
-                                                <controls:ConsoleSlider x:Name="HoverExpandDelaySlider" Grid.Column="1" Minimum="100" Maximum="2000" StepFrequency="50" VerticalAlignment="Center" AutomationProperties.AutomationId="HoverExpandDelaySlider" ValueChanged="HoverDelaySlider_ValueChanged"/>
+                                                <controls:ConsoleSlider x:Name="HoverExpandDelaySlider" Grid.Column="1" Minimum="100" Maximum="2000" StepFrequency="50" SmallChange="50" VerticalAlignment="Center" AutomationProperties.AutomationId="HoverExpandDelaySlider" ValueChanged="HoverDelaySlider_ValueChanged"/>
                                                 <TextBlock x:Name="HoverExpandDelayValue" Grid.Column="2" VerticalAlignment="Center" TextAlignment="Right" FontSize="13" Foreground="{StaticResource ConsoleSecondaryTextBrush}"/>
                                             </Grid>
                                         </Grid>
@@ -883,7 +921,7 @@
                                                     <ColumnDefinition Width="56"/>
                                                 </Grid.ColumnDefinitions>
                                                 <TextBlock VerticalAlignment="Center" FontSize="13" Tag="loc:PointerLeaveCollapseDelayLabel" Text="收缩判定时间" TextWrapping="Wrap" Foreground="{StaticResource ConsoleSecondaryTextBrush}"/>
-                                                <controls:ConsoleSlider x:Name="PointerLeaveCollapseDelaySlider" Grid.Column="1" Minimum="100" Maximum="2000" StepFrequency="50" VerticalAlignment="Center" AutomationProperties.AutomationId="PointerLeaveCollapseDelaySlider" ValueChanged="HoverDelaySlider_ValueChanged"/>
+                                                <controls:ConsoleSlider x:Name="PointerLeaveCollapseDelaySlider" Grid.Column="1" Minimum="100" Maximum="2000" StepFrequency="50" SmallChange="50" VerticalAlignment="Center" AutomationProperties.AutomationId="PointerLeaveCollapseDelaySlider" ValueChanged="HoverDelaySlider_ValueChanged"/>
                                                 <TextBlock x:Name="PointerLeaveCollapseDelayValue" Grid.Column="2" VerticalAlignment="Center" TextAlignment="Right" FontSize="13" Foreground="{StaticResource ConsoleSecondaryTextBrush}"/>
                                             </Grid>
                                         </Grid>
@@ -900,7 +938,7 @@
                                                 <ColumnDefinition Width="56"/>
                                             </Grid.ColumnDefinitions>
                                             <TextBlock VerticalAlignment="Center" FontSize="14" Tag="loc:StationActivationDistanceTitle" Text="中转站触发距离" TextWrapping="Wrap" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
-                                            <controls:ConsoleSlider x:Name="StationActivationDistanceSlider" Grid.Column="1" Minimum="4" Maximum="48" StepFrequency="4" VerticalAlignment="Center" AutomationProperties.AutomationId="StationActivationDistanceSlider" ValueChanged="HoverDelaySlider_ValueChanged"/>
+                                            <controls:ConsoleSlider x:Name="StationActivationDistanceSlider" Grid.Column="1" Minimum="4" Maximum="48" StepFrequency="4" SmallChange="4" VerticalAlignment="Center" AutomationProperties.AutomationId="StationActivationDistanceSlider" ValueChanged="HoverDelaySlider_ValueChanged"/>
                                             <TextBlock x:Name="StationActivationDistanceValue" Grid.Column="2" VerticalAlignment="Center" TextAlignment="Right" FontSize="13" Foreground="{StaticResource ConsoleSecondaryTextBrush}"/>
                                         </Grid>
                                     </Border>
@@ -912,7 +950,7 @@
                                                 <ColumnDefinition Width="56"/>
                                             </Grid.ColumnDefinitions>
                                             <TextBlock VerticalAlignment="Center" FontSize="14" Tag="loc:StationHoverExpandDelayTitle" Text="中转站展开等待时间" TextWrapping="Wrap" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
-                                            <controls:ConsoleSlider x:Name="StationHoverExpandDelaySlider" Grid.Column="1" Minimum="0" Maximum="500" StepFrequency="20" VerticalAlignment="Center" AutomationProperties.AutomationId="StationHoverExpandDelaySlider" ValueChanged="HoverDelaySlider_ValueChanged"/>
+                                            <controls:ConsoleSlider x:Name="StationHoverExpandDelaySlider" Grid.Column="1" Minimum="0" Maximum="500" StepFrequency="20" SmallChange="20" VerticalAlignment="Center" AutomationProperties.AutomationId="StationHoverExpandDelaySlider" ValueChanged="HoverDelaySlider_ValueChanged"/>
                                             <TextBlock x:Name="StationHoverExpandDelayValue" Grid.Column="2" VerticalAlignment="Center" TextAlignment="Right" FontSize="13" Foreground="{StaticResource ConsoleSecondaryTextBrush}"/>
                                         </Grid>
                                     </Border>
@@ -924,7 +962,7 @@
                                                 <ColumnDefinition Width="56"/>
                                             </Grid.ColumnDefinitions>
                                             <TextBlock VerticalAlignment="Center" FontSize="14" Tag="loc:StationPointerLeaveCollapseDelayTitle" Text="中转站收缩时间" TextWrapping="Wrap" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
-                                            <controls:ConsoleSlider x:Name="StationPointerLeaveCollapseDelaySlider" Grid.Column="1" Minimum="100" Maximum="2000" StepFrequency="50" VerticalAlignment="Center" AutomationProperties.AutomationId="StationPointerLeaveCollapseDelaySlider" ValueChanged="HoverDelaySlider_ValueChanged"/>
+                                            <controls:ConsoleSlider x:Name="StationPointerLeaveCollapseDelaySlider" Grid.Column="1" Minimum="100" Maximum="2000" StepFrequency="50" SmallChange="50" VerticalAlignment="Center" AutomationProperties.AutomationId="StationPointerLeaveCollapseDelaySlider" ValueChanged="HoverDelaySlider_ValueChanged"/>
                                             <TextBlock x:Name="StationPointerLeaveCollapseDelayValue" Grid.Column="2" VerticalAlignment="Center" TextAlignment="Right" FontSize="13" Foreground="{StaticResource ConsoleSecondaryTextBrush}"/>
                                         </Grid>
                                     </Border>
@@ -939,7 +977,7 @@
                                                 <ColumnDefinition Width="Auto"/>
                                             </Grid.ColumnDefinitions>
                                             <TextBlock VerticalAlignment="Center" FontSize="14" Tag="loc:QuickHideHotkeyTitle" Text="快速隐藏全部快捷键" TextWrapping="Wrap" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
-                                            <ComboBox x:Name="QuickHideHotkeyCombo" Grid.Column="1" Width="200" Height="32" HorizontalAlignment="Right" SelectionChanged="QuickHideHotkeyCombo_SelectionChanged">
+                                            <ComboBox x:Name="QuickHideHotkeyCombo" Grid.Column="1" Width="232" Height="32" HorizontalAlignment="Right" SelectionChanged="QuickHideHotkeyCombo_SelectionChanged">
                                                 <ComboBoxItem Tag="loc:HotkeyOff" Content="关闭"/>
                                                 <ComboBoxItem Content="Ctrl+Alt+H"/>
                                                 <ComboBoxItem Content="Ctrl+Alt+Space"/>
@@ -955,7 +993,7 @@
                                                 <ColumnDefinition Width="Auto"/>
                                             </Grid.ColumnDefinitions>
                                             <TextBlock VerticalAlignment="Center" FontSize="14" Tag="loc:SearchHotkeyTitle" Text="全局查找收纳窗快捷键" TextWrapping="Wrap" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
-                                            <ComboBox x:Name="SearchHotkeyCombo" Grid.Column="1" Width="200" Height="32" HorizontalAlignment="Right" SelectionChanged="SearchHotkeyCombo_SelectionChanged">
+                                            <ComboBox x:Name="SearchHotkeyCombo" Grid.Column="1" Width="232" Height="32" HorizontalAlignment="Right" SelectionChanged="SearchHotkeyCombo_SelectionChanged">
                                                 <ComboBoxItem Tag="loc:HotkeyOff" Content="关闭"/>
                                                 <ComboBoxItem Content="Ctrl+Alt+F"/>
                                                 <ComboBoxItem Content="Ctrl+Alt+K"/>
@@ -970,7 +1008,7 @@
                                                 <ColumnDefinition Width="Auto"/>
                                             </Grid.ColumnDefinitions>
                                             <TextBlock VerticalAlignment="Center" FontSize="14" Tag="loc:PeekHotkeyTitle" Text="临时置顶透视（Peek）快捷键" TextWrapping="Wrap" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
-                                            <ComboBox x:Name="PeekHotkeyCombo" Grid.Column="1" Width="200" Height="32" HorizontalAlignment="Right" SelectionChanged="PeekHotkeyCombo_SelectionChanged">
+                                            <ComboBox x:Name="PeekHotkeyCombo" Grid.Column="1" Width="232" Height="32" HorizontalAlignment="Right" SelectionChanged="PeekHotkeyCombo_SelectionChanged">
                                                 <ComboBoxItem Tag="loc:HotkeyOff" Content="关闭"/>
                                                 <ComboBoxItem Content="Ctrl+Alt+P"/>
                                                 <ComboBoxItem Content="Ctrl+Alt+G"/>
@@ -1045,7 +1083,11 @@
                                                         <Border Width="22" Height="22" Background="#FFE7C7CF" BorderBrush="#22000000" BorderThickness="1" CornerRadius="11"/>
                                                     </ToggleButton>
                                                 </StackPanel>
-                                                <Button x:Name="CustomThemeColorButton" MinHeight="32" Height="32" Padding="12,4" Tag="loc:ThemeCustomColor" Content="自定义" AutomationProperties.AutomationId="CustomThemeColorButton">
+                                                <Button x:Name="CustomThemeColorButton" MinHeight="32" Height="32" Padding="10,4" AutomationProperties.AutomationId="CustomThemeColorButton">
+                                                    <StackPanel Orientation="Horizontal" Spacing="7" VerticalAlignment="Center">
+                                                        <Border x:Name="CustomThemeColorDot" Width="12" Height="12" CornerRadius="6" BorderBrush="#33000000" BorderThickness="1" VerticalAlignment="Center" Visibility="Collapsed"/>
+                                                        <TextBlock FontSize="13" Tag="loc:ThemeCustomColor" Text="自定义" TextWrapping="NoWrap" VerticalAlignment="Center"/>
+                                                    </StackPanel>
                                                     <Button.Flyout>
                                                         <Flyout>
                                                             <ColorPicker x:Name="ThemeColorPicker" IsAlphaEnabled="False" IsAlphaSliderVisible="False" ColorChanged="ThemeColorPicker_ColorChanged"/>
@@ -1089,7 +1131,7 @@
                                                 <ColumnDefinition Width="52"/>
                                             </Grid.ColumnDefinitions>
                                             <TextBlock VerticalAlignment="Center" FontSize="14" Tag="loc:ThemeTransparencyLabel" Text="背景不透明度" TextWrapping="Wrap" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
-                                            <controls:ConsoleSlider x:Name="ThemeTransparencySlider" Grid.Column="1" Minimum="0" Maximum="1" StepFrequency=".01" Value=".35" VerticalAlignment="Center" ValueChanged="ThemeTransparencySlider_ValueChanged"/>
+                                            <controls:ConsoleSlider x:Name="ThemeTransparencySlider" Grid.Column="1" Minimum="0" Maximum="1" StepFrequency=".01" SmallChange=".01" Value=".35" VerticalAlignment="Center" ValueChanged="ThemeTransparencySlider_ValueChanged"/>
                                             <TextBlock x:Name="ThemeTransparencyValue" Grid.Column="2" VerticalAlignment="Center" TextAlignment="Right" FontSize="13" Text="35%" Foreground="{StaticResource ConsoleSecondaryTextBrush}"/>
                                         </Grid>
                                     </Border>
@@ -1101,7 +1143,7 @@
                                                 <ColumnDefinition Width="52"/>
                                             </Grid.ColumnDefinitions>
                                             <TextBlock VerticalAlignment="Center" FontSize="14" Tag="loc:ThemeBlurStrengthLabel" Text="模糊强度" TextWrapping="Wrap" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
-                                            <controls:ConsoleSlider x:Name="ThemeBlurStrengthSlider" Grid.Column="1" Minimum="0" Maximum="2" StepFrequency=".05" Value="1" VerticalAlignment="Center" ValueChanged="ThemeBlurStrengthSlider_ValueChanged"/>
+                                            <controls:ConsoleSlider x:Name="ThemeBlurStrengthSlider" Grid.Column="1" Minimum="0" Maximum="2" StepFrequency=".05" SmallChange=".05" Value="1" VerticalAlignment="Center" ValueChanged="ThemeBlurStrengthSlider_ValueChanged"/>
                                             <TextBlock x:Name="ThemeBlurStrengthValue" Grid.Column="2" VerticalAlignment="Center" TextAlignment="Right" FontSize="13" Text="100%" Foreground="{StaticResource ConsoleSecondaryTextBrush}"/>
                                         </Grid>
                                     </Border>
@@ -1163,7 +1205,7 @@
                                         <StackPanel Spacing="14" HorizontalAlignment="Stretch">
                                             <InfoBar x:Name="MissingStorageInfo" IsOpen="False" IsClosable="False" Severity="Warning" Title="实际目录不存在"/>
                                             <local:OrganizerSettingsForm x:Name="ManageForm" IsCreationMode="False"/>
-                                            <StackPanel Margin="0,2,0,0" Orientation="Horizontal" Spacing="8">
+                                            <local:FlowWrapPanel Margin="0,2,0,0" HorizontalSpacing="8" VerticalSpacing="8">
                                                 <Button x:Name="RecreateStorageButton" Click="RecreateStorageButton_Click" Content="重建目录" Tag="loc:RecreateStorage" Visibility="Collapsed"/>
                                                 <Button x:Name="DeleteOrganizerButton" Click="DeleteOrganizerButton_Click" Content="删除收纳窗" Tag="loc:DeleteOrganizer" Background="{StaticResource ConsoleCardSurfaceBrush}" Foreground="#FFC42B1C" BorderBrush="#40C42B1C" BorderThickness="1">
                                                     <Button.Resources>
@@ -1178,7 +1220,7 @@
                                                         <SolidColorBrush x:Key="ButtonBorderBrushPressed" Color="#90C42B1C"/>
                                                     </Button.Resources>
                                                 </Button>
-                                            </StackPanel>
+                                            </local:FlowWrapPanel>
                                         </StackPanel>
                                         </Grid>
                                     </ScrollViewer>

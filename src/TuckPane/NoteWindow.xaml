@@ -5,10 +5,11 @@
     xmlns:local="using:TuckPane">
     <Border
         x:Name="WindowFrame"
+        BorderThickness="1"
         CornerRadius="8">
         <Grid x:Name="WindowRoot">
             <Grid.RowDefinitions>
-                <RowDefinition Height="26.4" />
+                <RowDefinition Height="32" />
                 <RowDefinition Height="*" />
             </Grid.RowDefinitions>
 

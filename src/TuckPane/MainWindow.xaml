@@ -494,15 +494,8 @@
                     <Border
                         x:Name="CompactLiquidSheen"
                         CornerRadius="14"
-                        BorderThickness="0.75"
+                        BorderThickness="0"
                         IsHitTestVisible="False">
-                        <Border.BorderBrush>
-                            <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
-                                <GradientStop Color="#C8FFFFFF" Offset="0" />
-                                <GradientStop Color="#2EFFFFFF" Offset="0.48" />
-                                <GradientStop Color="#68FFFFFF" Offset="1" />
-                            </LinearGradientBrush>
-                        </Border.BorderBrush>
                         <Border.Background>
                             <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
                                 <GradientStop Color="#3AFFFFFF" Offset="0" />
@@ -514,16 +507,9 @@
                         <Border
                             x:Name="CompactLiquidInnerRim"
                             CornerRadius="13"
-                            BorderThickness="0.5"
-                            IsHitTestVisible="False">
-                            <Border.BorderBrush>
-                                <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
-                                    <GradientStop Color="#88FFFFFF" Offset="0" />
-                                    <GradientStop Color="#0CFFFFFF" Offset="0.48" />
-                                    <GradientStop Color="#38FFFFFF" Offset="1" />
-                                </LinearGradientBrush>
-                            </Border.BorderBrush>
-                        </Border>
+                            BorderThickness="0"
+                            IsHitTestVisible="False"
+                            Visibility="Collapsed" />
                     </Border>
                     <Border
                         x:Name="CompactNativeBadge"
@@ -559,6 +545,10 @@
                             </LinearGradientBrush>
                         </Border.Background>
                     </Border>
+                    <Grid
+                        x:Name="CompactSpecularOverlay"
+                        Background="Transparent"
+                        IsHitTestVisible="False" />
                     <Grid x:Name="CompactIconPresenter">
                         <Grid x:Name="CompactPreviewGrid" IsHitTestVisible="False">
                             <Grid.ColumnDefinitions>
@@ -597,11 +587,6 @@
                             IsHitTestVisible="False"
                             Visibility="Collapsed" />
                     </Grid>
-                    <Grid
-                        x:Name="CompactSpecularOverlay"
-                        Background="Transparent"
-                        Canvas.ZIndex="90"
-                        IsHitTestVisible="False" />
                     <Grid
                         x:Name="CompactEdgeOverlay"
                         Background="Transparent"
@@ -699,8 +684,8 @@
                 <Grid
                     x:Name="ExpandedNameShadowHost"
                     Margin="16,0"
-                    HorizontalAlignment="Stretch"
-                    VerticalAlignment="Stretch"
+                    HorizontalAlignment="Center"
+                    VerticalAlignment="Center"
                     IsHitTestVisible="False" />
                 <TextBlock
                     x:Name="ExpandedNameText"
@@ -717,13 +702,42 @@
                     TextTrimming="CharacterEllipsis"
                     TextWrapping="NoWrap" />
             </Grid>
+            <Border
+                x:Name="ExpandedNameEditorCapsule"
+                Grid.Row="0"
+                Margin="6,2"
+                Padding="14,4,14,4"
+                HorizontalAlignment="Stretch"
+                VerticalAlignment="Center"
+                CornerRadius="12"
+                Background="#CC181D24"
+                BorderBrush="#40FFFFFF"
+                BorderThickness="1"
+                IsHitTestVisible="False"
+                Visibility="Collapsed" />
             <TextBox x:Name="ExpandedNameEditor" Grid.Row="0" Margin="16,0"
+                RequestedTheme="Dark"
                 HorizontalAlignment="Stretch" VerticalAlignment="Center"
                 HorizontalContentAlignment="Stretch" VerticalContentAlignment="Center"
                 Background="Transparent" BorderThickness="0" Padding="0" MinWidth="0" MinHeight="0"
                 TextAlignment="Center" FontFamily="Microsoft YaHei UI, Segoe UI Variable Display" FontWeight="SemiBold"
+                Foreground="White"
                 Visibility="Collapsed" AutomationProperties.Name="重命名"
                 KeyDown="ExpandedNameEditor_KeyDown" LostFocus="ExpandedNameEditor_LostFocus">
+                <TextBox.Resources>
+                    <SolidColorBrush x:Key="TextControlBackground" Color="Transparent" />
+                    <SolidColorBrush x:Key="TextControlBackgroundPointerOver" Color="Transparent" />
+                    <SolidColorBrush x:Key="TextControlBackgroundFocused" Color="Transparent" />
+                    <SolidColorBrush x:Key="TextControlBackgroundDisabled" Color="Transparent" />
+                    <SolidColorBrush x:Key="TextControlBorderBrush" Color="Transparent" />
+                    <SolidColorBrush x:Key="TextControlBorderBrushPointerOver" Color="Transparent" />
+                    <SolidColorBrush x:Key="TextControlBorderBrushFocused" Color="Transparent" />
+                    <SolidColorBrush x:Key="TextControlBorderBrushDisabled" Color="Transparent" />
+                    <SolidColorBrush x:Key="TextControlForeground" Color="#FFFFFFFF" />
+                    <SolidColorBrush x:Key="TextControlForegroundPointerOver" Color="#FFFFFFFF" />
+                    <SolidColorBrush x:Key="TextControlForegroundFocused" Color="#FFFFFFFF" />
+                    <SolidColorBrush x:Key="TextControlSelectionHighlightColor" Color="#FF0A84FF" />
+                </TextBox.Resources>
                 <TextBox.Template>
                     <ControlTemplate TargetType="TextBox">
                         <ScrollViewer x:Name="ContentElement"
@@ -746,15 +760,8 @@
                 <Border
                     x:Name="ExpandedLiquidSheen"
                     CornerRadius="36"
-                    BorderThickness="0.75"
+                    BorderThickness="0"
                     IsHitTestVisible="False">
-                    <Border.BorderBrush>
-                        <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
-                            <GradientStop Color="#C0FFFFFF" Offset="0" />
-                            <GradientStop Color="#28FFFFFF" Offset="0.48" />
-                            <GradientStop Color="#5CFFFFFF" Offset="1" />
-                        </LinearGradientBrush>
-                    </Border.BorderBrush>
                     <Border.Background>
                         <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
                             <GradientStop Color="#26FFFFFF" Offset="0" />
@@ -766,16 +773,9 @@
                     <Border
                         x:Name="ExpandedLiquidInnerRim"
                         CornerRadius="35"
-                        BorderThickness="0.5"
-                        IsHitTestVisible="False">
-                        <Border.BorderBrush>
-                            <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
-                                <GradientStop Color="#78FFFFFF" Offset="0" />
-                                <GradientStop Color="#0AFFFFFF" Offset="0.48" />
-                                <GradientStop Color="#32FFFFFF" Offset="1" />
-                            </LinearGradientBrush>
-                        </Border.BorderBrush>
-                    </Border>
+                        BorderThickness="0"
+                        IsHitTestVisible="False"
+                        Visibility="Collapsed" />
                 </Border>
                 <Grid x:Name="ExpandedContentLayer" Background="Transparent">
                 <Border
@@ -802,6 +802,7 @@
                             Width="18"
                             Height="18"
                             Padding="0"
+                            CornerRadius="9"
                             Background="Transparent"
                             BorderThickness="0"
                             Click="SelectionClearButton_Click">
@@ -855,12 +856,12 @@
                     VerticalAlignment="Top"
                     Margin="20,6,48,0"
                     Padding="10,2,6,2"
-                    MinWidth="220"
+                    MinWidth="150"
                     MaxWidth="360"
                     CornerRadius="14"
-                    Background="#CC1F242D"
+                    Background="#DE1C2028"
                     BorderThickness="1"
-                    BorderBrush="#33FFFFFF"
+                    BorderBrush="#30FFFFFF"
                     Visibility="Collapsed">
                     <Border.Resources>
                         <SolidColorBrush x:Key="TextControlBackground" Color="Transparent" />
@@ -885,11 +886,11 @@
                             <ColumnDefinition Width="Auto" />
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
-                        <FontIcon Grid.Column="0" Glyph="&#xE721;" FontSize="12" Foreground="White" Opacity="0.8" VerticalAlignment="Center" />
+                        <FontIcon x:Name="ExpandedFilterSearchIcon" Grid.Column="0" Glyph="&#xE721;" FontSize="12" Foreground="White" Opacity="0.8" VerticalAlignment="Center" />
                         <TextBox
                             x:Name="ExpandedFilterBox"
                             Grid.Column="1"
-                            MinWidth="120"
+                            MinWidth="76"
                             BorderThickness="0"
                             Background="Transparent"
                             Foreground="White"
@@ -911,10 +912,11 @@
                             Width="22"
                             Height="22"
                             Padding="0"
+                            CornerRadius="11"
                             Background="Transparent"
                             BorderThickness="0"
                             Click="ExpandedFilterClearButton_Click">
-                            <FontIcon Glyph="&#xE711;" FontSize="10" Foreground="White" />
+                            <FontIcon x:Name="ExpandedFilterClearIcon" Glyph="&#xE711;" FontSize="10" Foreground="White" />
                         </Button>
                     </Grid>
                 </Border>
@@ -922,7 +924,7 @@
                 x:Name="CollapseButton"
                 Width="28"
                 Height="28"
-                Margin="0,10,14,0"
+                Margin="0,12,12,0"
                 Padding="0"
                 HorizontalAlignment="Right"
                 VerticalAlignment="Top"
@@ -948,30 +950,41 @@
                     Width="28"
                     Height="28"
                     Background="Transparent"
+                    BorderBrush="#38FFFFFF"
+                    BorderThickness="1"
                     CornerRadius="14">
                     <Border.BackgroundTransition>
                         <BrushTransition Duration="0:0:0.12" />
                     </Border.BackgroundTransition>
-                    <Border
-                        x:Name="CollapseDash"
-                        Width="12"
-                        Height="1"
-                        HorizontalAlignment="Center"
-                        VerticalAlignment="Center"
-                        Background="White"
-                        CornerRadius="0.5"
-                        Opacity="0.78">
-                        <Border.OpacityTransition>
-                            <ScalarTransition Duration="0:0:0.12" />
-                        </Border.OpacityTransition>
-                        <Border.ScaleTransition>
-                            <Vector3Transition Duration="0:0:0.12" />
-                        </Border.ScaleTransition>
-                    </Border>
+                    <Grid>
+                        <Border
+                            x:Name="CollapseButtonRestingPill"
+                            CornerRadius="13"
+                            Background="#26FFFFFF"
+                            IsHitTestVisible="False" />
+                        <Border
+                            x:Name="CollapseDash"
+                            Width="12"
+                            Height="1.5"
+                            HorizontalAlignment="Center"
+                            VerticalAlignment="Center"
+                            Background="White"
+                            CornerRadius="0.75"
+                            CenterPoint="6,0.75,0"
+                            Opacity="0.84">
+                            <Border.OpacityTransition>
+                                <ScalarTransition Duration="0:0:0.12" />
+                            </Border.OpacityTransition>
+                            <Border.ScaleTransition>
+                                <Vector3Transition Duration="0:0:0.12" />
+                            </Border.ScaleTransition>
+                        </Border>
+                    </Grid>
                 </Border>
                 </Button>
                 <ScrollView
                 x:Name="ItemsScrollView"
+                IsTabStop="True"
                 HorizontalScrollBarVisibility="Hidden"
                 HorizontalScrollMode="Disabled"
                 SizeChanged="ItemsScrollView_SizeChanged"
