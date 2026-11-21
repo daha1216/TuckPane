@@ -38,9 +38,9 @@ internal static class ThemePalette
     internal const float GlassEdgeTextureThicknessDip = 1.25f;
     internal const float GlassEdgeMinimumOpacity = .92f;
 
-    private const float GlassBlurAmount = 40;
-    private const float GlassSaturation = 1;
-    private const float GlassLuminosityOpacity = .35f;
+    private const float GlassBlurAmount = 18f;
+    private const float GlassSaturation = 1.75f;
+    private const float GlassLuminosityOpacity = .06f;
 
     internal static Color SurfaceColor(ThemeValues theme) => FromArgb(theme.ColorArgb);
 
@@ -116,7 +116,7 @@ internal static class ThemePalette
             BlurAmount: blurAmount,
             UsesGaussianBlur: requiresHostBackdrop,
             RequiresHostBackdrop: requiresHostBackdrop,
-            Saturation: parameters.Saturation,
+            Saturation: requiresHostBackdrop ? parameters.Saturation : 1,
             LuminosityOpacity: requiresHostBackdrop ? parameters.LuminosityOpacity : 0,
             HighlightOpacity: useEffects ? HighlightOpacity(theme) : 0,
             TintColor: TintColor(theme),

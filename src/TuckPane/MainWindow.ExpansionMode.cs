@@ -89,8 +89,7 @@ public sealed partial class MainWindow : IExpansionModeView
         ApplyBounds(visibleBounds, show: true, preserveZOrder: true);
         _desktopLayer?.SetExpanded(_expanded, showWindow: false);
         UpdateCanvasResizeEdgeWindows(show: _expanded);
-        if (_expanded) _canvasResizeInputTimer.Start();
-        else
+        if (!_expanded)
         {
             _canvasResizeInputTimer.Stop();
             _host.NotifyCollapsed(this);
@@ -104,28 +103,41 @@ public sealed partial class MainWindow : IExpansionModeView
         _transitionCancellation?.Cancel();
         _animating = false;
         _transitionVelocity = 0;
+        TransitionCanvasPlan? activeCanvas = _activeTransitionCanvas;
+        StopTransitionCompositionAnimations();
+        ClearExpandedTransitionSweep();
+        _dwmTransitionRunning = false;
+        _activeTransitionCanvas = null;
         if (!_runtimeVisible || IsContained || _hwnd == IntPtr.Zero)
         {
+            _collapseTransitionGeometry = null;
+            RestoreExpandedViewDefaultLayout();
             _pendingExpansionModeApply = true;
             return;
         }
         _expanded = mode == OrganizerExpansionMode.AlwaysExpanded && OrganizerExpansion.CanEnable(_definition);
         _transitionProgress = _expanded ? 1 : 0;
-        NativeMethods.RECT bounds = _collapseTransitionGeometry?.ExpandedBounds ?? CalculateExpandedBounds(_compactBounds);
+        NativeMethods.RECT bounds = activeCanvas?.ExpandedBounds
+            ?? _collapseTransitionGeometry?.ExpandedBounds
+            ?? CalculateExpandedBounds(_compactBounds);
         _collapseTransitionGeometry = null;
+        RestoreExpandedViewDefaultLayout();
         CompactView.Visibility = _expanded ? Visibility.Collapsed : Visibility.Visible;
-        CompactView.Translation = Vector3.Zero;
         CompactView.Opacity = 1;
+        ResetCompactVisualToRest();
         ExpandedView.Visibility = _expanded ? Visibility.Visible : Visibility.Collapsed;
         ExpandedView.Opacity = _expanded ? 1 : 0;
-        GetExpandedCompositionVisual().Scale = Vector3.One;
+        ResetExpandedTransitionOpacities();
+        ResetExpandedVisualToRest(opacity: _expanded ? 1f : 0f);
+        if (_stationTransitionClip is not null) ClearStationTransitionVisuals();
         ApplyBounds(_expanded ? bounds : _compactBounds, show: true, preserveZOrder: true);
+        WindowRoot.UpdateLayout();
+        UpdateSurfaceClips();
         _desktopLayer?.SetExpanded(_expanded, showWindow: false);
         UpdateCanvasResizeEdgeWindows(show: _expanded);
         if (_expanded)
         {
             _host.NotifyPermanentExpanded(this);
-            _canvasResizeInputTimer.Start();
         }
         else
         {
@@ -138,6 +150,10 @@ public sealed partial class MainWindow : IExpansionModeView
     {
         _changingExpansionMode = false;
         if (_closing) return;
+        if (!_animating && (_dwmTransitionRunning || _activeTransitionCanvas is not null || _dwmTransitionExpressionsBound))
+        {
+            CleanupAbortedTransitionVisuals();
+        }
         UpdateExpansionModeControls();
         ApplyOutsideClickSetting();
         RefreshPerformanceSettings();
@@ -147,7 +163,9 @@ public sealed partial class MainWindow : IExpansionModeView
     {
         do
         {
-            _ = await _host.SetOrganizerExpansionModeAsync(OrganizerId, _host.GetRequestedExpansionMode(OrganizerId));
+            _pendingExpansionModeApply = false;
+            string? error = await _host.SetOrganizerExpansionModeAsync(OrganizerId, _host.GetRequestedExpansionMode(OrganizerId));
+            if (error is not null) break;
         }
         while (!_closing && _runtimeVisible && _pendingExpansionModeApply);
     }

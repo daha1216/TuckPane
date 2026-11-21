@@ -55,6 +55,5 @@ public sealed partial class MainWindow
         _definition.CompactListCanvasWidthDip = panel.Width / session.DisplayScale;
         _definition.CompactListCanvasHeightDip = panel.Height / session.DisplayScale;
         ConfigureItemsLayout();
-        UpdateCanvasResizeEdgeWindows(show: true);
     }
 }

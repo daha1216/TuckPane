@@ -120,10 +120,12 @@ internal sealed class ShellLaunchService : IDisposable
             return;
 
         // Fallback for machines with damaged .url shell associations (e.g., Steam / browser URLs).
-        if (ShortcutIntegrityService.TryReadInternetShortcutUrl(urlPath, out string url, out string? urlWorkDir) &&
-            TryShellExecute(url, arguments: null, urlWorkDir ?? workingDir, verb: null, NativeMethods.SEE_MASK_FLAG_LOG_USAGE | NativeMethods.SEE_MASK_NOASYNC, NativeMethods.SW_SHOWNORMAL, out int urlErr))
+        if (ShortcutIntegrityService.TryReadInternetShortcutUrl(urlPath, out string url, out string? urlWorkDir))
         {
-            return;
+            if (TryShellExecute(url, arguments: null, urlWorkDir ?? workingDir, verb: null, NativeMethods.SEE_MASK_FLAG_LOG_USAGE | NativeMethods.SEE_MASK_NOASYNC, NativeMethods.SW_SHOWNORMAL, out int urlErr))
+                return;
+            if (urlErr == NativeMethods.ERROR_CANCELLED)
+                return;
         }
 
         ThrowUnlessCancelled(error);

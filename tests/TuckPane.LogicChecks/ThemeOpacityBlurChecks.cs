@@ -57,10 +57,12 @@ internal static class ThemeOpacityBlurChecks
     {
         ThemeCompositionPlan plan = Plan(.5, 1);
         var backdrop = new ColorSourceEffect { Name = "TestBackdrop", Color = Color.FromArgb(255, 8, 16, 24) };
-        var blur = As<GaussianBlurEffect>(ThemeEffectGraph.Create(plan, backdrop), "最终节点应为 GaussianBlur，不能再衰减整层 alpha");
-        var mixed = As<CompositeEffect>(blur.Source, "模糊必须接收已混色的表面");
-        Require(mixed.Mode == CanvasComposite.SourceOver && mixed.Sources.Count == 2,
+        var mixed = As<CompositeEffect>(ThemeEffectGraph.Create(plan, backdrop), "最终节点应为 TintComposite，不能再衰减整层 alpha");
+        Require(mixed.Name == "TintComposite" && mixed.Mode == CanvasComposite.SourceOver && mixed.Sources.Count == 2,
             "选色必须是两个输入的 SourceOver。");
+        var balanced = As<CompositeEffect>(mixed.Sources[0], "选色底层必须为经过模糊、饱和与明暗均衡的背景");
+        var saturation = As<SaturationEffect>(balanced.Sources[0], "饱和度增强必须只作用于模糊背景，不能畸变用户选色");
+        _ = As<GaussianBlurEffect>(saturation.Source, "必须先对实时背景执行高斯模糊再增强饱和度");
         var tint = As<OpacityEffect>(mixed.Sources[1], "选色必须位于背景之上并单独控制 alpha");
         Near(tint.Opacity, .5, "选色只能使用一次 50% 不透明度");
         Require(As<ColorSourceEffect>(tint.Source, "选色源").Color == plan.TintColor && plan.TintColor.A == 255,
@@ -73,19 +75,26 @@ internal static class ThemeOpacityBlurChecks
         ThemeCompositionPlan low = Plan(.5, .25);
         ThemeCompositionPlan normal = Plan(.5, 1);
         ThemeCompositionPlan high = Plan(.5, 2);
-        Near(low.BlurAmount, 10, "25% 模糊");
-        Near(normal.BlurAmount, 40, "100% 模糊");
-        Near(high.BlurAmount, 80, "200% 模糊");
+        Near(low.BlurAmount, 4.5, "25% 模糊");
+        Near(normal.BlurAmount, 18, "100% 模糊");
+        Near(high.BlurAmount, 36, "200% 模糊");
+        Near(low.Saturation, 1.75, "25% 模糊饱和度");
+        Near(normal.Saturation, 1.75, "100% 模糊饱和度");
+        Near(high.Saturation, 1.75, "200% 模糊饱和度");
+        Near(normal.LuminosityOpacity, .06, "液态玻璃明暗均衡不透明度");
         Require(low.TintColor == normal.TintColor && normal.TintColor == high.TintColor &&
                 low.TintOpacity == normal.TintOpacity && normal.TintOpacity == high.TintOpacity &&
-                low.Saturation == 1 && normal.Saturation == 1 && high.Saturation == 1 &&
+                low.Saturation == normal.Saturation && normal.Saturation == high.Saturation &&
                 low.LuminosityOpacity == normal.LuminosityOpacity && normal.LuminosityOpacity == high.LuminosityOpacity &&
                 low.LuminosityColor == normal.LuminosityColor && normal.LuminosityColor == high.LuminosityColor &&
                 low.HighlightOpacity == normal.HighlightOpacity && normal.HighlightOpacity == high.HighlightOpacity,
             "非零模糊仍联动选色、饱和度、明暗均衡或高光。");
         Near(low.HighlightOpacity, 1, "中间不透明度应保留既有满档高光");
         Near(Plan(.2, 1).BlurAmount, Plan(.8, 1).BlurAmount, "不透明度不能改变模糊半径");
-        Near(Plan(.5, 0).BlurAmount, 0, "零模糊必须绕过磨砂处理");
+        ThemeCompositionPlan zeroBlur = Plan(.5, 0);
+        Near(zeroBlur.BlurAmount, 0, "零模糊必须绕过磨砂处理");
+        Near(zeroBlur.Saturation, 1, "零模糊绕过磨砂时饱和度应回落为中性 1");
+        Near(zeroBlur.LuminosityOpacity, 0, "零模糊绕过磨砂时明暗均衡应关闭");
     }
 
     private static void CheckSolidAndFallback()
@@ -152,26 +161,36 @@ internal static class ThemeOpacityBlurChecks
     {
         var backdrop = new ColorSourceEffect { Name = "TestBackdrop", Color = Color.FromArgb(255, 8, 16, 24) };
         foreach (double opacity in new[] { 0d, .5d })
+        foreach ((double blurStrength, double expectedBlur) in new[] { (1d, 18d), (2d, 36d) })
         {
-            ThemeCompositionPlan plan = Plan(opacity, 2);
-            var blur = As<GaussianBlurEffect>(ThemeEffectGraph.Create(plan, backdrop), "最终高斯模糊节点");
-            Near(blur.BlurAmount, 80, "实际效果图的最大模糊参数");
-            Require(blur.BorderMode == EffectBorderMode.Hard && blur.Optimization == EffectOptimization.Balanced,
-                "实际模糊的边界或优化模式错误。");
-            var mixed = As<CompositeEffect>(blur.Source, "模糊输入必须为已混色表面");
-            Require(mixed.Mode == CanvasComposite.SourceOver && mixed.Sources.Count == 2,
-                "颜色叠加顺序或节点数量错误。");
-            var balanced = As<CompositeEffect>(mixed.Sources[0], "混色背景必须先经过固定明暗均衡");
-            Require(balanced.Mode == CanvasComposite.SourceOver && balanced.Sources.Count == 2 &&
-                    ReferenceEquals(balanced.Sources[0], backdrop),
-                "明暗均衡没有使用原背景作为底层，或丢失背景输入。");
+            ThemeCompositionPlan plan = Plan(opacity, blurStrength);
+            var mixed = As<CompositeEffect>(ThemeEffectGraph.Create(plan, backdrop), "最终节点必须为 TintComposite");
+            Require(mixed.Name == "TintComposite" && mixed.Mode == CanvasComposite.SourceOver && mixed.Sources.Count == 2,
+                "选色叠加名称、顺序或节点数量错误。");
+            var balanced = As<CompositeEffect>(mixed.Sources[0], "混色背景必须先经过轻度明暗均衡");
+            Require(balanced.Name == "BalancedBackdrop" && balanced.Mode == CanvasComposite.SourceOver && balanced.Sources.Count == 2,
+                "明暗均衡节点名称、混合模式或输入数量错误。");
+            var saturation = As<SaturationEffect>(balanced.Sources[0], "明暗均衡底层必须为背景饱和度增强节点");
+            Require(saturation.Name == "Saturation", "饱和度节点名称错误，影响 animatable property 绑定。");
+            Near(saturation.Saturation, 1.75, "液态玻璃背景饱和度增强参数");
+            var blur = As<GaussianBlurEffect>(saturation.Source, "饱和度输入必须来自实时背景高斯模糊");
+            Require(blur.Name == "Blur" &&
+                    blur.BorderMode == EffectBorderMode.Hard &&
+                    blur.Optimization == EffectOptimization.Balanced &&
+                    ReferenceEquals(blur.Source, backdrop),
+                "高斯模糊节点名称、边界、优化模式或原背景连接错误。");
+            Near(blur.BlurAmount, expectedBlur, $"实际效果图的模糊参数（强度 {blurStrength:0.##}）");
             var gray = As<OpacityEffect>(balanced.Sources[1], "明暗均衡颜色层");
-            Near(gray.Opacity, .35, "固定明暗均衡不透明度");
-            Require(As<ColorSourceEffect>(gray.Source, "明暗均衡色源").Color == Color.FromArgb(255, 128, 128, 128),
+            Require(gray.Name == "NeutralOpacity", "明暗均衡透明度节点名称错误。");
+            Near(gray.Opacity, .06, "轻度明暗均衡不透明度");
+            var grayColor = As<ColorSourceEffect>(gray.Source, "明暗均衡色源");
+            Require(grayColor.Name == "NeutralColor" && grayColor.Color == Color.FromArgb(255, 128, 128, 128),
                 "背景均衡不是固定不透明中灰。");
             var tint = As<OpacityEffect>(mixed.Sources[1], "独立选色层");
+            Require(tint.Name == "TintOpacity", "选色透明度节点名称错误。");
             Near(tint.Opacity, opacity, "实际选色权重");
-            Require(As<ColorSourceEffect>(tint.Source, "选色色源").Color == plan.TintColor,
+            var tintColor = As<ColorSourceEffect>(tint.Source, "选色色源");
+            Require(tintColor.Name == "TintColor" && tintColor.Color == plan.TintColor,
                 "实际效果图选色错误。");
         }
         bool rejected = false;

@@ -30,6 +30,7 @@ internal static partial class NativeMethods
     internal const uint SWP_FRAMECHANGED = 0x0020;
     internal const uint SWP_SHOWWINDOW = 0x0040;
     internal const uint SWP_HIDEWINDOW = 0x0080;
+    internal const uint SWP_NOCOPYBITS = 0x0100;
     internal const uint SWP_NOOWNERZORDER = 0x0200;
     internal const uint GW_HWNDNEXT = 2;
     internal const uint GW_HWNDPREV = 3;
@@ -49,6 +50,7 @@ internal static partial class NativeMethods
     internal const int DWMWA_COLOR_NONE = unchecked((int)0xFFFFFFFE);
     internal const int WH_MOUSE_LL = 14;
     internal const int WH_KEYBOARD_LL = 13;
+    internal const uint WM_NULL = 0x0000;
     internal const uint WM_ERASEBKGND = 0x0014;
     internal const int WM_LBUTTONDOWN = 0x0201;
     internal const int WM_LBUTTONUP = 0x0202;
@@ -131,8 +133,12 @@ internal static partial class NativeMethods
     internal const uint DI_NORMAL = 0x0003;
     internal const uint BI_RGB = 0;
     internal const uint SPI_GETICONMETRICS = 0x002D;
+    internal const int SM_CXSCREEN = 0;
+    internal const int SM_CYSCREEN = 1;
     internal const int SM_CXICONSPACING = 38;
     internal const int SM_CYICONSPACING = 39;
+    internal const uint SMTO_ABORTIFHUNG = 0x0002;
+    internal const int BLACK_BRUSH = 4;
     internal const uint LVM_GETITEMCOUNT = 0x1004;
     internal const uint LVM_GETITEMRECT = 0x100E;
     internal const uint LVM_GETITEMPOSITION = 0x1010;
@@ -358,6 +364,20 @@ internal static partial class NativeMethods
 
     [DllImport("user32.dll", EntryPoint = "CreateWindowExW", CharSet = CharSet.Unicode, SetLastError = true)]
     internal static extern IntPtr CreateWindowEx(
+        uint extendedStyle,
+        string className,
+        string? windowName,
+        uint style,
+        int x,
+        int y,
+        int width,
+        int height,
+        IntPtr parent,
+        IntPtr menu,
+        IntPtr instance,
+        IntPtr parameter);
+
+    internal static IntPtr CreateWindowEx(
         long extendedStyle,
         string className,
         string? windowName,
@@ -369,7 +389,20 @@ internal static partial class NativeMethods
         IntPtr parent,
         IntPtr menu,
         IntPtr instance,
-        IntPtr parameter);
+        IntPtr parameter) =>
+        CreateWindowEx(
+            unchecked((uint)extendedStyle),
+            className,
+            windowName,
+            unchecked((uint)style),
+            x,
+            y,
+            width,
+            height,
+            parent,
+            menu,
+            instance,
+            parameter);
 
     [DllImport("user32.dll", EntryPoint = "RegisterClassExW", CharSet = CharSet.Unicode, SetLastError = true)]
     internal static extern ushort RegisterClassEx(ref WNDCLASSEX windowClass);
@@ -536,6 +569,10 @@ internal static partial class NativeMethods
     [DllImport("user32.dll", EntryPoint = "GetMessageW")]
     internal static extern int GetMessage(out MSG message, IntPtr hWnd, uint minimum, uint maximum);
 
+    [DllImport("user32.dll", EntryPoint = "PeekMessageW")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool PeekMessage(out MSG message, IntPtr hWnd, uint minimum, uint maximum, uint removeMessage);
+
     [DllImport("user32.dll")]
     internal static extern IntPtr GetCapture();
 
@@ -601,6 +638,12 @@ internal static partial class NativeMethods
 
     [DllImport("user32.dll", EntryPoint = "GetClassNameW", CharSet = CharSet.Unicode)]
     internal static extern int GetClassName(IntPtr hWnd, StringBuilder className, int capacity);
+
+    [DllImport("user32.dll", EntryPoint = "GetClassNameW", CharSet = CharSet.Unicode)]
+    internal static extern int GetClassName(IntPtr hWnd, [Out] char[] className, int capacity);
+
+    [DllImport("gdi32.dll")]
+    internal static extern IntPtr GetStockObject(int fnObject);
 
     [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     internal static extern IntPtr LoadImage(IntPtr instance, string name, uint type, int width, int height, uint loadFlags);

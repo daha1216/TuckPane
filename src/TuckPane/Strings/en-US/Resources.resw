@@ -516,8 +516,8 @@ Storage path: {2}</value></data>
   <data name="ContextBatchCopyPaths" xml:space="preserve"><value>Copy all full paths</value></data>
   <data name="ContextBatchDeleteFormat" xml:space="preserve"><value>Delete {0} selected items</value></data>
   <data name="CompactVisualStyleTitle" xml:space="preserve"><value>Collapsed visual blend style</value></data>
-  <data name="CompactVisualStyleGlassTile" xml:space="preserve"><value>Classic glass tile</value></data>
-  <data name="CompactVisualStyleNativeDesktop" xml:space="preserve"><value>Native desktop blend (frameless)</value></data>
+  <data name="CompactVisualStyleGlassTile" xml:space="preserve"><value>iOS 26 Liquid Glass (Recommended)</value></data>
+  <data name="CompactVisualStyleNativeDesktop" xml:space="preserve"><value>Native desktop blend (Windows 11)</value></data>
   <data name="CompactVisualStyleFluentFolder" xml:space="preserve"><value>Fluent folder silhouette</value></data>
   <data name="SnapFloatingToDesktopGridTitle" xml:space="preserve"><value>Snap floating organizers to desktop icon grid on drag</value></data>
   <data name="DesktopMarqueeSelectionTitle" xml:space="preserve"><value>Sync Windows desktop marquee selection with floating organizers</value></data>

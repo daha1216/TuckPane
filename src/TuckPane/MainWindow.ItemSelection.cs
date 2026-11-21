@@ -14,6 +14,13 @@ namespace TuckPane;
 
 public sealed partial class MainWindow
 {
+    private static readonly SolidColorBrush ItemSelectedBgBrush = new(Color.FromArgb(68, 0, 120, 212));
+    private static readonly SolidColorBrush ItemSelectedHoverBgBrush = new(Color.FromArgb(92, 0, 120, 212));
+    private static readonly SolidColorBrush ItemSelectedPressedBgBrush = new(Color.FromArgb(112, 0, 120, 212));
+    private static readonly SolidColorBrush ItemSelectedBorderBrush = new(Color.FromArgb(215, 0, 120, 212));
+    private static readonly SolidColorBrush ItemHoverBorderBrush = new(Color.FromArgb(72, 255, 255, 255));
+    private static readonly SolidColorBrush ItemTransparentBorderBrush = new(Colors.Transparent);
+
     private readonly ItemSelectionModel _itemSelection = new();
     private bool _marqueePressed;
     private bool _marqueeActive;
@@ -22,6 +29,7 @@ public sealed partial class MainWindow
     private Pointer? _marqueeCapturedPointer;
     private Point _marqueeStartContent;
     private IReadOnlyCollection<string>? _marqueeBaseline;
+    private List<MarqueeTargetRect<string>>? _marqueeSnapshotTargets;
 
     internal bool HasMultipleItemsSelected => _itemSelection.HasMultipleSelection;
 
@@ -32,7 +40,9 @@ public sealed partial class MainWindow
         string[] visibleNames = _items.Select(i => i.RelativeName).ToArray();
         IReadOnlyList<string> ordered = _itemSelection.OrderedSelection(visibleNames);
         if (ordered.Count == 0) return [];
-        var byName = _items.ToDictionary(i => i.RelativeName, StringComparer.OrdinalIgnoreCase);
+        var byName = new Dictionary<string, WidgetItem>(_items.Count, StringComparer.OrdinalIgnoreCase);
+        foreach (WidgetItem item in _items)
+            byName.TryAdd(item.RelativeName, item);
         var result = new List<WidgetItem>(ordered.Count);
         foreach (string name in ordered)
         {
@@ -106,7 +116,8 @@ public sealed partial class MainWindow
         _marqueePointerId = e.Pointer.PointerId;
         _marqueeStartContent = contentPoint.Position;
         _marqueeAdditiveCtrl = (NativeMethods.GetAsyncKeyState(NativeMethods.VK_CONTROL) & 0x8000) != 0;
-        _marqueeBaseline = _marqueeAdditiveCtrl ? _itemSelection.Snapshot() : null;
+        _marqueeBaseline = _itemSelection.Snapshot();
+        _marqueeSnapshotTargets = CaptureMarqueeTargets();
         _marqueeCapturedPointer = e.Pointer;
 
         if (!ExpandedContentLayer.CapturePointer(e.Pointer))
@@ -180,7 +191,14 @@ public sealed partial class MainWindow
 
     private void CancelItemMarquee()
     {
+        bool restore = _marqueePressed && _marqueeActive && _marqueeBaseline is not null;
+        IReadOnlyCollection<string>? baseline = _marqueeBaseline;
         EndItemMarquee();
+        if (restore && baseline is not null)
+        {
+            _itemSelection.ApplyMarquee(baseline, additiveCtrl: false);
+            RefreshItemSelectionVisuals();
+        }
     }
 
     private void EndItemMarquee()
@@ -199,12 +217,13 @@ public sealed partial class MainWindow
         _marqueeActive = false;
         _marqueePointerId = 0;
         _marqueeBaseline = null;
+        _marqueeSnapshotTargets = null;
         MarqueeSelectionRect.Visibility = Visibility.Collapsed;
     }
 
-    private void UpdateMarqueeHitSelection(NativeMethods.RECT marqueeRect)
+    private List<MarqueeTargetRect<string>> CaptureMarqueeTargets()
     {
-        var targets = new List<MarqueeTargetRect<string>>();
+        var targets = new List<MarqueeTargetRect<string>>(_items.Count);
         for (int index = 0; index < _items.Count; index++)
         {
             if (ItemsRepeater.TryGetElement(index) is not Border host) continue;
@@ -226,7 +245,12 @@ public sealed partial class MainWindow
                 // Skip unrealized/detached elements safely.
             }
         }
+        return targets;
+    }
 
+    private void UpdateMarqueeHitSelection(NativeMethods.RECT marqueeRect)
+    {
+        List<MarqueeTargetRect<string>> targets = _marqueeSnapshotTargets ?? CaptureMarqueeTargets();
         IReadOnlyList<string> hits = MarqueeSelectionMath.FindIntersectingIds(marqueeRect, targets);
         _itemSelection.ApplyMarquee(hits, _marqueeAdditiveCtrl, _marqueeBaseline);
         RefreshItemSelectionVisuals();
@@ -256,14 +280,12 @@ public sealed partial class MainWindow
         bool selected = _itemSelection.Contains(relativeName);
         if (selected)
         {
-            host.Background = new SolidColorBrush(Color.FromArgb(68, 0, 120, 212));
-            host.BorderBrush = new SolidColorBrush(Color.FromArgb(215, 0, 120, 212));
-            host.BorderThickness = new Thickness(1);
+            host.Background = ItemSelectedBgBrush;
+            host.BorderBrush = ItemSelectedBorderBrush;
         }
         else
         {
-            host.BorderBrush = new SolidColorBrush(Colors.Transparent);
-            host.BorderThickness = new Thickness(0);
+            host.BorderBrush = ItemTransparentBorderBrush;
             if (!ReferenceEquals(host, _itemDragHost))
                 host.Background = _transparentItemBrush;
         }
@@ -341,7 +363,11 @@ public sealed partial class MainWindow
 
         copyAll.Click += (_, _) => _ = RunSafelyAsync(() => { CopySelectedItemsToClipboard(); return Task.CompletedTask; }, "批量复制失败");
         cutAll.Click += (_, _) => _ = RunSafelyAsync(() => { CutSelectedItemsToClipboard(); return Task.CompletedTask; }, "批量剪切失败");
-        copyPaths.Click += (_, _) => ShellItemCommands.CopyPathToClipboard(string.Join(Environment.NewLine, selected.Select(i => i.FullPath)));
+        copyPaths.Click += (_, _) => _ = RunSafelyAsync(() =>
+        {
+            ShellItemCommands.CopyPathsToClipboard(selected.Select(i => i.FullPath));
+            return Task.CompletedTask;
+        }, "批量复制路径失败");
         deleteAll.Click += async (_, _) => await RunSafelyAsync(DeleteSelectedItemsAsync, "批量删除失败");
 
         menu.Items.Add(copyAll);

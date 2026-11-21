@@ -163,16 +163,42 @@ public sealed partial class MainWindow
         if (_closing) return;
 
         IReadOnlyList<string> sortedOrder = OrganizerSortOrder.Sort(metadata, criterion);
+        List<string> previousOrder = _definition.ItemOrder.ToList();
+        var previousSlots = new Dictionary<string, int>(_definition.ItemSlots ?? [], StringComparer.OrdinalIgnoreCase);
         _definition.ItemOrder = sortedOrder.ToList();
         _definition.ItemSlots = FreeGridSlotMap.CompactToDense(sortedOrder);
-        var lookup = source.ToDictionary(item => item.RelativeName, StringComparer.OrdinalIgnoreCase);
-        WidgetItem[] reordered = sortedOrder
-            .Where(lookup.ContainsKey)
-            .Select(key => lookup[key])
-            .Concat(source.Where(item => !sortedOrder.Contains(item.RelativeName, StringComparer.OrdinalIgnoreCase)))
-            .ToArray();
+        try
+        {
+            await _host.SaveStateAsync();
+        }
+        catch
+        {
+            _definition.ItemOrder = previousOrder;
+            _definition.ItemSlots = previousSlots;
+            throw;
+        }
+
+        var lookup = new Dictionary<string, WidgetItem>(source.Count, StringComparer.OrdinalIgnoreCase);
+        var duplicates = new List<WidgetItem>();
+        foreach (WidgetItem entry in source)
+        {
+            if (!lookup.TryAdd(entry.RelativeName, entry))
+                duplicates.Add(entry);
+        }
+        var reordered = new List<WidgetItem>(source.Count);
+        var emitted = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (string key in sortedOrder)
+        {
+            if (lookup.TryGetValue(key, out WidgetItem? matched) && emitted.Add(key))
+                reordered.Add(matched);
+        }
+        foreach (WidgetItem entry in source)
+        {
+            if (!emitted.Contains(entry.RelativeName))
+                reordered.Add(entry);
+        }
+        reordered.AddRange(duplicates);
 
         ApplyCatalogItemsAndRender(reordered, refreshIcons: false);
-        await SaveStateAsync();
     }
 }

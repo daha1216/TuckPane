@@ -13,6 +13,8 @@ public sealed class DesktopLayerService : IDisposable
     private const uint SpawnWorkerMessage = 0x052C;
     private static readonly UIntPtr ActivationSubclassId = new(0x47464C59UL);
     private static readonly object CachedViewGate = new();
+    [ThreadStatic]
+    private static char[]? _classNameBuffer;
     private static IntPtr _lastKnownDesktopIconView;
     private static uint _lastKnownDesktopProcessId;
 
@@ -39,6 +41,23 @@ public sealed class DesktopLayerService : IDisposable
 
     public void Reattach(bool showWindow = false)
     {
+        if (_peekTopmost)
+        {
+            if (showWindow)
+            {
+                _ = NativeMethods.SetWindowPos(
+                    _window,
+                    NativeMethods.HWND_TOPMOST,
+                    0,
+                    0,
+                    0,
+                    0,
+                    NativeMethods.SWP_NOMOVE | NativeMethods.SWP_NOSIZE |
+                    NativeMethods.SWP_NOACTIVATE | NativeMethods.SWP_SHOWWINDOW | NativeMethods.SWP_NOOWNERZORDER);
+            }
+            return;
+        }
+
         if (_expanded)
         {
             if (NativeMethods.GetWindowLongPtr(_window, NativeMethods.GWLP_HWNDPARENT) != _expandedOwner)
@@ -70,9 +89,12 @@ public sealed class DesktopLayerService : IDisposable
             _ = NativeMethods.SetWindowLongPtr(_window, NativeMethods.GWLP_HWNDPARENT, _desktopIconView);
         }
 
+        bool needsZOrder = TryGetDesktopBandAnchor(out IntPtr anchor);
+        if (!showWindow && !needsZOrder) return;
+
         uint flags = NativeMethods.SWP_NOMOVE | NativeMethods.SWP_NOSIZE | NativeMethods.SWP_NOACTIVATE |
             NativeMethods.SWP_NOOWNERZORDER;
-        if (!TryGetDesktopBandAnchor(out IntPtr anchor)) flags |= NativeMethods.SWP_NOZORDER;
+        if (!needsZOrder) flags |= NativeMethods.SWP_NOZORDER;
         if (showWindow) flags |= NativeMethods.SWP_SHOWWINDOW;
         _ = NativeMethods.SetWindowPos(
             _window,
@@ -417,15 +439,19 @@ public sealed class DesktopLayerService : IDisposable
         long style = NativeMethods.GetWindowLongPtr(_window, NativeMethods.GWL_EXSTYLE).ToInt64();
         style = enabled ? style & ~NativeMethods.WS_EX_NOACTIVATE : style | NativeMethods.WS_EX_NOACTIVATE;
         _ = NativeMethods.SetWindowLongPtr(_window, NativeMethods.GWL_EXSTYLE, new IntPtr(style));
+        uint frameFlags = NativeMethods.SWP_NOMOVE | NativeMethods.SWP_NOSIZE | NativeMethods.SWP_FRAMECHANGED |
+            NativeMethods.SWP_NOOWNERZORDER |
+            (enabled
+                ? NativeMethods.SWP_SHOWWINDOW
+                : NativeMethods.SWP_NOZORDER | NativeMethods.SWP_NOACTIVATE);
         _ = NativeMethods.SetWindowPos(
             _window,
-            NativeMethods.HWND_TOP,
+            enabled ? NativeMethods.HWND_TOP : IntPtr.Zero,
             0,
             0,
             0,
             0,
-            NativeMethods.SWP_NOMOVE | NativeMethods.SWP_NOSIZE | NativeMethods.SWP_FRAMECHANGED |
-            NativeMethods.SWP_SHOWWINDOW | NativeMethods.SWP_NOOWNERZORDER);
+            frameFlags);
 
         if (enabled)
         {
@@ -579,7 +605,7 @@ public sealed class DesktopLayerService : IDisposable
         IntPtr progman = NativeMethods.FindWindow("Progman", null);
         if (progman != IntPtr.Zero)
         {
-            _ = NativeMethods.SendMessageTimeout(progman, SpawnWorkerMessage, UIntPtr.Zero, IntPtr.Zero, 0, 1000, out _);
+            _ = NativeMethods.SendMessageTimeout(progman, SpawnWorkerMessage, UIntPtr.Zero, IntPtr.Zero, NativeMethods.SMTO_ABORTIFHUNG, 1000, out _);
             found = NativeMethods.FindWindowEx(progman, IntPtr.Zero, "SHELLDLL_DefView", null);
         }
         if (found != IntPtr.Zero) CacheDesktopIconView(found);
@@ -628,9 +654,7 @@ public sealed class DesktopLayerService : IDisposable
             _ = NativeMethods.GetWindowThreadProcessId(view, out uint currentPid);
             if (currentPid == 0 || currentPid != expectedProcessId) return false;
         }
-        var className = new System.Text.StringBuilder(32);
-        if (NativeMethods.GetClassName(view, className, className.Capacity) <= 0 ||
-            !string.Equals(className.ToString(), "SHELLDLL_DefView", StringComparison.Ordinal))
+        if (!ReadWindowClassName(view).SequenceEqual("SHELLDLL_DefView"))
         {
             return false;
         }
@@ -643,8 +667,14 @@ public sealed class DesktopLayerService : IDisposable
 
     private static bool IsDesktopHostWindow(IntPtr window)
     {
-        var className = new System.Text.StringBuilder(32);
-        return NativeMethods.GetClassName(window, className, className.Capacity) > 0 &&
-            IsDesktopHostClassName(className.ToString());
+        ReadOnlySpan<char> className = ReadWindowClassName(window);
+        return className.SequenceEqual("Progman") || className.SequenceEqual("WorkerW");
+    }
+
+    private static ReadOnlySpan<char> ReadWindowClassName(IntPtr window)
+    {
+        char[] buffer = _classNameBuffer ??= new char[32];
+        int length = NativeMethods.GetClassName(window, buffer, buffer.Length);
+        return length > 0 ? buffer.AsSpan(0, length) : ReadOnlySpan<char>.Empty;
     }
 }

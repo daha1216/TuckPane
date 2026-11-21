@@ -30,6 +30,7 @@ public sealed class TrayIconService : IDisposable
     private readonly uint _taskbarCreated;
     private NativeMethods.NOTIFYICONDATA _data;
     private IntPtr _icon;
+    private bool _disposed;
 
     public TrayIconService(IntPtr window, Func<bool> isStartupEnabled, Func<bool> isTransferActive, Action<TrayCommand> command,
         Func<string>? lifecycleContext = null, Func<bool>? isPeekActive = null)
@@ -58,6 +59,7 @@ public sealed class TrayIconService : IDisposable
 
     public void ApplyLanguage()
     {
+        if (_disposed) return;
         _data.szTip = AppStrings.Get("AppTitle");
         _data.uFlags = NativeMethods.NIF_TIP | NativeMethods.NIF_MESSAGE | NativeMethods.NIF_ICON;
         _ = NativeMethods.Shell_NotifyIcon(NativeMethods.NIM_MODIFY, ref _data);
@@ -65,6 +67,8 @@ public sealed class TrayIconService : IDisposable
 
     public void Dispose()
     {
+        if (_disposed) return;
+        _disposed = true;
         AppLogger.Lifecycle("tray-dispose", $"hwnd=0x{_window:X}");
         _ = NativeMethods.Shell_NotifyIcon(NativeMethods.NIM_DELETE, ref _data);
         _ = NativeMethods.RemoveWindowSubclass(_window, _subclass, SubclassId);
@@ -77,45 +81,56 @@ public sealed class TrayIconService : IDisposable
 
     private IntPtr WindowProc(IntPtr hWnd, uint message, UIntPtr wParam, IntPtr lParam, UIntPtr subclassId, IntPtr referenceData)
     {
-        string? lifecycle = LifecycleDiagnostics.DescribeWindowMessage(message, wParam.ToUInt64(), lParam.ToInt64());
-        if (lifecycle is not null)
+        try
         {
-            try
+            if (!_disposed)
             {
-                AppLogger.Lifecycle(lifecycle, $"source=host-message hwnd=0x{hWnd:X} message=0x{message:X} " +
-                    $"wParam=0x{wParam.ToUInt64():X} lParam=0x{lParam.ToInt64():X} {_lifecycleContext?.Invoke()}");
+                string? lifecycle = LifecycleDiagnostics.DescribeWindowMessage(message, wParam.ToUInt64(), lParam.ToInt64());
+                if (lifecycle is not null)
+                {
+                    try
+                    {
+                        AppLogger.Lifecycle(lifecycle, $"source=host-message hwnd=0x{hWnd:X} message=0x{message:X} " +
+                            $"wParam=0x{wParam.ToUInt64():X} lParam=0x{lParam.ToInt64():X} {_lifecycleContext?.Invoke()}");
+                    }
+                    catch { /* A diagnostic callback must never interrupt the native message chain. */ }
+                }
+                // Zero means RegisterWindowMessage failed; comparing against it would match WM_NULL and
+                // re-add the icon on every null message, so the check has to be guarded.
+                if (_taskbarCreated != 0 && message == _taskbarCreated)
+                {
+                    DesktopLayerService.InvalidateCachedDesktopIconView();
+                    _ = NativeMethods.Shell_NotifyIcon(NativeMethods.NIM_ADD, ref _data);
+                    _ = NativeMethods.Shell_NotifyIcon(NativeMethods.NIM_SETVERSION, ref _data);
+                    try { AppLogger.Lifecycle("tray-restored", $"hwnd=0x{_window:X}"); }
+                    catch { /* A diagnostic callback must never interrupt the native message chain. */ }
+                    return IntPtr.Zero;
+                }
+                if (message == CallbackMessage)
+                {
+                    int mouseMessage = unchecked((int)((long)lParam & 0xFFFF));
+                    if (mouseMessage is NativeMethods.WM_LBUTTONUP or (int)NativeMethods.WM_LBUTTONDBLCLK)
+                    {
+                        _command(TrayCommand.OpenConsole);
+                    }
+                    else if (mouseMessage is NativeMethods.WM_RBUTTONUP or (int)NativeMethods.WM_CONTEXTMENU)
+                    {
+                        ShowMenu();
+                    }
+                    return IntPtr.Zero;
+                }
             }
-            catch { /* A diagnostic callback must never interrupt the native message chain. */ }
         }
-        // Zero means RegisterWindowMessage failed; comparing against it would match WM_NULL and
-        // re-add the icon on every null message, so the check has to be guarded.
-        if (_taskbarCreated != 0 && message == _taskbarCreated)
+        catch (Exception ex)
         {
-            DesktopLayerService.InvalidateCachedDesktopIconView();
-            _ = NativeMethods.Shell_NotifyIcon(NativeMethods.NIM_ADD, ref _data);
-            _ = NativeMethods.Shell_NotifyIcon(NativeMethods.NIM_SETVERSION, ref _data);
-            try { AppLogger.Lifecycle("tray-restored", $"hwnd=0x{_window:X}"); }
-            catch { /* A diagnostic callback must never interrupt the native message chain. */ }
-            return IntPtr.Zero;
-        }
-        if (message == CallbackMessage)
-        {
-            int mouseMessage = unchecked((int)((long)lParam & 0xFFFF));
-            if (mouseMessage is NativeMethods.WM_LBUTTONUP or (int)NativeMethods.WM_LBUTTONDBLCLK)
-            {
-                _command(TrayCommand.OpenConsole);
-            }
-            else if (mouseMessage is NativeMethods.WM_RBUTTONUP or (int)NativeMethods.WM_CONTEXTMENU)
-            {
-                ShowMenu();
-            }
-            return IntPtr.Zero;
+            AppLogger.Error("托盘窗口消息回调异常。", ex);
         }
         return NativeMethods.DefSubclassProc(hWnd, message, wParam, lParam);
     }
 
     private void ShowMenu()
     {
+        if (_disposed) return;
         IntPtr menu = NativeMethods.CreatePopupMenu();
         try
         {
@@ -140,6 +155,7 @@ public sealed class TrayIconService : IDisposable
             _ = NativeMethods.GetCursorPos(out NativeMethods.POINT point);
             _ = NativeMethods.SetForegroundWindow(_window);
             uint selected = NativeMethods.TrackPopupMenu(menu, NativeMethods.TPM_RETURNCMD | NativeMethods.TPM_RIGHTBUTTON, point.X, point.Y, 0, _window, IntPtr.Zero);
+            _ = NativeMethods.PostMessage(_window, NativeMethods.WM_NULL, UIntPtr.Zero, IntPtr.Zero);
             if (selected != 0)
             {
                 _command((TrayCommand)selected);

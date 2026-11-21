@@ -55,7 +55,7 @@ public sealed partial class MainWindow
         CompactView.Visibility = Visibility.Collapsed;
         ExpandedView.Visibility = Visibility.Visible;
         ExpandedView.Opacity = 1;
-        GetExpandedCompositionVisual().Scale = Vector3.One;
+        ResetExpandedVisualToRest(opacity: 1f);
         ExpandedView.DoubleTapped += Dock_DoubleTapped;
         ExpandedView.ContextRequested += Dock_ContextRequested;
         _desktopLayer.SetExpanded(true, showWindow: false);

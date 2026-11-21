@@ -17,7 +17,7 @@
                 <SolidColorBrush x:Key="TodoAddBorderBrush" Color="#50FFFFFF" />
             </Grid.Resources>
             <Grid.RowDefinitions>
-                <RowDefinition Height="26.4" />
+                <RowDefinition Height="32" />
                 <RowDefinition Height="*" />
             </Grid.RowDefinitions>
 
@@ -41,14 +41,16 @@
                 <ListView.Footer>
                     <Grid x:Name="NewTaskEntry" Margin="6,2" MinHeight="40"
                           HorizontalAlignment="Stretch">
-                        <Button x:Name="AddTaskButton" Content="+"
+                        <Button x:Name="AddTaskButton"
                                 HorizontalAlignment="Stretch" VerticalAlignment="Stretch"
                                 HorizontalContentAlignment="Center" VerticalContentAlignment="Center"
                                 MinWidth="0" MinHeight="0" Padding="0" CornerRadius="8"
                                 Background="{StaticResource TodoAddBrush}"
                                 BorderBrush="{StaticResource TodoAddBorderBrush}"
                                 Foreground="{StaticResource TodoTextBrush}"
-                                Click="AddTaskButton_Click" />
+                                Click="AddTaskButton_Click">
+                            <FontIcon FontFamily="{ThemeResource SymbolThemeFontFamily}" Glyph="&#xE710;" FontSize="14" />
+                        </Button>
                         <TextBox x:Name="NewTaskBox" Visibility="Collapsed"
                                  MinHeight="0" Padding="8,0" CornerRadius="8"
                                  VerticalContentAlignment="Center"
@@ -176,7 +178,7 @@
                                     AcceptsReturn="False"
                                     Background="{StaticResource TodoInputBrush}"
                                     BorderBrush="{StaticResource TodoBorderBrush}"
-                                    FontFamily="Segoe UI Variable Text"
+                                    FontFamily="{ThemeResource ContentControlThemeFontFamily}"
                                     FontSize="{Binding FontSize}"
                                     Foreground="{StaticResource TodoTextBrush}"
                                     HorizontalAlignment="Stretch"

@@ -21,7 +21,7 @@ public sealed partial class ConsoleWindow
         {
             if (!_organizerMenuToggles.TryGetValue(key, out ToggleSwitch? toggle))
             {
-                toggle = new ToggleSwitch { Tag = key, MinWidth = 40, OnContent = string.Empty, OffContent = string.Empty, HorizontalAlignment = HorizontalAlignment.Right };
+                toggle = new ToggleSwitch { Tag = key, MinWidth = 44, MaxWidth = 46, Padding = new Thickness(0), Margin = new Thickness(0), OnContent = string.Empty, OffContent = string.Empty, HorizontalAlignment = HorizontalAlignment.Right };
                 toggle.Toggled += OrganizerMenuToggle_Toggled;
                 _organizerMenuToggles.Add(key, toggle);
                 OrganizerMenuOptions.Children.Add(CreateMenuSettingRow(toggle, AppStrings.Get(key)));

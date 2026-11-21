@@ -266,6 +266,10 @@ internal sealed class OwnedDialogWindow : Window
         }
         catch
         {
+            _host.ThemeChanged -= Host_ThemeChanged;
+            try { _backdrop.DetachAndClose(); }
+            catch (Exception ex) { AppLogger.Error("Dialog backdrop cleanup failed after ShowAsync error.", ex); }
+            _surface.Dispose();
             RestoreOwner();
             throw;
         }
@@ -296,7 +300,8 @@ internal sealed class OwnedDialogWindow : Window
 
     private void CloseDialog()
     {
-        _backdrop.DetachAndClose();
+        try { _backdrop.DetachAndClose(); }
+        catch (Exception ex) { AppLogger.Error("Dialog backdrop close failed.", ex); }
         RestoreOwner();
         Close();
     }

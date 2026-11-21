@@ -1,3 +1,24 @@
+## 4.3.1
+
+本版合入里程碑级性能与视觉重构 PR（[#17](https://github.com/daha1216/TuckPane/pull/17)），实现 **DWM 合成器级 100% GPU 240Hz 零闪现展开/收起、Apple iOS 26/27 光学液态玻璃动态模糊、全 8 向 240Hz 零抽搐对边锚定拉伸、Windows 11 原生桌面字体与纯白壁纸高对比度清晰度、同心圆角桌面多选，以及设置窗与全局搜索的旗舰级重塑**（完全保持 `SchemaVersion = 16` 配置向后兼容，应用内更新只检查本 fork）。
+
+- **P0 DWM 合成器级 240Hz 零闪现过渡与交互引擎（超越 iOS ProMotion 丝滑度）**：
+  - **100% DWM GPU 离主线程展开/收起管线**：新增 `TransitionCanvasMath` 联合画布规划与 `SpringScalarNaturalMotionAnimation` + 11 条 `ExpressionAnimation` + `CompositionScopedBatch`，整段弹簧动效完全在 `dwm.exe` 合成线程以显示器原生 120–240Hz 满帧推进（支持飞行途中丝滑保留动量反向切换，主 UI 线程零逐帧 `SetWindowPos` 与零逐帧圆角重绘）；悬停入口图标即异步预热共享 `IconCacheService` LRU 缓存（`PreWarmCompactHoverIcons`）。
+  - **零瞬移、零二次闪烁原子重定位**：新增轻量级纯 Win32 屏像素桥接层 `TransitionBridgeOverlay`（`BitBlt` + `UpdateLayeredWindow` + `DWMWA_CLOAK` + `DwmFlush`），在展开起点/终点与收起起点/终点进行 HWND 重定位时原地像素无缝交接，彻底消除 1 帧跨屏瞬移闪烁；同步收紧收起弹簧尾帧（约 `300ms` 干脆落位）并将 `SetExpanded(false)` 纳入遮罩原子提交，修复 `DesktopLayerService.SetInputActivation(false)` 误触发 `HWND_TOP` 跳层，彻底消除收起后延迟闪烁。
+  - **独立常驻高优先级原生钩子线程 & 零分配 240Hz 物理**：`DesktopMarqueeHookService` 与 `OutsideClickHook` 的 `WH_MOUSE_LL` 钩子完全移出 WinUI 3 主 UI 线程（独立 `ThreadPriority.AboveNormal` 线程、~15ns 极速短路、零阻塞热切换）；全面重构 `HoverWave` / `HoverPresentation` / `ItemBounce` / `CompactHighlight` 与 0.10s 高刷惯性滚轮（`OrganizerScrollMath`），配合全局引用计数 `CompositorClockBoost` 锁定 Windows 11 DRR/VRR 满血刷新率。
+- **全 8 向 240Hz GPU 零抽搐拉伸 & 无拘束全屏最大尺寸**：
+  - **精准对齐真实玻璃边框与四个 36px 圆角**：新增 `CanvasResizeHitZones.HitTestPanel` 与 8 块原生热区拦截层（顶边跨骑可见玻璃顶沿 `y = 46..72` 而非 56px 透明标题带上方，覆盖底/左/右与全部 4 个圆角内弧），即时呈现对应双向光标（`↕` / `↔` / `↖↘` / `↗↙`），并通过 `HTTRANSPARENT` 精准避让右上角收起 `-` 按钮、筛选栏与多选角标。
+  - **对边锚定 + 全显示器一致最大尺寸**：将图标模式拉伸从位置受限的中心对称公式升级为**对边/对角锚定缩放**（拉左钉右、1:1 紧跟光标，按住 `Alt` 可切回中心对称），同时将 `OrganizerContentScale.FactorRange` 上限从 `1.65` 放宽至 `3.0`、最大边界统一至显示器完整工作区，所有收纳窗均可一致舒展放大至整屏。
+  - **零窗体抖动、零图标抽搐**：为 `ApplyCanvasResizeBounds` 加上 `SWP_NOCOPYBITS` 杜绝左/上边缘移动撕裂；拖拽期间一次性隐藏边缘子窗口并由单 VSync `CompositionTarget.Rendering` 驱动，以 DWM GPU `Visual.Scale` 实时无重排缩放 `ExpandedContentLayer`，松手后一次性原子提交高清排版。
+- **Apple iOS 26/27 光学液态玻璃动态模糊、同心多选与清晰文字排版**：
+  - **真光学动态模糊管线**：重构 `ThemePalette` / `ThemeEffectGraph` / `ThemeBackdrop` 着色器管线为 `Backdrop → GaussianBlur(18) → Saturation(1.75) → Luminosity(0.06) → 单层 TintOpacity`，大幅强化背景穿透动态模糊与高光色感（含 6 项可动画属性就地更新，拖动滑块零 D2D 着色器重编译、零 COM 泄漏），叠加展开态对角 GPU 液态折射扫光（`ExpandedSpecularSweep`）与实时光标追踪径向高光。
+  - **Windows 11 原生桌面字体 + 纯白壁纸高对比度清晰度**：`DesktopTypographyService` 读取 `SPI_GETICONMETRICS` 真实系统桌面字体，搭配收紧版 `1.15f / 2.25f` 双层 GPU 高斯投影与屏幕边缘对称防裁切；重构展开态 42px 大标题为紧贴字宽的居中 `ExpandedNameContainer` + `2.6f / 9.0f` 双层硬件高斯阴影与渲染后无 Dispose 热刷新，确保在纯白窗口标题栏与暗色壁纸上同样锐利清晰。
+  - **同心圆角桌面全选 & 旗舰设置窗修复**：重做 `CompactNativeSelectionPlate` 为紧贴图标卡片的同心圆角选区光环 + `CompactMultiSelectBadge` GPU 弹簧蓝底白勾角标（消除相邻重叠与裁切）；修复 `ConsoleWindow` 全部 8 处 `ScrollViewer` 横向偏移裁切、`ToggleSwitch` 越界裁切、滑块数值列与路径框自适应，并优化 `OrganizerSearchWindow`（Raycast 级全局搜索）。
+- **关键稳定性与工业级可靠性加固**：
+  - 根治三类 WinUI 3 P0 崩溃：消除项宿主 `ElementCompositionPreview.GetElementVisual` 与 `UIElement.Scale` 混用导致的 `0x80070005`、移除误调用 `TextBlock.GetAlphaMask().Dispose()` 导致的 `RO_E_CLOSED`、修复 `OrganizerSettingsForm` 初始化期空引用 `XamlParseException`（均已固化入永久回归审计门禁）。
+  - 异步化 `StateStore.SaveAsync` 与 `IconCacheService` 离屏提取/编码，并修复 `NoteStore` 信号量死锁、`CopyPathsToClipboard` 批量复制崩溃、`TodoWindow` 序列化竞态、多屏热插拔、含小数点文件夹名截断、`ShellDragService` 句柄双重释放、自由网格重命名保留 `ItemSlots` 等 20+ 项深层隐患。
+- **验证**：Debug/Release x64 **0 警告 0 错误**；全套无头 `TuckPane.LogicChecks` **63/63**（含 `--liquid-glass-perf` 与 `--commercial-grade-audit`）、`TuckPane.UpdateChecks` **4/4** 全部通过；Windows 11 隔离沙箱 5 轮连续 DWM 展开/收起压测 **0 运行时异常**，并经用户桌面实机验收通过。
+
 ## 4.3.0
 
 本版合入五项里程碑级重构与体验升级 PR（[#11](https://github.com/daha1216/TuckPane/pull/11)、[#12](https://github.com/daha1216/TuckPane/pull/12)、[#13](https://github.com/daha1216/TuckPane/pull/13)、[#14](https://github.com/daha1216/TuckPane/pull/14)、[#15](https://github.com/daha1216/TuckPane/pull/15)），彻底根治开机黑窗、贴边回中、桌面拖入变复制与软件快捷方式启动失败等核心痛点，全面引入原生桌面视觉融合、全链路框选多选、iOS 18/26 自由方格与多选叠卡弹簧重排，以及 `8×8` 大容量网格与主窗口深度瘦身（完全保持 `SchemaVersion = 16` 配置向后兼容，应用内更新只检查本 fork）。

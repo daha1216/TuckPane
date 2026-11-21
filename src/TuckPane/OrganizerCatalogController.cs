@@ -237,20 +237,23 @@ internal sealed class OrganizerCatalogController
         long traceStart = AppLogger.PerformanceTraceEnabled ? Stopwatch.GetTimestamp() : 0;
         OrganizerDefinition definition = _window.Definition;
         WidgetItem[] containedOrganizers = _window.Host.GetContainedOrganizerItems(definition.Id).ToArray();
-        var diskItemsTask = Task.Run(_window.Storage.ReadItems, cancellationToken);
-        var unsupportedTask = Task.Run(() => _window.Storage.ReadUnsupportedNames(), cancellationToken);
-        IReadOnlyList<WidgetItem> diskItems = await diskItemsTask;
-        IReadOnlyList<string> unsupportedNames = await unsupportedTask;
+        IReadOnlyList<WidgetItem> diskItems = await Task.Run(_window.Storage.ReadItems, cancellationToken);
+        IReadOnlyList<string> unsupportedNames = _window.Storage.ReadUnsupportedNames();
         cancellationToken.ThrowIfCancellationRequested();
         if (_window.IsClosing || generation != Volatile.Read(ref _catalogRefreshGeneration)) return;
         long traceUiStart = traceStart == 0 ? 0 : Stopwatch.GetTimestamp();
         Volatile.Write(ref _knownPortableNames, (IReadOnlySet<string>)diskItems
             .Where(item => item.Kind is WidgetItemKind.PortableNote or WidgetItemKind.PortableTodo)
             .Select(item => item.RelativeName).ToHashSet(StringComparer.OrdinalIgnoreCase));
-        var byName = diskItems
+        var byName = new Dictionary<string, WidgetItem>(StringComparer.OrdinalIgnoreCase);
+        var duplicateItems = new List<WidgetItem>();
+        foreach (WidgetItem candidate in diskItems
             .Concat(definition.Notes.Select(OrganizerNoteRules.CreateItem))
-            .Concat(containedOrganizers)
-            .ToDictionary(item => item.RelativeName, StringComparer.OrdinalIgnoreCase);
+            .Concat(containedOrganizers))
+        {
+            if (!byName.TryAdd(candidate.RelativeName, candidate))
+                duplicateItems.Add(candidate);
+        }
         var ordered = new List<WidgetItem>();
         foreach (string relativeName in definition.ItemOrder)
         {
@@ -261,6 +264,8 @@ internal sealed class OrganizerCatalogController
         }
 
         ordered.AddRange(byName.Values.OrderBy(item => item.RelativeName, StringComparer.CurrentCultureIgnoreCase));
+        if (duplicateItems.Count > 0)
+            ordered.AddRange(duplicateItems.OrderBy(item => item.RelativeName, StringComparer.CurrentCultureIgnoreCase));
         bool orderChanged = !definition.ItemOrder.SequenceEqual(ordered.Select(item => item.RelativeName), StringComparer.OrdinalIgnoreCase);
         _window.ApplyCatalogItemsAndRender(ordered, refreshIcons);
         definition.ItemOrder = ordered.Select(item => item.RelativeName).ToList();
@@ -393,8 +398,11 @@ internal sealed class OrganizerCatalogController
         finally
         {
             _window.AdjustOverlayCount(-1);
-            if (station) _window.DesktopLayer?.SetInputActivation(false);
-            _window.ResetStationDelay();
+            if (!_window.IsClosing)
+            {
+                if (station) _window.DesktopLayer?.SetInputActivation(false);
+                _window.ResetStationDelay();
+            }
         }
     }
 
@@ -444,12 +452,24 @@ internal sealed class OrganizerCatalogController
         string newRelativeName = Path.GetFileName(targetPath);
         int orderIndex = definition.ItemOrder.FindIndex(value =>
             value.Equals(oldRelativeName, StringComparison.OrdinalIgnoreCase));
+        int oldSlot = 0;
+        bool hadSlot = definition.ItemSlots is not null &&
+            definition.ItemSlots.TryGetValue(oldRelativeName, out oldSlot);
+        int overwrittenSlot = 0;
+        bool hadTargetSlotCollision = definition.ItemSlots is not null &&
+            !oldRelativeName.Equals(newRelativeName, StringComparison.OrdinalIgnoreCase) &&
+            definition.ItemSlots.TryGetValue(newRelativeName, out overwrittenSlot);
         if (directory) Directory.Move(item.FullPath, targetPath);
         else File.Move(item.FullPath, targetPath);
         if (orderIndex >= 0) definition.ItemOrder[orderIndex] = newRelativeName;
+        if (hadSlot && definition.ItemSlots is not null)
+        {
+            definition.ItemSlots.Remove(oldRelativeName);
+            definition.ItemSlots[newRelativeName] = oldSlot;
+        }
         try
         {
-            if (orderIndex >= 0) await _window.Host.SaveStateAsync();
+            if (orderIndex >= 0 || hadSlot) await _window.Host.SaveStateAsync();
         }
         catch
         {
@@ -458,6 +478,12 @@ internal sealed class OrganizerCatalogController
                 if (directory) Directory.Move(targetPath, item.FullPath);
                 else File.Move(targetPath, item.FullPath);
                 if (orderIndex >= 0) definition.ItemOrder[orderIndex] = oldRelativeName;
+                if (hadSlot && definition.ItemSlots is not null)
+                {
+                    definition.ItemSlots.Remove(newRelativeName);
+                    if (hadTargetSlotCollision) definition.ItemSlots[newRelativeName] = overwrittenSlot;
+                    definition.ItemSlots[oldRelativeName] = oldSlot;
+                }
             }
             catch (Exception rollbackError)
             {
@@ -545,8 +571,11 @@ internal sealed class OrganizerCatalogController
         finally
         {
             _window.AdjustOverlayCount(-1);
-            if (station) _window.DesktopLayer?.SetInputActivation(false);
-            _window.ResetStationDelay();
+            if (!_window.IsClosing)
+            {
+                if (station) _window.DesktopLayer?.SetInputActivation(false);
+                _window.ResetStationDelay();
+            }
         }
     }
 
@@ -579,8 +608,11 @@ internal sealed class OrganizerCatalogController
         finally
         {
             _window.AdjustOverlayCount(-1);
-            if (station) _window.DesktopLayer?.SetInputActivation(false);
-            _window.ResetStationDelay();
+            if (!_window.IsClosing)
+            {
+                if (station) _window.DesktopLayer?.SetInputActivation(false);
+                _window.ResetStationDelay();
+            }
         }
     }
 
@@ -794,7 +826,7 @@ internal sealed class OrganizerCatalogController
         finally
         {
             _window.AdjustOverlayCount(-1);
-            _window.ResetStationDelay();
+            if (!_window.IsClosing) _window.ResetStationDelay();
         }
     }
 
@@ -803,9 +835,9 @@ internal sealed class OrganizerCatalogController
         RandomAccessStreamReference reference = await data.GetBitmapAsync();
         _window.Storage.EnsureCreated();
         string stamp = DateTime.Now.ToString("yyyyMMdd-HHmmss");
-        string destination = StorageService.GetUniquePath(Path.Combine(
+        string requestedDestination = Path.Combine(
             _window.Storage.ItemsRoot,
-            AppStrings.Format("PastedImageNameFormat", stamp)));
+            AppStrings.Format("PastedImageNameFormat", stamp));
         string staging = Path.Combine(_window.Storage.ItemsRoot, $".glassfolder-staging-{Guid.NewGuid():N}");
         try
         {
@@ -822,12 +854,31 @@ internal sealed class OrganizerCatalogController
                 encoder.SetSoftwareBitmap(bitmap);
                 await encoder.FlushAsync();
             }
-            File.Move(staging, destination);
-            return destination;
+            for (int attempt = 0; attempt < 32; attempt++)
+            {
+                string destination = StorageService.GetUniquePath(requestedDestination);
+                try
+                {
+                    File.Move(staging, destination, overwrite: false);
+                    return destination;
+                }
+                catch (IOException) when (File.Exists(destination) || Directory.Exists(destination))
+                {
+                    // Another writer claimed the name; pick a fresh unique path.
+                }
+            }
+            throw new IOException(AppStrings.Get("AddItemNameConflict"));
         }
         finally
         {
-            if (File.Exists(staging)) File.Delete(staging);
+            try
+            {
+                if (File.Exists(staging)) File.Delete(staging);
+            }
+            catch (Exception ex)
+            {
+                AppLogger.Error($"粘贴图片临时文件清理失败：{staging}", ex);
+            }
         }
     }
 
@@ -879,18 +930,23 @@ internal sealed class OrganizerCatalogController
         }
         finally
         {
-            if (station)
+            if (!_window.IsClosing)
             {
-                _window.DesktopLayer?.SetInputActivation(false);
+                if (station)
+                {
+                    _window.DesktopLayer?.SetInputActivation(false);
+                }
+                _window.ResetStationDelay();
             }
             _window.AdjustOverlayCount(-1);
-            _window.ResetStationDelay();
         }
     }
 
     public async Task ShowDeleteOrganizerDialogAsync()
     {
+        if (_window.IsClosing) return;
         if (!_window.IsExpandedCore) await _window.ExpandOrganizerAsync();
+        if (_window.IsClosing) return;
         if (_window.Host.TransferQueue.IsActive)
         {
             _window.ShowOrganizerMessage(AppStrings.Get("TransferBeforeDelete"), InfoBarSeverity.Warning);
@@ -908,9 +964,9 @@ internal sealed class OrganizerCatalogController
                 : DisplayPlacementService.GetDisplay(definition.Position?.MonitorDevice);
             OrganizerDeleteDisposition? choice = await OwnedDialogWindow.ShowDeleteChoiceAsync(
                 _window.Hwnd, display, _window.Host, definition.Name, storagePath);
-            if (choice is not OrganizerDeleteDisposition disposition) return;
+            if (_window.IsClosing || choice is not OrganizerDeleteDisposition disposition) return;
             TransferOutcome outcome = await _window.Host.DeleteOrganizerAsync(definition.Id, disposition);
-            if (outcome.Status is not (TransferStatus.Moved or TransferStatus.Retained))
+            if (!_window.IsClosing && outcome.Status is not (TransferStatus.Moved or TransferStatus.Retained))
             {
                 _window.ShowOrganizerMessage(outcome.Message, outcome.Status == TransferStatus.CopiedSourceRetained ? InfoBarSeverity.Warning : InfoBarSeverity.Error);
             }
@@ -918,22 +974,27 @@ internal sealed class OrganizerCatalogController
         catch (Exception ex)
         {
             AppLogger.Error("无法删除收纳窗。", ex);
-            _window.ShowOrganizerMessage(ex.Message, InfoBarSeverity.Error);
+            if (!_window.IsClosing) _window.ShowOrganizerMessage(ex.Message, InfoBarSeverity.Error);
         }
         finally
         {
-            if (!_window.IsClosing) _window.DesktopLayer?.SetInputActivation(false);
+            if (!_window.IsClosing)
+            {
+                _window.DesktopLayer?.SetInputActivation(false);
+                _window.ResetStationDelay();
+            }
             _window.AdjustOverlayCount(-1);
-            _window.ResetStationDelay();
         }
     }
 
     public async Task ShowRenameOrganizerDialogAsync()
     {
+        if (_window.IsClosing) return;
         if (!_window.IsExpandedCore)
         {
             await _window.ExpandOrganizerAsync();
         }
+        if (_window.IsClosing) return;
         OrganizerDefinition definition = _window.Definition;
         _window.AdjustOverlayCount(+1);
         _window.DesktopLayer?.SetInputActivation(true);
@@ -956,7 +1017,7 @@ internal sealed class OrganizerCatalogController
                 },
                 maxLength: 40,
                 placeholderText: AppStrings.Get("RenamePlaceholder"));
-            if (accepted && acceptedName.Length > 0)
+            if (!_window.IsClosing && accepted && acceptedName.Length > 0)
             {
                 await _window.Host.RenameOrganizerAsync(definition.Id, acceptedName);
             }
@@ -964,13 +1025,16 @@ internal sealed class OrganizerCatalogController
         catch (Exception ex)
         {
             AppLogger.Error("无法重命名收纳窗。", ex);
-            _window.ShowOrganizerMessage(ex.Message, InfoBarSeverity.Error);
+            if (!_window.IsClosing) _window.ShowOrganizerMessage(ex.Message, InfoBarSeverity.Error);
         }
         finally
         {
-            _window.DesktopLayer?.SetInputActivation(false);
+            if (!_window.IsClosing)
+            {
+                _window.DesktopLayer?.SetInputActivation(false);
+                _window.ResetStationDelay();
+            }
             _window.AdjustOverlayCount(-1);
-            _window.ResetStationDelay();
         }
     }
 

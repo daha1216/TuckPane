@@ -76,11 +76,18 @@ internal sealed class GlobalHotkeyService : IDisposable
     {
         if (message == NativeMethods.WM_HOTKEY && !_disposed)
         {
-            int id = unchecked((int)wParam.ToUInt64());
-            if (_registered.ContainsKey(id))
+            try
             {
-                _onTriggered(id);
-                return IntPtr.Zero;
+                int id = unchecked((int)wParam.ToUInt64());
+                if (_registered.ContainsKey(id))
+                {
+                    _onTriggered(id);
+                    return IntPtr.Zero;
+                }
+            }
+            catch (Exception ex)
+            {
+                AppLogger.Error("全局热键回调异常。", ex);
             }
         }
         return NativeMethods.DefSubclassProc(hWnd, message, wParam, lParam);

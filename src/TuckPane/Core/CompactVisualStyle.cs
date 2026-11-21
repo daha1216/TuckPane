@@ -45,9 +45,9 @@ internal static class CompactVisualStyles
         if (highContrast) return 0.0;
         return style switch
         {
-            CompactVisualStyle.NativeDesktop => 0.88,
-            CompactVisualStyle.FluentFolder => 0.82,
-            _ => 0.65
+            CompactVisualStyle.NativeDesktop => 0.98,
+            CompactVisualStyle.FluentFolder => 0.96,
+            _ => 0.96
         };
     }
 

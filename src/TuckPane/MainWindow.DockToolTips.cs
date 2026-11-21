@@ -11,6 +11,10 @@ public sealed partial class MainWindow
 {
     private DockTipWindow? _visibleDockToolTip;
     private HoverItemVisual? _dockTipItem;
+    private string? _lastDockTipText;
+    private HoverRect _lastDockTipPixels;
+    private double _lastDockTipScale;
+    private bool _lastDockTipHorizontal;
 
     private void SetItemToolTip(Border host, string text)
     {
@@ -57,18 +61,37 @@ public sealed partial class MainWindow
         if (!NativeMethods.ClientToScreen(_hwnd, ref screen)) return;
         var pixels = new HoverRect((float)(screen.X + (origin.X + icon.X) * scale),
             (float)(screen.Y + (origin.Y + icon.Y) * scale), (float)(icon.Width * scale), (float)(icon.Height * scale));
+        string tipText = item.DockToolTipText!;
+        bool horizontal = HorizontalHover;
+        if (_visibleDockToolTip is { IsOpen: true } &&
+            string.Equals(_lastDockTipText, tipText, StringComparison.Ordinal) &&
+            _lastDockTipHorizontal == horizontal &&
+            Math.Abs(_lastDockTipScale - scale) < 0.001 &&
+            Math.Abs(_lastDockTipPixels.X - pixels.X) < 0.5f &&
+            Math.Abs(_lastDockTipPixels.Y - pixels.Y) < 0.5f &&
+            Math.Abs(_lastDockTipPixels.Width - pixels.Width) < 0.5f &&
+            Math.Abs(_lastDockTipPixels.Height - pixels.Height) < 0.5f)
+        {
+            return;
+        }
         DisplayInfo display = DisplayPlacementService.ForBounds(new NativeMethods.RECT
         {
             Left = (int)pixels.X, Top = (int)pixels.Y, Right = (int)pixels.Right, Bottom = (int)pixels.Bottom
         });
         _visibleDockToolTip ??= new DockTipWindow(_hwnd);
-        _visibleDockToolTip.Present(item.DockToolTipText!, pixels, display.Work, HorizontalHover, scale);
+        _visibleDockToolTip.Present(tipText, pixels, display.Work, horizontal, scale);
+        _lastDockTipText = tipText;
+        _lastDockTipPixels = pixels;
+        _lastDockTipScale = scale;
+        _lastDockTipHorizontal = horizontal;
     }
 
     private void CloseDockToolTip()
     {
         _visibleDockToolTip?.HideTip();
         _dockTipItem = null;
+        _lastDockTipText = null;
+        _lastDockTipPixels = default;
     }
 
     private void ClearDockToolTip(Border host, HoverItemVisual item)

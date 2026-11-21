@@ -269,7 +269,7 @@ internal sealed class DesktopGridService
                 NativeMethods.LVM_GETITEMSPACING,
                 UIntPtr.Zero,
                 IntPtr.Zero,
-                0,
+                NativeMethods.SMTO_ABORTIFHUNG,
                 1000,
                 out UIntPtr packedSpacing) != IntPtr.Zero &&
             TryDecodeItemSpacing(packedSpacing, out width, out height);
@@ -285,7 +285,7 @@ internal sealed class DesktopGridService
         centers = [];
         if (listView == IntPtr.Zero) return false;
 
-        if (NativeMethods.SendMessageTimeout(listView, NativeMethods.LVM_GETITEMCOUNT, UIntPtr.Zero, IntPtr.Zero, 0, 1000, out UIntPtr countResult) == IntPtr.Zero)
+        if (NativeMethods.SendMessageTimeout(listView, NativeMethods.LVM_GETITEMCOUNT, UIntPtr.Zero, IntPtr.Zero, NativeMethods.SMTO_ABORTIFHUNG, 1000, out UIntPtr countResult) == IntPtr.Zero)
         {
             return false;
         }
@@ -333,7 +333,7 @@ internal sealed class DesktopGridService
                     NativeMethods.LVM_GETITEMRECT,
                     (UIntPtr)(uint)index,
                     remoteBuffer,
-                    0,
+                    NativeMethods.SMTO_ABORTIFHUNG,
                     1000,
                     out UIntPtr success);
                 if (wroteRequest && sent != IntPtr.Zero && success != UIntPtr.Zero &&
@@ -353,7 +353,7 @@ internal sealed class DesktopGridService
                     NativeMethods.LVM_GETITEMPOSITION,
                     (UIntPtr)(uint)index,
                     remoteBuffer,
-                    0,
+                    NativeMethods.SMTO_ABORTIFHUNG,
                     1000,
                     out success);
                 if (sent == IntPtr.Zero || success == UIntPtr.Zero) return false;

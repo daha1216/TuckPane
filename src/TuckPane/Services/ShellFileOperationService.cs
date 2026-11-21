@@ -72,6 +72,8 @@ internal static class ShellFileOperationService
                 return false;
             try
             {
+                if ((data.dwFileAttributes & NativeMethods.FILE_ATTRIBUTE_REPARSE_POINT) == 0)
+                    return false;
                 uint tag = data.dwReserved0;
                 if (tag is NativeMethods.IO_REPARSE_TAG_SYMLINK or NativeMethods.IO_REPARSE_TAG_MOUNT_POINT)
                     return false;

@@ -12,6 +12,7 @@ internal sealed class AppUpdateService : IDisposable
     private readonly HttpClient _http = new() { Timeout = Timeout.InfiniteTimeSpan };
     private readonly string _root = Path.Combine(AppPaths.LocalRoot, "updates");
     private readonly bool _installed = FolderContextMenuService.IsInstalledCopy();
+    private readonly object _operationSync = new();
     private readonly CancellationTokenSource _lifetime = new();
     private CancellationTokenSource? _operation;
     private UpdateCheckCache? _cache;
@@ -67,41 +68,58 @@ internal sealed class AppUpdateService : IDisposable
 
     public async Task CheckAsync(bool manual)
     {
-        if (_disposed || _busy || (!manual && !ReleaseRules.AutoCheckDue(_cache?.LastAttemptUtc, DateTimeOffset.UtcNow))) return;
-        _busy = true;
-        StatusKey = "UpdateChecking";
-        Error = null;
-        NotifyChanged();
-        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token);
-        timeout.CancelAfter(TimeSpan.FromSeconds(25));
-        try
+        CancellationTokenSource timeout;
+        lock (_operationSync)
         {
-            _cache = new(DateTimeOffset.UtcNow, _cache?.ReleaseJson);
-            UpdateFiles.WriteJson(Path.Combine(_root, "check.json"), _cache);
-            string json = await new ReleaseClient(_http).GetLatestJsonAsync(timeout.Token);
-            Available = ReleaseRules.Parse(json, CurrentVersion, _installed);
-            _cache = _cache with { ReleaseJson = json };
-            UpdateFiles.WriteJson(Path.Combine(_root, "check.json"), _cache);
-            StatusKey = Available is null ? "UpdateLatest" : "UpdateAvailable";
+            if (_disposed || _busy || (!manual && !ReleaseRules.AutoCheckDue(_cache?.LastAttemptUtc, DateTimeOffset.UtcNow))) return;
+            timeout = CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token);
+            _busy = true;
         }
-        catch (Exception ex)
+        using (timeout)
         {
-            StatusKey = "UpdateCheckFailed";
-            Error = ex is OperationCanceledException ? AppStrings.Get("UpdateTimeout") : ex.Message;
+            StatusKey = "UpdateChecking";
+            Error = null;
+            NotifyChanged();
+            timeout.CancelAfter(TimeSpan.FromSeconds(25));
+            try
+            {
+                _cache = new(DateTimeOffset.UtcNow, _cache?.ReleaseJson);
+                UpdateFiles.WriteJson(Path.Combine(_root, "check.json"), _cache);
+                string json = await new ReleaseClient(_http).GetLatestJsonAsync(timeout.Token);
+                Available = ReleaseRules.Parse(json, CurrentVersion, _installed);
+                _cache = _cache with { ReleaseJson = json };
+                UpdateFiles.WriteJson(Path.Combine(_root, "check.json"), _cache);
+                StatusKey = Available is null ? "UpdateLatest" : "UpdateAvailable";
+            }
+            catch (Exception ex)
+            {
+                StatusKey = "UpdateCheckFailed";
+                Error = ex is OperationCanceledException ? AppStrings.Get("UpdateTimeout") : ex.Message;
+            }
+            finally
+            {
+                lock (_operationSync) { _busy = false; }
+                NotifyChanged();
+            }
         }
-        finally { _busy = false; NotifyChanged(); }
     }
 
     public async Task DownloadAndInstallAsync(Func<Func<Task>, Task<bool>> exitWithHandoff, Func<string[]> protectedPaths)
     {
-        if (_disposed || _busy || Available is not { } release) return;
-        _busy = true;
-        Downloading = true;
+        if (Available is not { } release) return;
+        CancellationTokenSource operation;
+        lock (_operationSync)
+        {
+            if (_disposed || _busy) return;
+            operation = CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token);
+            operation.CancelAfter(TimeSpan.FromMinutes(30));
+            _operation = operation;
+            _busy = true;
+            Downloading = true;
+        }
         Progress = 0;
         Error = null;
         StatusKey = "UpdateDownloading";
-        _operation = CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token);
-        _operation.CancelAfter(TimeSpan.FromMinutes(30));
         NotifyChanged();
         string? session = null;
         bool helperStarted = false;
@@ -111,8 +129,8 @@ internal sealed class AppUpdateService : IDisposable
             session = Path.Combine(_root, "sessions", Guid.NewGuid().ToString("N"));
             UpdateFiles.NoLinks(session);
             string package = await new ReleaseClient(_http).DownloadAsync(release, session,
-                new Progress<double>(value => { Progress = value; NotifyChanged(); }), _operation.Token);
-            Downloading = false;
+                new Progress<double>(value => { Progress = value; NotifyChanged(); }), operation.Token);
+            lock (_operationSync) { Downloading = false; }
             StatusKey = "UpdatePreparing";
             NotifyChanged();
             exited = await exitWithHandoff(async () =>
@@ -144,7 +162,8 @@ internal sealed class AppUpdateService : IDisposable
                 }
                 catch
                 {
-                    File.WriteAllText(Path.Combine(session, "cancel"), "cancelled");
+                    try { File.WriteAllText(Path.Combine(session, "cancel"), "cancelled"); }
+                    catch (Exception cancelEx) when (cancelEx is IOException or UnauthorizedAccessException) { }
                     throw;
                 }
             });
@@ -166,10 +185,13 @@ internal sealed class AppUpdateService : IDisposable
         {
             // Once the external updater helper starts, it owns the session directory.
             if (!exited && !helperStarted && session is not null) TryDeleteSession(session);
-            Downloading = false;
-            _busy = false;
-            _operation?.Dispose();
-            _operation = null;
+            lock (_operationSync)
+            {
+                Downloading = false;
+                _busy = false;
+                if (ReferenceEquals(_operation, operation)) _operation = null;
+            }
+            operation.Dispose();
             NotifyChanged();
         }
     }
@@ -248,13 +270,24 @@ internal sealed class AppUpdateService : IDisposable
         Directory.Delete(directory);
     }
 
-    public void CancelDownload() { if (Downloading) _operation?.Cancel(); }
+    public void CancelDownload()
+    {
+        lock (_operationSync)
+        {
+            if (!_disposed && Downloading) _operation?.Cancel();
+        }
+    }
 
     public void Dispose()
     {
-        if (_disposed) return;
-        _disposed = true;
-        _lifetime.Cancel();
+        lock (_operationSync)
+        {
+            if (_disposed) return;
+            _disposed = true;
+            _operation?.Cancel();
+            _lifetime.Cancel();
+            _lifetime.Dispose();
+        }
         _http.Dispose();
     }
 }

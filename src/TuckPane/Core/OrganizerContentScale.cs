@@ -10,7 +10,7 @@ internal static class OrganizerContentScale
         double contentScale, double itemScale)
     {
         double min = Math.Max(Math.Max(minimumWidth / width, minimumHeight / height), .5 / (contentScale * itemScale));
-        double max = Math.Min(Math.Min(maximumWidth / width, maximumHeight / height), 1.65 / (contentScale * itemScale));
+        double max = Math.Min(Math.Min(maximumWidth / width, maximumHeight / height), 3.0 / (contentScale * itemScale));
         // Existing windows may already be constrained by a monitor/configuration change.
         return (Math.Min(1, Math.Max(min, .1 / contentScale)), Math.Max(1, Math.Min(max, 4 / contentScale)));
     }

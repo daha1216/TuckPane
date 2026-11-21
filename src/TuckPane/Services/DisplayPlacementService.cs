@@ -46,7 +46,24 @@ internal static class DisplayPlacementService
             }
             return true;
         }, IntPtr.Zero);
+        if (displays.Count == 0)
+        {
+            displays.Add(CreateFallbackDisplay());
+        }
         return displays;
+    }
+
+    private static DisplayInfo CreateFallbackDisplay()
+    {
+        int width = NativeMethods.GetSystemMetrics(NativeMethods.SM_CXSCREEN);
+        int height = NativeMethods.GetSystemMetrics(NativeMethods.SM_CYSCREEN);
+        if (width <= 0 || height <= 0)
+        {
+            width = 1920;
+            height = 1080;
+        }
+        var rect = new NativeMethods.RECT { Left = 0, Top = 0, Right = width, Bottom = height };
+        return new DisplayInfo(@"\\.\DISPLAY1", rect, rect, 1d);
     }
 
     internal static DisplayInfo GetDisplay(string? device = null)
@@ -97,10 +114,14 @@ internal static class DisplayPlacementService
 
     public static NativeMethods.RECT Clamp(NativeMethods.RECT bounds, NativeMethods.RECT work)
     {
-        int width = Math.Min(bounds.Width, work.Width);
-        int height = Math.Min(bounds.Height, work.Height);
-        int x = Math.Clamp(bounds.Left, work.Left, work.Right - width);
-        int y = Math.Clamp(bounds.Top, work.Top, work.Bottom - height);
+        if (work.Width <= 0 || work.Height <= 0)
+            return bounds;
+        int width = Math.Clamp(bounds.Width, 1, work.Width);
+        int height = Math.Clamp(bounds.Height, 1, work.Height);
+        int maxX = Math.Max(work.Left, work.Right - width);
+        int maxY = Math.Max(work.Top, work.Bottom - height);
+        int x = Math.Clamp(bounds.Left, work.Left, maxX);
+        int y = Math.Clamp(bounds.Top, work.Top, maxY);
         return new NativeMethods.RECT { Left = x, Top = y, Right = x + width, Bottom = y + height };
     }
 
@@ -194,8 +215,8 @@ internal static class DisplayPlacementService
         double heightDip,
         double sideInsetDip = ExpandedSideInsetDip)
     {
-        int columns = Math.Clamp(layout.Columns, 1, OrganizerLimits.MaximumStationColumns);
-        int rows = Math.Clamp(layout.Rows, 1, OrganizerLimits.MaximumStationRows);
+        int columns = Math.Clamp(layout.Columns, 1, OrganizerLimits.MaximumLayoutDimension);
+        int rows = Math.Clamp(layout.Rows, 1, OrganizerLimits.MaximumLayoutDimension);
         double availableWidth = Math.Max(1, widthDip - sideInsetDip * 2);
         double availableHeight = Math.Max(1, heightDip - ExpandedTopInsetDip - ExpandedBottomInsetDip);
         double cellDip = Math.Min(
@@ -209,8 +230,8 @@ internal static class DisplayPlacementService
         double itemScale,
         double sideInsetDip = ExpandedSideInsetDip)
     {
-        int columns = Math.Clamp(layout.Columns, 1, OrganizerLimits.MaximumStationColumns);
-        int rows = Math.Clamp(layout.Rows, 1, OrganizerLimits.MaximumStationRows);
+        int columns = Math.Clamp(layout.Columns, 1, OrganizerLimits.MaximumLayoutDimension);
+        int rows = Math.Clamp(layout.Rows, 1, OrganizerLimits.MaximumLayoutDimension);
         double cell = CalculateRequiredCellDip(itemScale);
         return (
             cell * columns + ItemGapDip * (columns - 1) + sideInsetDip * 2,
@@ -241,8 +262,8 @@ internal static class DisplayPlacementService
         if (Math.Abs(sideInsetDip - StationSideInsetDip) < .001)
             return Math.Clamp(CalculateRequiredCellDip(.5) * scale / baseCell, .1, 1.2);
 
-        int columns = Math.Clamp(layout.Columns, 1, OrganizerLimits.MaximumStationColumns);
-        int rows = Math.Clamp(layout.Rows, 1, OrganizerLimits.MaximumStationRows);
+        int columns = Math.Clamp(layout.Columns, 1, OrganizerLimits.MaximumLayoutDimension);
+        int rows = Math.Clamp(layout.Rows, 1, OrganizerLimits.MaximumLayoutDimension);
         double gap = ItemGapDip * scale;
         double horizontalChrome = sideInsetDip * 2 * scale + gap * (columns - 1);
         double verticalChrome = (ExpandedTopInsetDip + ExpandedBottomInsetDip) * scale + gap * (rows - 1);
@@ -297,8 +318,8 @@ internal static class DisplayPlacementService
         NativeMethods.RECT insetWork = GetExpandedWorkArea(display);
         int titleHeightPx = Math.Max(0, (int)Math.Round(ExpandedTitleBandDip * display.Scale));
         int availablePanelHeight = Math.Max(1, insetWork.Height - titleHeightPx);
-        int columns = Math.Clamp(layout.Columns, 1, OrganizerLimits.MaximumStationColumns);
-        int rows = Math.Clamp(layout.Rows, 1, OrganizerLimits.MaximumStationRows);
+        int columns = Math.Clamp(layout.Columns, 1, OrganizerLimits.MaximumLayoutDimension);
+        int rows = Math.Clamp(layout.Rows, 1, OrganizerLimits.MaximumLayoutDimension);
         double width;
         double height;
         if (manualCanvasBaseWidthDip is double baseWidth && manualCanvasBaseHeightDip is double baseHeight &&
@@ -357,11 +378,11 @@ internal static class DisplayPlacementService
         int centerX = Math.Clamp(
             display.Work.Left + (int)Math.Round(Math.Clamp(xRatio, 0, 1) * display.Work.Width),
             display.Work.Left,
-            display.Work.Right - 1);
+            Math.Max(display.Work.Left, display.Work.Right - 1));
         int centerY = Math.Clamp(
             display.Work.Top + (int)Math.Round(Math.Clamp(yRatio, 0, 1) * display.Work.Height),
             display.Work.Top,
-            display.Work.Bottom - 1);
+            Math.Max(display.Work.Top, display.Work.Bottom - 1));
         return edge switch
         {
             OrganizerDockEdge.Left => new() { Left = display.Work.Left, Top = centerY, Right = display.Work.Left + 1, Bottom = centerY + 1 },
@@ -474,12 +495,18 @@ internal static class DisplayPlacementService
         int top = pressBounds.Top;
         if (edge is OrganizerDockEdge.Left or OrganizerDockEdge.Right)
         {
-            top = Math.Clamp(pressBounds.Top + currentCursor.Y - pressCursor.Y, display.Work.Top, display.Work.Bottom - height);
+            top = Math.Clamp(
+                pressBounds.Top + currentCursor.Y - pressCursor.Y,
+                display.Work.Top,
+                Math.Max(display.Work.Top, display.Work.Bottom - height));
             left = edge == OrganizerDockEdge.Left ? display.Work.Left : display.Work.Right - width;
         }
         else
         {
-            left = Math.Clamp(pressBounds.Left + currentCursor.X - pressCursor.X, display.Work.Left, display.Work.Right - width);
+            left = Math.Clamp(
+                pressBounds.Left + currentCursor.X - pressCursor.X,
+                display.Work.Left,
+                Math.Max(display.Work.Left, display.Work.Right - width));
             top = edge == OrganizerDockEdge.Top ? display.Work.Top : display.Work.Bottom - height;
         }
         return new NativeMethods.RECT { Left = left, Top = top, Right = left + width, Bottom = top + height };
@@ -534,7 +561,7 @@ internal static class DisplayPlacementService
     {
         int margin = (int)Math.Round(24 * display.Scale);
         int columns = Math.Clamp(layout.Columns, 1, OrganizerLimits.MaximumLayoutDimension);
-        int rows = Math.Clamp(layout.Rows, 1, OrganizerLimits.MaximumStationRows);
+        int rows = Math.Clamp(layout.Rows, 1, OrganizerLimits.MaximumLayoutDimension);
         double gap = ItemGapDip * display.Scale;
         double availableWidth = display.Work.Width - margin * 2 - sideInsetDip * 2 * display.Scale - gap * (columns - 1);
         double availableHeight = display.Work.Height - margin * 2 -
@@ -570,24 +597,38 @@ internal static class DisplayPlacementService
         var point = new NativeMethods.POINT { X = bounds.Left + bounds.Width / 2, Y = bounds.Top + bounds.Height / 2 };
         IntPtr monitor = NativeMethods.MonitorFromPoint(point, NativeMethods.MONITOR_DEFAULTTONEAREST);
         NativeMethods.MONITORINFOEX info = CreateMonitorInfo();
-        NativeMethods.GetMonitorInfo(monitor, ref info);
+        string device;
+        NativeMethods.RECT work;
         double scale = 1;
-        if (NativeMethods.GetDpiForMonitor(monitor, 0, out uint dpiX, out _) == 0 && dpiX > 0)
+        if (monitor != IntPtr.Zero && NativeMethods.GetMonitorInfo(monitor, ref info))
         {
-            scale = dpiX / 96d;
+            device = info.szDevice;
+            work = info.rcWork;
+            if (NativeMethods.GetDpiForMonitor(monitor, 0, out uint dpiX, out _) == 0 && dpiX > 0)
+            {
+                scale = dpiX / 96d;
+            }
+        }
+        else
+        {
+            DisplayInfo fallback = GetDisplay();
+            device = fallback.Device;
+            work = fallback.Work;
+            scale = fallback.Scale;
         }
         if (window != IntPtr.Zero)
         {
-            scale = Math.Max(1, NativeMethods.GetDpiForWindow(window) / 96d);
+            uint windowDpi = NativeMethods.GetDpiForWindow(window);
+            if (windowDpi > 0) scale = Math.Max(1, windowDpi / 96d);
         }
 
         return new WidgetPosition
         {
-            MonitorDevice = info.szDevice,
-            XDip = (bounds.Left - info.rcWork.Left) / scale,
-            YDip = (bounds.Top - info.rcWork.Top) / scale,
-            SavedWorkAreaWidthDip = info.rcWork.Width / scale,
-            SavedWorkAreaHeightDip = info.rcWork.Height / scale
+            MonitorDevice = device,
+            XDip = (bounds.Left - work.Left) / scale,
+            YDip = (bounds.Top - work.Top) / scale,
+            SavedWorkAreaWidthDip = work.Width / scale,
+            SavedWorkAreaHeightDip = work.Height / scale
         };
     }
 
@@ -596,7 +637,10 @@ internal static class DisplayPlacementService
         var point = new NativeMethods.POINT { X = bounds.Left + bounds.Width / 2, Y = bounds.Top + bounds.Height / 2 };
         IntPtr monitor = NativeMethods.MonitorFromPoint(point, NativeMethods.MONITOR_DEFAULTTONEAREST);
         NativeMethods.MONITORINFOEX info = CreateMonitorInfo();
-        NativeMethods.GetMonitorInfo(monitor, ref info);
+        if (monitor == IntPtr.Zero || !NativeMethods.GetMonitorInfo(monitor, ref info))
+        {
+            return GetDisplay();
+        }
         double scale = 1;
         if (NativeMethods.GetDpiForMonitor(monitor, 0, out uint dpiX, out _) == 0 && dpiX > 0)
         {

@@ -54,13 +54,21 @@ public static class Program
         registered.Activated += (_, activationArgs) => Activations.Enqueue(activationArgs);
 
         WinRT.ComWrappersSupport.InitializeComWrappers();
-        Application.Start(_ =>
+        App? app = null;
+        try
         {
-            var context = new Microsoft.UI.Dispatching.DispatcherQueueSynchronizationContext(
-                Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread());
-            SynchronizationContext.SetSynchronizationContext(context);
-            new App();
-        });
+            Application.Start(_ =>
+            {
+                var context = new Microsoft.UI.Dispatching.DispatcherQueueSynchronizationContext(
+                    Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread());
+                SynchronizationContext.SetSynchronizationContext(context);
+                app = new App();
+            });
+        }
+        finally
+        {
+            app?.DisposeSingleInstance();
+        }
         AppLogger.Lifecycle("message-loop-ended", "source=Application.Start");
         try { AppLogger.FlushAsync().Wait(TimeSpan.FromMilliseconds(300)); } catch { }
         return Environment.ExitCode;
@@ -126,12 +134,15 @@ public partial class App : Application
         return IsFatalException(exception.InnerException);
     }
 
+    internal void DisposeSingleInstance() => _singleInstance.Dispose();
+
     protected override async void OnLaunched(Microsoft.UI.Xaml.LaunchActivatedEventArgs args)
     {
         if (!_singleInstance.IsPrimary)
         {
             if (!_singleInstance.SignalPrimary()) SingleInstanceGuard.ShowLegacyInstanceMessage();
             AppLogger.Lifecycle("exit-request", "source=OnLaunched reason=legacy-instance");
+            _singleInstance.Dispose();
             Exit();
             return;
         }
@@ -152,6 +163,7 @@ public partial class App : Application
             AppLogger.Error("TuckPane 初始化失败。", ex);
             AppLogger.Lifecycle("exit-request", $"source=OnLaunched reason=initialization-failed type={ex.GetType().FullName} hresult=0x{ex.HResult:X8}");
             StartupFailure.Show(ex);
+            _singleInstance.Dispose();
             Exit();
         }
     }

@@ -20,7 +20,8 @@ internal sealed record AutoOrganizeUndoSummary(
 /// </summary>
 internal sealed class AutoOrganizeService
 {
-    private AutoOrganizeUndoBatch? _lastBatch;
+    private readonly SemaphoreSlim _undoGate = new(1, 1);
+    private volatile AutoOrganizeUndoBatch? _lastBatch;
 
     internal bool CanUndo => _lastBatch is { Entries.Count: > 0 };
     internal int LastUndoCount => _lastBatch?.Entries.Count ?? 0;
@@ -90,6 +91,8 @@ internal sealed class AutoOrganizeService
                         undoEntries.Add(new AutoOrganizeUndoEntry(outcome.SourcePath, outcome.DestinationPath, CreatedShortcutOnly: true));
                         break;
                     case TransferStatus.Failed:
+                    case TransferStatus.CopiedSourceRetained:
+                    case TransferStatus.Cancelled:
                         failed++;
                         break;
                 }
@@ -99,67 +102,125 @@ internal sealed class AutoOrganizeService
         AutoOrganizeUndoBatch? batch = undoEntries.Count > 0
             ? new AutoOrganizeUndoBatch(DateTimeOffset.UtcNow, undoEntries)
             : null;
-        if (batch is not null) _lastBatch = batch;
+        if (batch is not null)
+        {
+            await _undoGate.WaitAsync(cancellationToken);
+            try { _lastBatch = batch; }
+            finally { _undoGate.Release(); }
+        }
         return new(moved, shortcuts, failed, batch);
     }
 
     internal async Task<AutoOrganizeUndoSummary> UndoLastBatchAsync(CancellationToken cancellationToken = default)
     {
-        AutoOrganizeUndoBatch? batch = _lastBatch;
-        if (batch is null || batch.Entries.Count == 0) return new(0, 0, 0);
-
-        int restored = 0;
-        int skipped = 0;
-        int failed = 0;
-
-        foreach (AutoOrganizeUndoEntry entry in batch.Entries.Reverse())
+        await _undoGate.WaitAsync(cancellationToken);
+        try
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            try
+            AutoOrganizeUndoBatch? batch = _lastBatch;
+            if (batch is null || batch.Entries.Count == 0) return new(0, 0, 0);
+
+            int restored = 0;
+            int skipped = 0;
+            int failed = 0;
+            var remainingReversed = new List<AutoOrganizeUndoEntry>();
+            IReadOnlyList<AutoOrganizeUndoEntry> entries = batch.Entries;
+
+            for (int index = entries.Count - 1; index >= 0; index--)
             {
-                if (entry.CreatedShortcutOnly)
+                if (cancellationToken.IsCancellationRequested)
                 {
-                    if (File.Exists(entry.MovedPath))
+                    for (int preserve = index; preserve >= 0; preserve--)
+                        remainingReversed.Add(entries[preserve]);
+                    PersistRemainingBatch(batch.ExecutedAtUtc, remainingReversed);
+                    cancellationToken.ThrowIfCancellationRequested();
+                }
+
+                AutoOrganizeUndoEntry entry = entries[index];
+                try
+                {
+                    if (entry.CreatedShortcutOnly)
                     {
-                        File.Delete(entry.MovedPath);
+                        if (File.Exists(entry.MovedPath))
+                        {
+                            File.Delete(entry.MovedPath);
+                            restored++;
+                        }
+                        else skipped++;
+                        continue;
+                    }
+
+                    bool existsFile = File.Exists(entry.MovedPath);
+                    bool existsDir = !existsFile && Directory.Exists(entry.MovedPath);
+                    if (!existsFile && !existsDir)
+                    {
+                        skipped++;
+                        continue;
+                    }
+
+                    string? originalDir = Path.GetDirectoryName(entry.OriginalPath);
+                    if (string.IsNullOrWhiteSpace(originalDir))
+                    {
+                        failed++;
+                        remainingReversed.Add(entry);
+                        continue;
+                    }
+
+                    TransferOutcome outcome = await StorageService.MoveItemToDirectoryAsync(
+                        entry.MovedPath,
+                        originalDir,
+                        progress: null,
+                        cancellationToken);
+                    if (outcome.Status == TransferStatus.Moved)
+                    {
                         restored++;
                     }
-                    else skipped++;
-                    continue;
+                    else if (outcome.Status == TransferStatus.Cancelled)
+                    {
+                        failed++;
+                        for (int preserve = index; preserve >= 0; preserve--)
+                            remainingReversed.Add(entries[preserve]);
+                        break;
+                    }
+                    else
+                    {
+                        // Includes Failed and CopiedSourceRetained so failed items remain retryable.
+                        failed++;
+                        remainingReversed.Add(entry);
+                    }
                 }
-
-                bool existsFile = File.Exists(entry.MovedPath);
-                bool existsDir = !existsFile && Directory.Exists(entry.MovedPath);
-                if (!existsFile && !existsDir)
+                catch (OperationCanceledException)
                 {
-                    skipped++;
-                    continue;
+                    for (int preserve = index; preserve >= 0; preserve--)
+                        remainingReversed.Add(entries[preserve]);
+                    PersistRemainingBatch(batch.ExecutedAtUtc, remainingReversed);
+                    throw;
                 }
-
-                string? originalDir = Path.GetDirectoryName(entry.OriginalPath);
-                if (string.IsNullOrWhiteSpace(originalDir))
+                catch (Exception ex)
                 {
+                    AppLogger.Error($"自动归类撤销失败：{entry.MovedPath}", ex);
                     failed++;
-                    continue;
+                    remainingReversed.Add(entry);
                 }
+            }
 
-                TransferOutcome outcome = await StorageService.MoveItemToDirectoryAsync(
-                    entry.MovedPath,
-                    originalDir,
-                    progress: null,
-                    cancellationToken);
-                if (outcome.Status == TransferStatus.Moved) restored++;
-                else failed++;
-            }
-            catch (Exception ex)
-            {
-                AppLogger.Error($"自动归类撤销失败：{entry.MovedPath}", ex);
-                failed++;
-            }
+            PersistRemainingBatch(batch.ExecutedAtUtc, remainingReversed);
+            return new(restored, skipped, failed);
         }
+        finally
+        {
+            _undoGate.Release();
+        }
+    }
 
-        _lastBatch = null;
-        return new(restored, skipped, failed);
+    private void PersistRemainingBatch(DateTimeOffset executedAtUtc, List<AutoOrganizeUndoEntry> remainingReversed)
+    {
+        if (remainingReversed.Count == 0)
+        {
+            _lastBatch = null;
+            return;
+        }
+        remainingReversed.Reverse();
+        _lastBatch = new AutoOrganizeUndoBatch(executedAtUtc, remainingReversed);
     }
 
     internal static string ResolveDownloadsRoot()

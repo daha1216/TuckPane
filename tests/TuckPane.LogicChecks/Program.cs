@@ -49,6 +49,18 @@ if (args is ["--desktop-move-8x8"])
     return;
 }
 
+if (args is ["--liquid-glass-perf"])
+{
+    await LiquidGlassAndPerfChecks.RunAsync();
+    return;
+}
+
+if (args is ["--commercial-grade-audit"])
+{
+    await CommercialGradeAuditChecks.RunAsync();
+    return;
+}
+
 if (args.Length > 0 && args[0] == "--sep13-interactions")
 {
     if (args is not [_, string area]) throw new ArgumentException("Expected --sep13-interactions <resize|menu|shortcut>.");

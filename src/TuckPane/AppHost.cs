@@ -33,6 +33,7 @@ public sealed partial class AppHost : IDisposable
     private NativeMethods.RECT _organizerDragHoverBounds;
     private bool _transparencyNoticeShown;
     private bool _gridFallbackNoticeShown;
+    private bool _disposed;
     private readonly ExitPreparation _exitPreparation = new();
 
     public AppStateV2 State { get; private set; } = new();
@@ -43,24 +44,30 @@ public sealed partial class AppHost : IDisposable
     internal bool IsPreparingUpdate { get; private set; }
     public IReadOnlyCollection<MainWindow> Windows => _windows.Values;
     internal event EventHandler? ThemeChanged;
+    internal ThemeTarget? LastChangedThemeTarget { get; private set; }
 
     public async Task SetOrganizerTextColorAsync(OrganizerTextColor color)
     {
         color = GlobalSettings.NormalizeOrganizerTextColor(color);
         if (!await MutateGlobalSettingAsync(s => s.OrganizerTextColor, (s, v) => s.OrganizerTextColor = v, color)) return;
+        LastChangedThemeTarget = null;
         ThemeChanged?.Invoke(this, EventArgs.Empty);
     }
 
     internal IReadOnlyList<WindowAlignmentTarget> GetWindowAlignmentTargets(MainWindow source, DisplayInfo display)
     {
-        var targets = new List<WindowAlignmentTarget>(_windows.Count - 1);
-        foreach (MainWindow window in _windows.Values.OrderBy(window => window.OrganizerId))
+        int capacity = Math.Max(0, _windows.Count - 1);
+        if (capacity == 0) return [];
+        var targets = new List<WindowAlignmentTarget>(capacity);
+        foreach (MainWindow window in _windows.Values)
         {
             if (ReferenceEquals(window, source) || !window.TryGetWindowAlignmentFrame(out NativeMethods.RECT bounds)) continue;
             if (!string.Equals(DisplayPlacementService.ForBounds(bounds).Device, display.Device, StringComparison.OrdinalIgnoreCase)) continue;
-            targets.Add(new(window.OrganizerId, bounds));
+            targets.Add(new WindowAlignmentTarget(window.OrganizerId, bounds));
         }
-        return targets;
+        if (targets.Count > 1)
+            targets.Sort(static (left, right) => left.Id.CompareTo(right.Id));
+        return targets.Count == 0 ? [] : targets.ToArray();
     }
 
     internal IReadOnlyList<WidgetItem> GetContainedOrganizerItems(Guid containerId) =>
@@ -113,7 +120,7 @@ public sealed partial class AppHost : IDisposable
         Console.InitializeHostWindow();
         _tray = new TrayIconService(Console.Hwnd, () => State.GlobalSettings.StartWithWindows, () => TransferQueue.IsActive,
             HandleTrayCommand, LifecycleWindowCounts, () => IsPeekActive);
-        TransferQueue.StateChanged += (_, _) => _dispatcher.TryEnqueue(() => Console.UpdateTransferState());
+        TransferQueue.StateChanged += TransferQueue_StateChanged;
 
         if (NormalizePositionedPlacementsOnStartup() | NormalizeStationPlacementsOnStartup()) await SaveStateAsync();
         foreach (OrganizerDefinition organizer in State.Organizers) CreateWindow(organizer);
@@ -1102,8 +1109,6 @@ public sealed partial class AppHost : IDisposable
                                 RebindPortableWindowAfterMove(oldPath, recovered);
                         }
                     }
-                    foreach (PortableExportedWindow item in movedPortable.Where(item => item.WasVisible))
-                        item.Window.RestoreAfterDrag();
                     return outcome;
                 }
                 if (outcome.DestinationPath is not null)
@@ -1154,6 +1159,8 @@ public sealed partial class AppHost : IDisposable
             }
             return new(sourceRoot, outcome.DestinationPath, TransferStatus.Failed, ex.Message);
         }
+        RemoveDeletedOrganizerFromSelection(id);
+        CloseExpansionModeCoordinator(id);
         if (_windows.Remove(id, out MainWindow? window))
         {
             if (ReferenceEquals(_expandedWindow, window)) _expandedWindow = null;
@@ -1207,6 +1214,7 @@ public sealed partial class AppHost : IDisposable
             fullyTransparent);
         if (settings.GetTheme(target) == theme) return;
         settings.SetTheme(target, theme);
+        LastChangedThemeTarget = target;
         ThemeChanged?.Invoke(this, EventArgs.Empty);
     }
 
@@ -1677,13 +1685,6 @@ public sealed partial class AppHost : IDisposable
         _ => AppStrings.Get("OrganizerContainmentMissingError")
     };
 
-    internal async Task<bool> TryMoveItemToPeerAsync(MainWindow source, string path, NativeMethods.POINT dropPoint)
-    {
-        MainWindow? target = _windows.Values.FirstOrDefault(window =>
-            !ReferenceEquals(window, source) && window.ContainsScreenPoint(dropPoint));
-        return target is not null && await target.ImportFromPeerAsync(path);
-    }
-
     public void OpenConsole(Guid? organizerId = null)
     {
         _ = _dispatcher.TryEnqueue(() => Console.ShowAndActivate(organizerId));
@@ -1975,6 +1976,7 @@ public sealed partial class AppHost : IDisposable
     public async Task SetEdgeGlowEnabledAsync(bool enabled)
     {
         if (!await MutateGlobalSettingAsync(s => s.EdgeGlowEnabled, (s, v) => s.EdgeGlowEnabled = v, enabled)) return;
+        LastChangedThemeTarget = null;
         ThemeChanged?.Invoke(this, EventArgs.Empty);
     }
 
@@ -2100,10 +2102,14 @@ public sealed partial class AppHost : IDisposable
         }
         AppLogger.Lifecycle("exit-commit", $"source={source} {LifecycleWindowCounts()}");
         attempt.Commit();
-        Updates.Dispose();
+        Updates?.Dispose();
         DisposeProductivityServices();
         DisposeDockRunningState();
         ShellLauncher.Dispose();
+        _organizerDragHoverHold?.Dispose();
+        _organizerDragHoverHold = null;
+        foreach (ExpansionModeCoordinator coordinator in _expansionModes.Values.ToArray()) coordinator.Close();
+        _expansionModes.Clear();
         foreach (NoteWindow window in noteWindows) window.ClosePermanentlyWithoutSave();
         foreach (TodoWindow window in todoWindows) window.ClosePermanentlyWithoutSave();
         _noteWindows.Clear();
@@ -2111,6 +2117,7 @@ public sealed partial class AppHost : IDisposable
         foreach (MainWindow window in _windows.Values.ToArray()) window.ClosePermanently();
         _windows.Clear();
         _tray?.Dispose();
+        _tray = null;
         Console.ClosePermanently();
         try { await AppLogger.FlushAsync().WaitAsync(TimeSpan.FromSeconds(2)); }
         catch (TimeoutException) { }
@@ -2204,16 +2211,50 @@ public sealed partial class AppHost : IDisposable
         });
     }
 
+    private void TransferQueue_StateChanged(object? sender, EventArgs e)
+    {
+        if (_disposed) return;
+        _dispatcher.TryEnqueue(() =>
+        {
+            if (!_disposed) Console?.UpdateTransferState();
+        });
+    }
+
     public void Dispose()
     {
+        if (_disposed) return;
+        _disposed = true;
         _feedbackDisposed = true;
+        TransferQueue.StateChanged -= TransferQueue_StateChanged;
+        _organizerDragHoverHold?.Dispose();
+        _organizerDragHoverHold = null;
+        foreach (ExpansionModeCoordinator coordinator in _expansionModes.Values.ToArray())
+            coordinator.Close();
+        _expansionModes.Clear();
         DisposeProductivityServices();
         DisposeDockRunningState();
+        Updates?.Dispose();
+        ShellLauncher.Dispose();
         AppLogger.Lifecycle("host-dispose", LifecycleWindowCounts());
         _tray?.Dispose();
-        foreach (NoteWindow window in _noteWindows.Values) _ = window.ClosePermanentlyAsync();
+        _tray = null;
+        foreach (NoteWindow window in _noteWindows.Values.ToArray()) _ = window.ClosePermanentlyAsync();
+        _noteWindows.Clear();
         _portableDocuments.CloseAllOnDispose();
-        foreach (MainWindow window in _windows.Values) window.ClosePermanently();
+        foreach (MainWindow window in _windows.Values.ToArray()) window.ClosePermanently();
+        _windows.Clear();
+        TryDisposeGate(_globalSettingsGate);
+        TryDisposeGate(_expansionModeSaveGate);
+        TryDisposeGate(_nameVisibilityGate);
+        TryDisposeGate(_organizerPreferenceGate);
+        TryDisposeGate(_organizerNameGate);
+        TryDisposeGate(_topologyChangeGate);
+    }
+
+    private static void TryDisposeGate(SemaphoreSlim gate)
+    {
+        try { gate.Dispose(); }
+        catch (ObjectDisposedException) { }
     }
 }
 

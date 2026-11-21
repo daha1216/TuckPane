@@ -11,12 +11,20 @@ public sealed partial class MainWindow
         ClearWindowAlignment();
         if (_canvasResize is null) return;
         StopCanvasResizeRendering();
+        CommitPendingCanvasResizeMetrics();
+        RestoreCanvasResizeGpuScaling();
         _canvasResize = null;
+        _canvasResizeCenterSymmetric = false;
+        _canvasResizeInputTimer.Stop();
+        _canvasResizeClockBoost?.Dispose();
+        _canvasResizeClockBoost = null;
         _resizeGesture.Invalidate();
         if (NativeMethods.GetCapture() == _hwnd) _ = NativeMethods.ReleaseCapture();
+        ApplyExpandedContentInset();
         ConfigureItemsLayout();
         UpdateCompactPreviewItemScale();
         UpdateSurfaceClips();
+        UpdateCanvasResizeEdgeWindows(show: false);
         _interactionSaveTimer.Stop();
         CaptureExpandedPosition();
         _ = SaveStateAsync();
@@ -27,7 +35,7 @@ public sealed partial class MainWindow
         if (!RectsEqual(bounds, _dragCurrentBounds) && !NativeMethods.SetWindowPos(
             _hwnd, IntPtr.Zero, bounds.Left, bounds.Top, bounds.Width, bounds.Height,
             NativeMethods.SWP_NOZORDER | NativeMethods.SWP_NOACTIVATE |
-            NativeMethods.SWP_NOOWNERZORDER | NativeMethods.SWP_SHOWWINDOW))
+            NativeMethods.SWP_NOOWNERZORDER | NativeMethods.SWP_NOCOPYBITS | NativeMethods.SWP_SHOWWINDOW))
         {
             AppLogger.Error($"拉伸收纳窗失败，Win32={Marshal.GetLastWin32Error()}。");
             ClearWindowAlignment();

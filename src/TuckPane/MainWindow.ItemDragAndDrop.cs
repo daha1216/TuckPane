@@ -248,6 +248,7 @@ public sealed partial class MainWindow
             _itemDragRenderingSubscribed = true;
         }
         TrySetItemDragClockBoost(true);
+        if (IsDock) UpdateDockInputRegion();
         if (_itemDragPointerType == PointerDeviceType.Mouse) StartItemDragBoundaryHook();
         BeginIosFluidReorder(session);
         if (_freeGridEngine is null)
@@ -264,7 +265,6 @@ public sealed partial class MainWindow
 
     private void ItemDragRendering(object? sender, object args)
     {
-        if (IsDock) UpdateDockInputRegion();
         if (_itemReorderSession is not { IsActive: true } session || _itemDragHost is null) return;
 
         long now = Stopwatch.GetTimestamp();
@@ -399,6 +399,8 @@ public sealed partial class MainWindow
     {
         try
         {
+            // Force Win32 thread message queue creation BEFORE publishing the thread ID so PostThreadMessage(WM_QUIT) can never race!
+            _ = NativeMethods.PeekMessage(out _, IntPtr.Zero, 0, 0, 0);
             Volatile.Write(ref _itemDragBoundaryHookThreadId, NativeMethods.GetCurrentThreadId());
             if (Volatile.Read(ref _itemDragBoundaryHookStopRequested) != 0) return;
             _itemDragBoundaryHook = NativeMethods.SetWindowsHookEx(
@@ -406,7 +408,8 @@ public sealed partial class MainWindow
                 _itemDragBoundaryHookProc,
                 NativeMethods.GetModuleHandle(null),
                 0);
-            _itemDragBoundaryHookReady.Set();
+            try { _itemDragBoundaryHookReady.Set(); }
+            catch (ObjectDisposedException) { }
             if (_itemDragBoundaryHook == IntPtr.Zero ||
                 Volatile.Read(ref _itemDragBoundaryHookStopRequested) != 0) return;
             while (Volatile.Read(ref _itemDragBoundaryHookStopRequested) == 0 &&
@@ -418,7 +421,8 @@ public sealed partial class MainWindow
             if (hook != IntPtr.Zero) _ = NativeMethods.UnhookWindowsHookEx(hook);
             Volatile.Write(ref _itemDragBoundaryHookThreadId, 0);
             Interlocked.CompareExchange(ref _itemDragBoundaryHookThread, null, Thread.CurrentThread);
-            _itemDragBoundaryHookReady.Set();
+            try { _itemDragBoundaryHookReady.Set(); }
+            catch (ObjectDisposedException) { }
         }
     }
 
@@ -553,8 +557,7 @@ public sealed partial class MainWindow
         if (direction < 0 && ItemsScrollView.VerticalOffset <= .5 ||
             direction > 0 && ItemsScrollView.VerticalOffset >= ItemsScrollView.ScrollableHeight - .5) return;
         double speed = 120 + 600 * penetration * penetration;
-        ItemsScrollView.ScrollBy(0, direction * speed * seconds,
-            new ScrollingScrollOptions(ScrollingAnimationMode.Disabled, ScrollingSnapPointsMode.Ignore));
+        ItemsScrollView.ScrollBy(0, direction * speed * seconds, InstantScrollOptions);
     }
 
     private void ApplyAllProvisionalItemVisuals(bool animate)
@@ -678,6 +681,8 @@ public sealed partial class MainWindow
     private ItemMotionState GetItemMotion(Border host)
     {
         if (_itemMotionStates.TryGetValue(host, out ItemMotionState? motion)) return motion;
+        // Never touch Composition ElementVisual on item hosts: item hosts use WinUI UIElement
+        // Translation / Scale / Rotation / CenterPoint, and mixing them throws 0x80070005 (E_ACCESSDENIED).
         motion = new ItemMotionState
         {
             Translation = host.Translation,
@@ -879,6 +884,7 @@ public sealed partial class MainWindow
                 .ToArray();
             bool canRotateRealizedContent = affectedSlots.All(slot => realizedSlots[slot]?.Child is not null);
             var originalContent = new UIElement?[originalItems.Length];
+            var originalParts = new ItemHostParts?[originalItems.Length];
 
             _itemCollectionMoveInProgress = true;
             try
@@ -887,14 +893,19 @@ public sealed partial class MainWindow
                 {
                     foreach (int slot in affectedSlots)
                     {
-                        UnregisterHoverItem(realizedSlots[slot]!);
-                        originalContent[slot] = realizedSlots[slot]!.Child;
-                        realizedSlots[slot]!.Child = null;
+                        Border sourceHost = realizedSlots[slot]!;
+                        UnregisterHoverItem(sourceHost);
+                        if (_itemHostParts.Remove(sourceHost, out ItemHostParts? movedParts))
+                            originalParts[slot] = movedParts;
+                        originalContent[slot] = sourceHost.Child;
+                        sourceHost.Child = null;
                     }
                     foreach (int original in affectedSlots)
                     {
                         Border destination = realizedSlots[visualIndices[original]]!;
                         destination.Child = originalContent[original];
+                        if (originalParts[original] is { } movedParts)
+                            _itemHostParts[destination] = movedParts;
                         RegisterHoverItem(destination);
                     }
                 }
@@ -1208,12 +1219,15 @@ public sealed partial class MainWindow
 
     private void TrySetItemDragClockBoost(bool enabled)
     {
-        if (enabled && !_dragClockBoosted && NativeMethods.TrySetCompositorClockBoost(true)) _dragClockBoosted = true;
-        else if (!enabled && _dragClockBoosted && !_dragRenderingSubscribed &&
+        if (enabled && !_itemDragClockBoosted && CompositorClockBoost.TryAcquire())
+        {
+            _itemDragClockBoosted = true;
+        }
+        else if (!enabled && _itemDragClockBoosted &&
             !_itemDragRenderingSubscribed && !_nativeItemMotionRenderingSubscribed)
         {
-            _ = NativeMethods.TrySetCompositorClockBoost(false);
-            _dragClockBoosted = false;
+            CompositorClockBoost.Release();
+            _itemDragClockBoosted = false;
         }
     }
 
@@ -1325,8 +1339,7 @@ public sealed partial class MainWindow
             vertical > 0 && ItemsScrollView.VerticalOffset >= ItemsScrollView.ScrollableHeight - .5) return;
         if (vertical != 0)
         {
-            ItemsScrollView.ScrollBy(0, vertical,
-                new ScrollingScrollOptions(ScrollingAnimationMode.Disabled, ScrollingSnapPointsMode.Ignore));
+            ItemsScrollView.ScrollBy(0, vertical, InstantScrollOptions);
         }
     }
 
