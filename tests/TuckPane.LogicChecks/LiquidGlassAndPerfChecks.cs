@@ -315,13 +315,26 @@ internal static class LiquidGlassAndPerfChecks
                 explorerSorted[5] == "三角洲行动.lnk",
             $"按名称（A→Z）未遵循 Windows 资源管理器 StrCmpLogicalW 中英自然顺序：{string.Join(" -> ", explorerSorted)}");
 
-        // 6. Optical Liquid Glass Edge Rim & Pre-Uncloak DComp Commit
+        // 6. Optical Liquid Glass Edge Rim & Pre-Uncloak DComp Commit & Element-Identity FreeGrid Slot Resolution
         string edgeSurfaceCs = File.ReadAllText(Path.Combine(srcRoot, "Services", "ThemeEdgeSurface.cs"));
+        string freeGridLayoutCs = File.ReadAllText(Path.Combine(srcRoot, "Controls", "FreeSlotGridLayout.cs"));
+        string freeGridReorderCs = File.ReadAllText(Path.Combine(srcRoot, "MainWindow.FreeGridReorder.cs"));
         require(edgeSurfaceCs.Contains("UpdatePointerRim(", StringComparison.Ordinal) &&
                 edgeSurfaceCs.Contains("ClearPointerRim(", StringComparison.Ordinal) &&
                 edgeSurfaceCs.Contains("_counterArcShape", StringComparison.Ordinal) &&
-                edgeSurfaceCs.Contains("_pointerRimVisual", StringComparison.Ordinal),
-            "ThemeEdgeSurface 缺少双极菲涅尔圆角焦散弧或 120Hz 鼠标跟随流光边缘。");
+                edgeSurfaceCs.Contains("_pointerRimVisual", StringComparison.Ordinal) &&
+                edgeSurfaceCs.Contains("GlassEdgePureBaseStops", StringComparison.Ordinal),
+            "ThemeEdgeSurface 缺少纯晶白零泛黑基底、双极菲涅尔圆角焦散弧或 120Hz 鼠标跟随流光边缘。");
+
+        require(!mainXaml.Contains("#14000000", StringComparison.OrdinalIgnoreCase) &&
+                !mainXaml.Contains("#22000000", StringComparison.OrdinalIgnoreCase),
+            "MainWindow.xaml 的 CompactLiquidSheen 仍残留会导致边缘泛黑的黑色渐变色标。");
+
+        require(freeGridLayoutCs.Contains("ElementSlotResolver", StringComparison.Ordinal) &&
+                freeGridReorderCs.Contains("_resolvedSlotByRelativeName", StringComparison.Ordinal) &&
+                freeGridReorderCs.Contains("RebuildResolvedSlotLookup(", StringComparison.Ordinal) &&
+                freeGridReorderCs.Contains("ResolveFreeGridElementSlotForLayout", StringComparison.Ordinal),
+            "FreeSlotGridLayout 缺少按 UIElement 真实身份（RelativeName）解析槽位的机制，排序或筛选后拖拽会导致错位乱跳。");
 
         require(mainCs.Contains("NativeMethods.SWP_NOCOPYBITS", StringComparison.Ordinal) &&
                 transCs.Contains("NativeMethods.DwmFlush()", StringComparison.Ordinal) &&

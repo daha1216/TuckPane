@@ -226,7 +226,7 @@ public sealed partial class MainWindow
         var targets = new List<MarqueeTargetRect<string>>(_items.Count);
         for (int index = 0; index < _items.Count; index++)
         {
-            if (ItemsRepeater.TryGetElement(index) is not Border host) continue;
+            if (!TryGetRealizedItemHost(index, out Border host)) continue;
             if (host.ActualWidth <= 0 || host.ActualHeight <= 0) continue;
             try
             {
@@ -260,7 +260,7 @@ public sealed partial class MainWindow
     {
         for (int index = 0; index < _items.Count; index++)
         {
-            if (ItemsRepeater.TryGetElement(index) is Border host)
+            if (TryGetRealizedItemHost(index, out Border host))
                 ApplyItemSelectionVisual(host, _items[index].RelativeName);
         }
 

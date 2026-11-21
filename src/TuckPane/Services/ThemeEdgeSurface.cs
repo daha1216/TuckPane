@@ -65,10 +65,10 @@ internal sealed class ThemeEdgeSurface : IDisposable
         _textureShape = compositor.CreateSpriteShape(_textureGeometry);
         _pointerRimShape = compositor.CreateSpriteShape(_pointerRimGeometry);
 
-        _outerBrush = CreateBrush(ThemePalette.OrganizerGlassOuterEdgeStops, new(0f, 0f), new(1f, 1f));
-        _innerBrush = CreateBrush(ThemePalette.OrganizerGlassInnerEdgeStops, new(1f, 0f), new(0f, 1f));
-        _highlightBrush = CreateBrush(ThemePalette.GlassEdgeHighlightStops, new(0f, 0f), new(0.64f, 0.64f));
-        _counterArcBrush = CreateBrush(ThemePalette.GlassEdgeCounterArcStops, new(1f, 1f), new(0.40f, 0.40f));
+        _outerBrush = CreateBrush(ThemePalette.GlassEdgePureBaseStops, new(0f, 0f), new(1f, 1f));
+        _innerBrush = CreateBrush(ThemePalette.GlassEdgeTextureStops, new(0f, 0f), new(1f, 1f));
+        _highlightBrush = CreateBrush(ThemePalette.GlassEdgeHighlightStops, new(0f, 0f), new(0.52f, 0.52f));
+        _counterArcBrush = CreateBrush(ThemePalette.GlassEdgeCounterArcStops, new(1f, 1f), new(0.48f, 0.48f));
         _textureBrush = CreateBrush(ThemePalette.GlassEdgeTextureStops, new(0f, 0f), new(1f, 1f));
 
         _pointerRimBrush = compositor.CreateRadialGradientBrush();
@@ -86,8 +86,8 @@ internal sealed class ThemeEdgeSurface : IDisposable
         _textureShape.StrokeBrush = _textureBrush;
         _pointerRimShape.StrokeBrush = _pointerRimBrush;
 
-        _outerShape.StrokeThickness = ThemePalette.OrganizerGlassOuterEdgeThicknessDip;
-        _innerShape.StrokeThickness = ThemePalette.OrganizerGlassInnerEdgeThicknessDip;
+        _outerShape.StrokeThickness = ThemePalette.GlassEdgeOuterPureThicknessDip;
+        _innerShape.StrokeThickness = 0.65f;
         _highlightShape.StrokeThickness = ThemePalette.GlassEdgeHighlightThicknessDip;
         _counterArcShape.StrokeThickness = ThemePalette.GlassEdgeCounterArcThicknessDip;
         _textureShape.StrokeThickness = ThemePalette.GlassEdgeTextureThicknessDip;
@@ -200,9 +200,8 @@ internal sealed class ThemeEdgeSurface : IDisposable
         Vector2 surfaceSize = new(surface.Width, surface.Height);
         _visual.Size = surfaceSize;
         _pointerRimVisual.Size = surfaceSize;
-        ConfigureGeometry(_outerGeometry, surface.InsetStroke(ThemePalette.OrganizerGlassOuterEdgeThicknessDip));
-        ConfigureGeometry(_innerGeometry, surface.InsetStroke(
-            ThemePalette.OrganizerGlassInnerEdgeThicknessDip, ThemePalette.OrganizerGlassInnerEdgeInsetDip));
+        ConfigureGeometry(_outerGeometry, surface.InsetStroke(1.0f, 0.0f));
+        ConfigureGeometry(_innerGeometry, surface.InsetStroke(0.65f, 0.25f));
         ConfigureGeometry(_textureGeometry, surface.InsetStroke(
             ThemePalette.GlassEdgeTextureThicknessDip, ThemePalette.GlassEdgeTextureInsetDip));
         ConfigureGeometry(_counterArcGeometry, surface.InsetStroke(

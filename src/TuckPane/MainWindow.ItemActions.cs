@@ -213,7 +213,13 @@ public sealed partial class MainWindow
         }
 
         string[] previousVisibleOrder = _items.Select(i => i.RelativeName).ToArray();
-        int[] previousResolvedSlots = _resolvedItemSlots.ToArray();
+        var previousSlotByItem = new Dictionary<string, int>(_items.Count, StringComparer.OrdinalIgnoreCase);
+        for (int i = 0; i < _items.Count; i++)
+        {
+            string rel = _items[i].RelativeName;
+            if (!string.IsNullOrEmpty(rel))
+                previousSlotByItem[rel] = i < _resolvedItemSlots.Length ? _resolvedItemSlots[i] : i;
+        }
         Dictionary<string, Point>? before = UseCustomAnimations && _expanded ? CaptureRealizedItemPositions() : null;
 
         SortableItemMetadata[] metadata = await Task.Run(() =>
@@ -257,6 +263,7 @@ public sealed partial class MainWindow
         }
         reordered.AddRange(duplicates);
 
+        NormalizeItemMotionsToLayout("SortOrganizer");
         ApplyCatalogItemsAndRender(reordered, refreshIcons: false);
         SyncResolvedItemSlots();
         _freeSlotGridLayout.InvalidateSlots();
@@ -275,9 +282,11 @@ public sealed partial class MainWindow
         {
             string? oldName = index < previousVisibleOrder.Length ? previousVisibleOrder[index] : null;
             string? newName = index < _items.Count ? _items[index].RelativeName : null;
-            int oldSlot = index < previousResolvedSlots.Length ? previousResolvedSlots[index] : index;
             int newSlot = index < _resolvedItemSlots.Length ? _resolvedItemSlots[index] : index;
-            if (!string.Equals(oldName, newName, StringComparison.OrdinalIgnoreCase) || oldSlot != newSlot)
+            bool slotChanged = newName is not null &&
+                previousSlotByItem.TryGetValue(newName, out int oldSlot) &&
+                oldSlot != newSlot;
+            if (!string.Equals(oldName, newName, StringComparison.OrdinalIgnoreCase) || slotChanged)
                 changedCount++;
         }
 

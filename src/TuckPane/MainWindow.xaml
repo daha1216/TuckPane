@@ -73,13 +73,19 @@
                                 </Grid.ColumnDefinitions>
                                 <ContentPresenter x:Name="IconContent"
                                                   Grid.Column="0"
-                                                  Width="16"
-                                                  Height="16"
+                                                  Width="20"
+                                                  Height="20"
                                                   HorizontalAlignment="Center"
                                                   VerticalAlignment="Center"
                                                   Content="{TemplateBinding Icon}"
                                                   Foreground="{TemplateBinding Foreground}"
-                                                  AutomationProperties.AccessibilityView="Raw" />
+                                                  AutomationProperties.AccessibilityView="Raw">
+                                    <ContentPresenter.Resources>
+                                        <Style TargetType="FontIcon">
+                                            <Setter Property="FontSize" Value="14" />
+                                        </Style>
+                                    </ContentPresenter.Resources>
+                                </ContentPresenter>
                                 <TextBlock x:Name="TextBlock"
                                            Grid.Column="2"
                                            Text="{TemplateBinding Text}"
@@ -154,13 +160,19 @@
                                 </Grid.ColumnDefinitions>
                                 <ContentPresenter x:Name="IconContent"
                                                   Grid.Column="0"
-                                                  Width="16"
-                                                  Height="16"
+                                                  Width="20"
+                                                  Height="20"
                                                   HorizontalAlignment="Center"
                                                   VerticalAlignment="Center"
                                                   Content="{TemplateBinding Icon}"
                                                   Foreground="{TemplateBinding Foreground}"
-                                                  AutomationProperties.AccessibilityView="Raw" />
+                                                  AutomationProperties.AccessibilityView="Raw">
+                                    <ContentPresenter.Resources>
+                                        <Style TargetType="FontIcon">
+                                            <Setter Property="FontSize" Value="14" />
+                                        </Style>
+                                    </ContentPresenter.Resources>
+                                </ContentPresenter>
                                 <TextBlock x:Name="TextBlock"
                                            Grid.Column="2"
                                            Text="{TemplateBinding Text}"
@@ -249,9 +261,9 @@
                                     <ColumnDefinition Width="*" />
                                     <ColumnDefinition Width="Auto" />
                                 </Grid.ColumnDefinitions>
-                                <FontIcon x:Name="IconGlyph" Grid.Column="0" Width="16" Height="16"
+                                <FontIcon x:Name="IconGlyph" Grid.Column="0" Width="20" Height="20"
                                           FontFamily="{ThemeResource SymbolThemeFontFamily}" Glyph="&#xED1A;"
-                                          FontSize="15" Foreground="{TemplateBinding Foreground}"
+                                          FontSize="14" Foreground="{TemplateBinding Foreground}"
                                           HorizontalAlignment="Center" VerticalAlignment="Center"
                                           AutomationProperties.AccessibilityView="Raw" />
                                 <TextBlock x:Name="TextBlock" Grid.Column="2" Text="{TemplateBinding Text}"
@@ -281,125 +293,125 @@
                 <MenuFlyoutSubItem x:Name="AddItemMenuItem" Style="{StaticResource OrganizerMenuSubItemStyle}" Tag="ContextAddItem" Text="添加项目">
                     <MenuFlyoutItem Style="{StaticResource OrganizerMenuItemStyle}" Click="AddFileMenuItem_Click" Tag="ContextAddFile" Text="文件…">
                         <MenuFlyoutItem.Icon>
-                            <FontIcon Glyph="&#xE8A5;" />
+                            <FontIcon FontSize="14" Glyph="&#xE8A5;" />
                         </MenuFlyoutItem.Icon>
                     </MenuFlyoutItem>
                     <MenuFlyoutItem Style="{StaticResource OrganizerMenuItemStyle}" Click="AddFolderMenuItem_Click" Tag="ContextAddFolder" Text="文件夹…">
                         <MenuFlyoutItem.Icon>
-                            <FontIcon Glyph="&#xE8B7;" />
+                            <FontIcon FontSize="14" Glyph="&#xE8B7;" />
                         </MenuFlyoutItem.Icon>
                     </MenuFlyoutItem>
                 </MenuFlyoutSubItem>
                 <MenuFlyoutItem x:Name="NewFolderMenuItem" Style="{StaticResource OrganizerMenuItemStyle}" Click="NewFolderMenuItem_Click" Tag="ContextNewFolder" Text="新建文件夹">
                     <MenuFlyoutItem.Icon>
-                        <FontIcon Glyph="&#xE8F4;" />
+                        <FontIcon FontSize="14" Glyph="&#xE8F4;" />
                     </MenuFlyoutItem.Icon>
                 </MenuFlyoutItem>
                 <MenuFlyoutItem x:Name="NewNoteMenuItem" Style="{StaticResource OrganizerMenuItemStyle}" Click="NewNoteMenuItem_Click" Tag="ContextNewNote" Text="新建便签">
                     <MenuFlyoutItem.Icon>
-                        <FontIcon Glyph="&#xE70B;" />
+                        <FontIcon FontSize="14" Glyph="&#xE70B;" />
                     </MenuFlyoutItem.Icon>
                 </MenuFlyoutItem>
                 <MenuFlyoutItem x:Name="NewTodoMenuItem" Style="{StaticResource OrganizerMenuItemStyle}" Click="NewTodoMenuItem_Click" Tag="ContextNewTodo" Text="新建待办">
                     <MenuFlyoutItem.Icon>
-                        <FontIcon Glyph="&#xE762;" />
+                        <FontIcon FontSize="14" Glyph="&#xE762;" />
                     </MenuFlyoutItem.Icon>
                 </MenuFlyoutItem>
                 <MenuFlyoutItem x:Name="PasteMenuItem" Style="{StaticResource OrganizerMenuItemStyle}" Click="PasteMenuItem_Click" IsEnabled="False" Tag="ContextPaste" Text="粘贴">
                     <MenuFlyoutItem.Icon>
-                        <FontIcon Glyph="&#xE77F;" />
+                        <FontIcon FontSize="14" Glyph="&#xE77F;" />
                     </MenuFlyoutItem.Icon>
                 </MenuFlyoutItem>
                 <MenuFlyoutItem x:Name="DeleteWindowMenuItem" Style="{StaticResource OrganizerMenuItemStyle}" Click="DeleteWindowMenuItem_Click" Tag="ContextDeleteWindow" Text="删除">
                     <MenuFlyoutItem.Icon>
-                        <FontIcon Glyph="&#xE74D;" />
+                        <FontIcon FontSize="14" Glyph="&#xE74D;" />
                     </MenuFlyoutItem.Icon>
                 </MenuFlyoutItem>
                 <MenuFlyoutItem x:Name="OpenStorageMenuItem" Style="{StaticResource OrganizerMenuItemStyle}" Click="OpenStorageMenuItem_Click" Tag="ContextOpenStorage" Text="打开收纳目录">
                     <MenuFlyoutItem.Icon>
-                        <FontIcon Glyph="&#xE8DA;" />
+                        <FontIcon FontSize="14" Glyph="&#xE8DA;" />
                     </MenuFlyoutItem.Icon>
                 </MenuFlyoutItem>
                 <MenuFlyoutItem x:Name="RenameMenuItem" Style="{StaticResource OrganizerMenuItemStyle}" Click="RenameMenuItem_Click" Tag="ContextRename" Text="重命名">
                     <MenuFlyoutItem.Icon>
-                        <FontIcon Glyph="&#xE8AC;" />
+                        <FontIcon FontSize="14" Glyph="&#xE8AC;" />
                     </MenuFlyoutItem.Icon>
                 </MenuFlyoutItem>
                 <MenuFlyoutSeparator />
                 <MenuFlyoutItem x:Name="ManageMenuItem" Style="{StaticResource OrganizerMenuItemStyle}" Click="ManageMenuItem_Click" Tag="ContextManage" Text="设置">
                     <MenuFlyoutItem.Icon>
-                        <FontIcon Glyph="&#xE713;" />
+                        <FontIcon FontSize="14" Glyph="&#xE713;" />
                     </MenuFlyoutItem.Icon>
                 </MenuFlyoutItem>
                 <MenuFlyoutItem x:Name="DuplicateMenuItem" Style="{StaticResource OrganizerMenuItemStyle}" Click="DuplicateWindowMenuItem_Click" Tag="ContextDuplicate" Text="窗口复制">
                     <MenuFlyoutItem.Icon>
-                        <FontIcon Glyph="&#xE8C8;" />
+                        <FontIcon FontSize="14" Glyph="&#xE8C8;" />
                     </MenuFlyoutItem.Icon>
                 </MenuFlyoutItem>
                 <MenuFlyoutItem x:Name="ToggleModeMenuItem" Style="{StaticResource OrganizerMenuItemStyle}" Tag="ContextSwitchPlacement" Click="ToggleModeMenuItem_Click" Text="改为定位">
                     <MenuFlyoutItem.Icon>
-                        <FontIcon Glyph="&#xE718;" />
+                        <FontIcon FontSize="14" Glyph="&#xE718;" />
                     </MenuFlyoutItem.Icon>
                 </MenuFlyoutItem>
                 <MenuFlyoutItem x:Name="ToggleContentModeMenuItem" Style="{StaticResource OrganizerMenuItemStyle}" Tag="ContextSwitchContent" Click="ToggleContentModeMenuItem_Click" Text="改为精简">
                     <MenuFlyoutItem.Icon>
-                        <FontIcon Glyph="&#xE8FD;" />
+                        <FontIcon FontSize="14" Glyph="&#xE8FD;" />
                     </MenuFlyoutItem.Icon>
                 </MenuFlyoutItem>
                 <MenuFlyoutItem x:Name="ToggleExpansionModeMenuItem" Style="{StaticResource OrganizerMenuItemStyle}" Tag="ContextSwitchExpansion" Click="ToggleExpansionModeMenuItem_Click" Text="改为展开">
                     <MenuFlyoutItem.Icon>
-                        <FontIcon Glyph="&#xE740;" />
+                        <FontIcon FontSize="14" Glyph="&#xE740;" />
                     </MenuFlyoutItem.Icon>
                 </MenuFlyoutItem>
                 <ToggleMenuFlyoutItem x:Name="HideNameMenuItem" Tag="ContextHideName" Style="{StaticResource OrganizerHideNameMenuStyle}" Click="HideNameMenuItem_Click" Text="隐藏名称" />
                 <MenuFlyoutSubItem x:Name="SortMenuItem" Style="{StaticResource OrganizerMenuSubItemStyle}" Tag="ContextSort" Text="排序方式">
                     <MenuFlyoutSubItem.Icon>
-                        <FontIcon Glyph="&#xE8CB;" />
+                        <FontIcon FontSize="14" Glyph="&#xE8CB;" />
                     </MenuFlyoutSubItem.Icon>
                     <MenuFlyoutItem x:Name="SortByNameAscMenuItem" Style="{StaticResource OrganizerMenuItemStyle}" Click="SortByNameAscMenuItem_Click" Tag="ContextSortNameAsc" Text="按名称（A→Z）">
                         <MenuFlyoutItem.Icon>
-                            <FontIcon Glyph="&#xE74A;" />
+                            <FontIcon FontSize="14" Glyph="&#xE74A;" />
                         </MenuFlyoutItem.Icon>
                     </MenuFlyoutItem>
                     <MenuFlyoutItem x:Name="SortByNameDescMenuItem" Style="{StaticResource OrganizerMenuItemStyle}" Click="SortByNameDescMenuItem_Click" Tag="ContextSortNameDesc" Text="按名称（Z→A）">
                         <MenuFlyoutItem.Icon>
-                            <FontIcon Glyph="&#xE74B;" />
+                            <FontIcon FontSize="14" Glyph="&#xE74B;" />
                         </MenuFlyoutItem.Icon>
                     </MenuFlyoutItem>
                     <MenuFlyoutItem x:Name="SortByTypeMenuItem" Style="{StaticResource OrganizerMenuItemStyle}" Click="SortByTypeMenuItem_Click" Tag="ContextSortType" Text="按类型">
                         <MenuFlyoutItem.Icon>
-                            <FontIcon Glyph="&#xE8EC;" />
+                            <FontIcon FontSize="14" Glyph="&#xE8EC;" />
                         </MenuFlyoutItem.Icon>
                     </MenuFlyoutItem>
                     <MenuFlyoutItem x:Name="SortByDateModifiedMenuItem" Style="{StaticResource OrganizerMenuItemStyle}" Click="SortByDateModifiedMenuItem_Click" Tag="ContextSortDateModified" Text="按修改日期">
                         <MenuFlyoutItem.Icon>
-                            <FontIcon Glyph="&#xE823;" />
+                            <FontIcon FontSize="14" Glyph="&#xE823;" />
                         </MenuFlyoutItem.Icon>
                     </MenuFlyoutItem>
                     <MenuFlyoutItem x:Name="SortBySizeMenuItem" Style="{StaticResource OrganizerMenuItemStyle}" Click="SortBySizeMenuItem_Click" Tag="ContextSortSize" Text="按大小">
                         <MenuFlyoutItem.Icon>
-                            <FontIcon Glyph="&#xE9D9;" />
+                            <FontIcon FontSize="14" Glyph="&#xE9D9;" />
                         </MenuFlyoutItem.Icon>
                     </MenuFlyoutItem>
                 </MenuFlyoutSubItem>
                 <MenuFlyoutItem x:Name="TidyEdgeStackMenuItem" Style="{StaticResource OrganizerMenuItemStyle}" Tag="ContextTidyEdgeStack" Click="TidyEdgeStackMenuItem_Click" Text="整齐贴边排列">
                     <MenuFlyoutItem.Icon>
-                        <FontIcon Glyph="&#xE8A9;" />
+                        <FontIcon FontSize="14" Glyph="&#xE8A9;" />
                     </MenuFlyoutItem.Icon>
                 </MenuFlyoutItem>
                 <MenuFlyoutItem x:Name="AlignToDesktopGridMenuItem" Style="{StaticResource OrganizerMenuItemStyle}" Tag="ContextAlignToDesktopGrid" Click="AlignToDesktopGridMenuItem_Click" Text="对齐桌面图标网格">
                     <MenuFlyoutItem.Icon>
-                        <FontIcon Glyph="&#xF0E2;" />
+                        <FontIcon FontSize="14" Glyph="&#xF0E2;" />
                     </MenuFlyoutItem.Icon>
                 </MenuFlyoutItem>
                 <MenuFlyoutItem x:Name="ImportDesktopSelectionMenuItem" Style="{StaticResource OrganizerMenuItemStyle}" Tag="ContextImportDesktopSelection" Click="ImportDesktopSelectionMenuItem_Click" Text="收入桌面已选项目">
                     <MenuFlyoutItem.Icon>
-                        <FontIcon Glyph="&#xE896;" />
+                        <FontIcon FontSize="14" Glyph="&#xE896;" />
                     </MenuFlyoutItem.Icon>
                 </MenuFlyoutItem>
                 <MenuFlyoutItem x:Name="CompactGridGapsMenuItem" Style="{StaticResource OrganizerMenuItemStyle}" Tag="ContextCompactGridGaps" Click="CompactGridGapsMenuItem_Click" Text="紧凑排布空位">
                     <MenuFlyoutItem.Icon>
-                        <FontIcon Glyph="&#xE73F;" />
+                        <FontIcon FontSize="14" Glyph="&#xE73F;" />
                     </MenuFlyoutItem.Icon>
                 </MenuFlyoutItem>
             </MenuFlyout>
@@ -486,9 +498,9 @@
                         IsHitTestVisible="False">
                         <Border.BorderBrush>
                             <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
-                                <GradientStop Color="#B4FFFFFF" Offset="0" />
-                                <GradientStop Color="#14000000" Offset="0.48" />
-                                <GradientStop Color="#22000000" Offset="1" />
+                                <GradientStop Color="#C8FFFFFF" Offset="0" />
+                                <GradientStop Color="#2EFFFFFF" Offset="0.48" />
+                                <GradientStop Color="#68FFFFFF" Offset="1" />
                             </LinearGradientBrush>
                         </Border.BorderBrush>
                         <Border.Background>
@@ -502,13 +514,13 @@
                         <Border
                             x:Name="CompactLiquidInnerRim"
                             CornerRadius="13"
-                            BorderThickness="0.75"
+                            BorderThickness="0.5"
                             IsHitTestVisible="False">
                             <Border.BorderBrush>
                                 <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
-                                    <GradientStop Color="#E2FFFFFF" Offset="0" />
-                                    <GradientStop Color="#10FFFFFF" Offset="0.46" />
-                                    <GradientStop Color="#5CFFFFFF" Offset="1" />
+                                    <GradientStop Color="#88FFFFFF" Offset="0" />
+                                    <GradientStop Color="#0CFFFFFF" Offset="0.48" />
+                                    <GradientStop Color="#38FFFFFF" Offset="1" />
                                 </LinearGradientBrush>
                             </Border.BorderBrush>
                         </Border>
@@ -738,9 +750,9 @@
                     IsHitTestVisible="False">
                     <Border.BorderBrush>
                         <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
-                            <GradientStop Color="#A8FFFFFF" Offset="0" />
-                            <GradientStop Color="#12000000" Offset="0.48" />
-                            <GradientStop Color="#1E000000" Offset="1" />
+                            <GradientStop Color="#C0FFFFFF" Offset="0" />
+                            <GradientStop Color="#28FFFFFF" Offset="0.48" />
+                            <GradientStop Color="#5CFFFFFF" Offset="1" />
                         </LinearGradientBrush>
                     </Border.BorderBrush>
                     <Border.Background>
@@ -754,13 +766,13 @@
                     <Border
                         x:Name="ExpandedLiquidInnerRim"
                         CornerRadius="35"
-                        BorderThickness="1"
+                        BorderThickness="0.5"
                         IsHitTestVisible="False">
                         <Border.BorderBrush>
                             <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
-                                <GradientStop Color="#DCFFFFFF" Offset="0" />
-                                <GradientStop Color="#14FFFFFF" Offset="0.48" />
-                                <GradientStop Color="#54FFFFFF" Offset="1" />
+                                <GradientStop Color="#78FFFFFF" Offset="0" />
+                                <GradientStop Color="#0AFFFFFF" Offset="0.48" />
+                                <GradientStop Color="#32FFFFFF" Offset="1" />
                             </LinearGradientBrush>
                         </Border.BorderBrush>
                     </Border>
