@@ -529,4 +529,18 @@ Storage path: {2}</value></data>
   <data name="DeleteStation" xml:space="preserve"><value>Delete station</value></data>
   <data name="DeleteDock" xml:space="preserve"><value>Delete dock</value></data>
   <data name="DesktopGridAlignNow" xml:space="preserve"><value>Align now</value></data>
+  <data name="DesktopUpdateSyncToggleTitle" xml:space="preserve"><value>Auto-merge app updates back into organizers (prevent desktop duplicates)</value></data>
+  <data name="DesktopUpdateSyncScanNow" xml:space="preserve"><value>Scan and sync now</value></data>
+  <data name="DesktopUpdateSyncResolveLocked" xml:space="preserve"><value>Close locking apps and merge</value></data>
+  <data name="DesktopUpdateSyncRepairPaths" xml:space="preserve"><value>Repair app update paths</value></data>
+  <data name="DesktopUpdateSyncRepairPathsCountFormat" xml:space="preserve"><value>Repair app update paths ({0})</value></data>
+  <data name="DesktopUpdateSyncedToastFormat" xml:space="preserve"><value>Synced desktop update "{0}" back into organizer</value></data>
+  <data name="DesktopUpdateSyncCleanStatus" xml:space="preserve"><value>Desktop and organizers are in sync. No duplicate updates or stale install paths found.</value></data>
+  <data name="DesktopUpdateSyncResultFormat" xml:space="preserve"><value>Sync complete: {0} updated in place, {1} deduplicated, {2} per-user install paths repaired.</value></data>
+  <data name="DesktopUpdateSyncLockedFormat" xml:space="preserve"><value>{0} updated folder(s) are locked by running processes ({1}). They will merge automatically once closed, or click "Close locking apps and merge".</value></data>
+  <data name="DesktopUpdateSyncPublicCleanupFormat" xml:space="preserve"><value>{0} Public Desktop shortcut(s) were synced into organizers. Click "Scan and sync now" to authorize removing the Public Desktop duplicate.</value></data>
+  <data name="DesktopUpdateSyncRegistryMismatchFormat" xml:space="preserve"><value>{0} organized app(s) ({1}) still register the old Desktop install/service path. Click "Repair app update paths" so future updates install directly into your organizer.</value></data>
+  <data name="DesktopUpdateSyncRepairDoneFormat" xml:space="preserve"><value>Repair complete: merged {0} files, updated {1} registry paths and {2} service paths (.reg backup saved).</value></data>
+  <data name="DesktopUpdateSyncRepairCancelled" xml:space="preserve"><value>Administrator approval was cancelled. No registry entries or running apps were modified.</value></data>
+  <data name="DesktopUpdateSyncErrorTitle" xml:space="preserve"><value>Desktop update sync failed</value></data>
 </root>

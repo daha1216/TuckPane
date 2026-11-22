@@ -10,6 +10,7 @@ public sealed partial class AppHost
     private OrganizerSearchWindow? _searchWindow;
     private readonly LayoutSnapshotService _layoutSnapshots = new();
     private readonly AutoOrganizeService _autoOrganize = new();
+    private DesktopUpdateReconcilerService? _desktopUpdateReconciler;
     private bool _windowsExplicitlyHidden;
     private bool _peekActive;
     private bool _peekRevealedHiddenWindows;
@@ -20,6 +21,8 @@ public sealed partial class AppHost
     internal bool IsPeekActive => _peekActive;
     internal LayoutSnapshotService LayoutSnapshots => _layoutSnapshots;
     internal AutoOrganizeService AutoOrganize => _autoOrganize;
+    internal DesktopUpdateReconcilerService? DesktopUpdateReconciler => _desktopUpdateReconciler;
+    internal event Action? DesktopUpdateStateChanged;
 
     private void InitializeProductivityServices()
     {
@@ -29,10 +32,22 @@ public sealed partial class AppHost
         _lastTopologyKey = key;
         _ = EnsureInitialTopologySnapshotAsync();
         InitializeNativeDesktopServices();
+        _desktopUpdateReconciler = new DesktopUpdateReconcilerService(
+            () => State,
+            TransferQueue,
+            HandleDesktopUpdateSynced);
+        _desktopUpdateReconciler.StateChanged += NotifyDesktopUpdateStateChanged;
+        _desktopUpdateReconciler.SetEnabled(State.GlobalSettings.AutoSyncDesktopUpdatesEnabled);
     }
 
     private void DisposeProductivityServices()
     {
+        if (_desktopUpdateReconciler is not null)
+        {
+            _desktopUpdateReconciler.StateChanged -= NotifyDesktopUpdateStateChanged;
+            _desktopUpdateReconciler.Dispose();
+            _desktopUpdateReconciler = null;
+        }
         DisposeNativeDesktopServices();
         ExitPeekMode();
         _hotkeys?.Dispose();
@@ -440,5 +455,54 @@ public sealed partial class AppHost
             organizer.AutoOrganizeRules = previous;
             throw;
         }
+    }
+
+    internal async Task SetAutoSyncDesktopUpdatesEnabledAsync(bool enabled)
+    {
+        await MutateGlobalSettingAsync(
+            s => s.AutoSyncDesktopUpdatesEnabled,
+            (s, v) => s.AutoSyncDesktopUpdatesEnabled = v,
+            enabled);
+        _desktopUpdateReconciler?.SetEnabled(enabled);
+    }
+
+    internal Task<DesktopUpdateReconcileSummary> ReconcileDesktopUpdatesNowAsync(
+        bool allowElevationUi,
+        CancellationToken cancellationToken = default)
+    {
+        if (_desktopUpdateReconciler is null)
+            return Task.FromResult(new DesktopUpdateReconcileSummary(0, 0, 0, 0, 0, 0, [], []));
+        return _desktopUpdateReconciler.ReconcileAllAsync(allowElevationUi, cancellationToken);
+    }
+
+    internal Task<ElevatedRepairOutcome> ResolveLockedDesktopUpdatesAndPathsAsync(
+        bool includeLockedMerges,
+        bool includeRegistryRepairs,
+        CancellationToken cancellationToken = default)
+    {
+        if (_desktopUpdateReconciler is null)
+            return Task.FromResult(new ElevatedRepairOutcome(true, false, 0, 0, 0, null, null, []));
+        return _desktopUpdateReconciler.ResolveLockedAndRepairAllAsync(includeLockedMerges, includeRegistryRepairs, cancellationToken);
+    }
+
+    private void NotifyDesktopUpdateStateChanged() => DesktopUpdateStateChanged?.Invoke();
+
+    private void HandleDesktopUpdateSynced(Guid organizerId, string relativeName)
+    {
+        _ = _dispatcher.TryEnqueue(() =>
+        {
+            if (IsPreparingUpdate) return;
+            if (_windows.TryGetValue(organizerId, out MainWindow? window))
+            {
+                _ = window.RefreshCatalogAsync(notifyUnsupported: false, refreshIcons: true);
+                if (window.IsExpanded)
+                {
+                    window.ShowExpandedToast(
+                        AppStrings.Format("DesktopUpdateSyncedToastFormat", Path.GetFileNameWithoutExtension(relativeName)),
+                        Microsoft.UI.Xaml.Controls.InfoBarSeverity.Success);
+                }
+            }
+            NotifyOrganizerPreviewChanged(organizerId);
+        });
     }
 }

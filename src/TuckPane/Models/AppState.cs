@@ -214,6 +214,7 @@ public sealed class GlobalSettings
     public bool DesktopMarqueeSelectionEnabled { get; set; } = true;
     public bool FreeGridPlacementEnabled { get; set; } = true;
     public bool FreeGridPreferDirectSwap { get; set; }
+    public bool AutoSyncDesktopUpdatesEnabled { get; set; } = true;
 
     // The desktop visibility check is the cheapest way to notice a window the shell buried, but it
     // is also a periodic z-order probe, so it follows the performance profile like the other two

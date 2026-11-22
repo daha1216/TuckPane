@@ -396,6 +396,78 @@ internal static class ShortcutIntegrityService
         }
     }
 
+    internal static bool RebindShortcutPrefix(string shortcutPath, string oldDirectoryPrefix, string newDirectoryPrefix)
+    {
+        if (string.IsNullOrWhiteSpace(shortcutPath) ||
+            !File.Exists(shortcutPath) ||
+            !Path.GetExtension(shortcutPath).Equals(".lnk", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        ShortcutInspection? inspection = InspectLink(shortcutPath);
+        if (inspection is null || inspection.IsMsiAdvertised || inspection.IsVirtualShellTarget)
+            return false;
+
+        bool targetRebound = Core.DesktopUpdateMatchRules.TryRewritePathPrefix(
+            inspection.ExpandedTargetPath, oldDirectoryPrefix, newDirectoryPrefix, out string newTarget);
+        bool workingDirRebound = Core.DesktopUpdateMatchRules.TryRewritePathPrefix(
+            ExpandPath(inspection.RawWorkingDirectory), oldDirectoryPrefix, newDirectoryPrefix, out string newWorkingDir);
+        bool iconRebound = Core.DesktopUpdateMatchRules.TryRewritePathPrefix(
+            ExpandPath(inspection.IconPath), oldDirectoryPrefix, newDirectoryPrefix, out string newIconPath);
+
+        if (!targetRebound && !workingDirRebound && !iconRebound)
+            return false;
+
+        object? instance = null;
+        try
+        {
+            FileAttributes attributes = File.GetAttributes(shortcutPath);
+            bool wasReadOnly = (attributes & FileAttributes.ReadOnly) != 0;
+            if (wasReadOnly)
+                File.SetAttributes(shortcutPath, attributes & ~FileAttributes.ReadOnly);
+
+            instance = new NativeMethods.ShellLink();
+            var link = (NativeMethods.IShellLinkW)instance;
+            var persist = (IPersistFile)instance;
+            persist.Load(shortcutPath, StgmReadWrite);
+
+            if (targetRebound)
+            {
+                Marshal.ThrowExceptionForHR(link.SetPath(newTarget));
+                _ = link.SetRelativePath(shortcutPath, 0);
+            }
+            if (workingDirRebound)
+                Marshal.ThrowExceptionForHR(link.SetWorkingDirectory(newWorkingDir));
+            if (iconRebound)
+                Marshal.ThrowExceptionForHR(link.SetIconLocation(newIconPath, inspection.IconIndex));
+
+            if (inspection.RequiresElevation &&
+                instance is NativeMethods.IShellLinkDataList dataList &&
+                dataList.GetFlags(out uint currentFlags) >= 0 &&
+                (currentFlags & NativeMethods.SLDF_RUNAS_USER) == 0)
+            {
+                _ = dataList.SetFlags(currentFlags | NativeMethods.SLDF_RUNAS_USER);
+            }
+
+            persist.Save(shortcutPath, true);
+            if (wasReadOnly)
+                File.SetAttributes(shortcutPath, attributes);
+
+            return true;
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Error($"重绑快捷方式目录前缀失败：{shortcutPath}", ex);
+            return false;
+        }
+        finally
+        {
+            if (instance is not null && Marshal.IsComObject(instance))
+                _ = Marshal.FinalReleaseComObject(instance);
+        }
+    }
+
     private static string ExpandPath(string value)
     {
         if (string.IsNullOrWhiteSpace(value)) return string.Empty;

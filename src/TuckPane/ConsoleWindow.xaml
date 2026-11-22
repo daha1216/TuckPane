@@ -498,6 +498,30 @@
                             </Border>
                             <Border Style="{StaticResource SettingsGroup}" Loaded="SettingsGroup_Loaded">
                                 <StackPanel Spacing="0">
+                                    <Border Style="{StaticResource GeneralRow}">
+                                        <Grid ColumnSpacing="12">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="Auto"/>
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock VerticalAlignment="Center" FontSize="14" Tag="loc:DesktopUpdateSyncToggleTitle" Text="应用更新自动覆盖回收纳窗" TextWrapping="Wrap" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
+                                            <ToggleSwitch x:Name="AutoSyncDesktopUpdatesToggle" Grid.Column="1" VerticalAlignment="Center" AutomationProperties.AutomationId="AutoSyncDesktopUpdatesToggle" Toggled="AutoSyncDesktopUpdatesToggle_Toggled"/>
+                                        </Grid>
+                                    </Border>
+                                    <Border Style="{StaticResource GeneralRow}" Padding="0,12" BorderThickness="0">
+                                        <StackPanel Spacing="8">
+                                            <local:FlowWrapPanel HorizontalSpacing="8" VerticalSpacing="8">
+                                                <Button x:Name="ScanDesktopUpdatesButton" MinHeight="30" Height="30" Padding="12,3" Tag="loc:DesktopUpdateSyncScanNow" Content="立即扫描并同步" Click="ScanDesktopUpdatesButton_Click"/>
+                                                <Button x:Name="ResolveLockedUpdatesButton" MinHeight="30" Height="30" Padding="12,3" Style="{StaticResource AccentButtonStyle}" Tag="loc:DesktopUpdateSyncResolveLocked" Content="关闭占用并合并覆盖" Click="ResolveLockedUpdatesButton_Click" Visibility="Collapsed"/>
+                                                <Button x:Name="RepairAppInstallPathsButton" MinHeight="30" Height="30" Padding="12,3" Tag="loc:DesktopUpdateSyncRepairPaths" Content="修复软件更新路径" Click="RepairAppInstallPathsButton_Click" Visibility="Collapsed"/>
+                                            </local:FlowWrapPanel>
+                                            <TextBlock x:Name="DesktopUpdateSyncStatusText" FontSize="12" TextWrapping="Wrap" Visibility="Collapsed" Foreground="{StaticResource ConsoleSecondaryTextBrush}"/>
+                                        </StackPanel>
+                                    </Border>
+                                </StackPanel>
+                            </Border>
+                            <Border Style="{StaticResource SettingsGroup}" Loaded="SettingsGroup_Loaded">
+                                <StackPanel Spacing="0">
                                     <Border Style="{StaticResource GeneralRow}" Padding="0,12" BorderThickness="0">
                                         <StackPanel Spacing="10">
                                             <TextBlock FontSize="14" FontWeight="Medium" Tag="loc:AutoOrganizeTitle" Text="智能自动归类规则" TextWrapping="Wrap" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>

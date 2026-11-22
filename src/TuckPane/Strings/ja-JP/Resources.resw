@@ -529,4 +529,18 @@
   <data name="DeleteStation" xml:space="preserve"><value>ステーションを削除</value></data>
   <data name="DeleteDock" xml:space="preserve"><value>Dock を削除</value></data>
   <data name="DesktopGridAlignNow" xml:space="preserve"><value>今すぐ揃える</value></data>
+  <data name="DesktopUpdateSyncToggleTitle" xml:space="preserve"><value>アプリ更新時にボックスへ自動上書き同期（デスクトップ重複を防止）</value></data>
+  <data name="DesktopUpdateSyncScanNow" xml:space="preserve"><value>今すぐスキャンして同期</value></data>
+  <data name="DesktopUpdateSyncResolveLocked" xml:space="preserve"><value>使用中アプリを終了して統合</value></data>
+  <data name="DesktopUpdateSyncRepairPaths" xml:space="preserve"><value>更新インストール先を修復</value></data>
+  <data name="DesktopUpdateSyncRepairPathsCountFormat" xml:space="preserve"><value>更新インストール先を修復 ({0})</value></data>
+  <data name="DesktopUpdateSyncedToastFormat" xml:space="preserve"><value>デスクトップの更新「{0}」をボックスへ上書き同期しました</value></data>
+  <data name="DesktopUpdateSyncCleanStatus" xml:space="preserve"><value>デスクトップとボックスは同期済みです。重複や古いインストール先は見つかりませんでした。</value></data>
+  <data name="DesktopUpdateSyncResultFormat" xml:space="preserve"><value>同期完了：{0} 件を上書き更新、{1} 件の重複を整理、{2} 件のユーザー登録パスを修復しました。</value></data>
+  <data name="DesktopUpdateSyncLockedFormat" xml:space="preserve"><value>{0} 件の更新フォルダーが実行中アプリ（{1}）に使用されています。終了後に自動統合するか、「使用中アプリを終了して統合」を押してください。</value></data>
+  <data name="DesktopUpdateSyncPublicCleanupFormat" xml:space="preserve"><value>{0} 件のパブリックデスクトップ項目はボックスへ同期済みです。「今すぐスキャンして同期」で重複削除を許可できます。</value></data>
+  <data name="DesktopUpdateSyncRegistryMismatchFormat" xml:space="preserve"><value>{0} 件の収納済みアプリ（{1}）の登録パスが旧デスクトップのままです。「更新インストール先を修復」を実行すると次回更新から直接ボックス内へ適用されます。</value></data>
+  <data name="DesktopUpdateSyncRepairDoneFormat" xml:space="preserve"><value>修復完了：{0} ファイルを統合し、{1} 件のレジストリと {2} 件のサービスパスを更新しました（.reg バックアップ保存済み）。</value></data>
+  <data name="DesktopUpdateSyncRepairCancelled" xml:space="preserve"><value>管理者権限の承認がキャンセルされたため、変更は行われませんでした。</value></data>
+  <data name="DesktopUpdateSyncErrorTitle" xml:space="preserve"><value>デスクトップ更新の同期に失敗しました</value></data>
 </root>

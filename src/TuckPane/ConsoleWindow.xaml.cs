@@ -129,6 +129,7 @@ public sealed partial class ConsoleWindow : Window
             if (ConsoleInfoBar.Severity == InfoBarSeverity.Error) ConsoleInfoBar.IsOpen = false;
         };
         _host.ThemeChanged += Host_ThemeChanged;
+        _host.DesktopUpdateStateChanged += DesktopUpdateReconciler_StateChanged;
         _accessibilitySubscription = OptionalEventSubscription.TryCreate(
             () => _accessibilitySettings.HighContrastChanged += SettingsHighContrastChanged,
             () => _accessibilitySettings.HighContrastChanged -= SettingsHighContrastChanged,
@@ -590,6 +591,7 @@ public sealed partial class ConsoleWindow : Window
         try { _themeBackdrop.DetachAndClose(); }
         catch (Exception ex) { AppLogger.Error("Console backdrop close failed.", ex); }
         _host.ThemeChanged -= Host_ThemeChanged;
+        _host.DesktopUpdateStateChanged -= DesktopUpdateReconciler_StateChanged;
         _host.Updates.Changed -= UpdatesChanged;
         _accessibilitySubscription?.Dispose();
         foreach (var (row, token) in _settingRowVisibilityTokens)

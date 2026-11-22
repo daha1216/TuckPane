@@ -529,4 +529,18 @@
   <data name="DeleteStation" xml:space="preserve"><value>删除中转站</value></data>
   <data name="DeleteDock" xml:space="preserve"><value>删除 Dock 栏</value></data>
   <data name="DesktopGridAlignNow" xml:space="preserve"><value>立即对齐</value></data>
+  <data name="DesktopUpdateSyncToggleTitle" xml:space="preserve"><value>应用更新后自动覆盖回收纳窗（消除桌面重复图标/目录）</value></data>
+  <data name="DesktopUpdateSyncScanNow" xml:space="preserve"><value>立即扫描并同步</value></data>
+  <data name="DesktopUpdateSyncResolveLocked" xml:space="preserve"><value>关闭占用并合并覆盖</value></data>
+  <data name="DesktopUpdateSyncRepairPaths" xml:space="preserve"><value>修复软件更新路径</value></data>
+  <data name="DesktopUpdateSyncRepairPathsCountFormat" xml:space="preserve"><value>修复软件更新路径 ({0})</value></data>
+  <data name="DesktopUpdateSyncedToastFormat" xml:space="preserve"><value>已将桌面更新「{0}」覆盖同步回收纳窗</value></data>
+  <data name="DesktopUpdateSyncCleanStatus" xml:space="preserve"><value>桌面与收纳窗已完全同步，未发现重复的更新副本或旧路径。</value></data>
+  <data name="DesktopUpdateSyncResultFormat" xml:space="preserve"><value>同步完成：覆盖更新 {0} 项，去重清理 {1} 项，自动修复用户级安装路径 {2} 项。</value></data>
+  <data name="DesktopUpdateSyncLockedFormat" xml:space="preserve"><value>有 {0} 个更新目录正被运行中程序占用（{1}）；程序退出后会自动合并，或点击「关闭占用并合并覆盖」立即同步。</value></data>
+  <data name="DesktopUpdateSyncPublicCleanupFormat" xml:space="preserve"><value>有 {0} 个公共桌面快捷方式已同步至收纳窗，点击「立即扫描并同步」可授权清理公共桌面旧副本。</value></data>
+  <data name="DesktopUpdateSyncRegistryMismatchFormat" xml:space="preserve"><value>检测到 {0} 个已收纳软件（{1}）的系统安装/服务路径仍指向旧桌面目录；点击「修复软件更新路径」后，下次软件更新将直接装进收纳窗。</value></data>
+  <data name="DesktopUpdateSyncRepairDoneFormat" xml:space="preserve"><value>修复完成：合并覆盖 {0} 个文件，更新 {1} 条安装注册表路径与 {2} 个服务路径（已自动备份 .reg）。</value></data>
+  <data name="DesktopUpdateSyncRepairCancelled" xml:space="preserve"><value>已取消管理员授权，未修改系统路径或正在运行的程序。</value></data>
+  <data name="DesktopUpdateSyncErrorTitle" xml:space="preserve"><value>桌面更新同步失败</value></data>
 </root>
