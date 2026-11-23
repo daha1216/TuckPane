@@ -454,6 +454,21 @@ public sealed partial class AppHost
         IReadOnlyList<TransferOutcome> outcomes = await TransferQueue.RunAsync(
             token => window.Storage.ImportBatchAsync(safePaths, progress: null, token));
 
+        foreach (TransferOutcome outcome in outcomes)
+        {
+            if (outcome.Status == TransferStatus.Moved &&
+                !string.IsNullOrWhiteSpace(outcome.DestinationPath) &&
+                ShellFileOperationService.IsDesktopOrigin(outcome.SourcePath))
+            {
+                bool isDir = Directory.Exists(outcome.DestinationPath);
+                string relName = Path.GetFileName(outcome.DestinationPath.TrimEnd(Path.DirectorySeparatorChar));
+                string? target = !isDir && Path.GetExtension(outcome.DestinationPath).Equals(".lnk", StringComparison.OrdinalIgnoreCase)
+                    ? ShortcutIntegrityService.InspectLink(outcome.DestinationPath)?.ExpandedTargetPath
+                    : null;
+                DesktopOriginLedger.Shared.RecordMovedFromDesktop(outcome.SourcePath, window.OrganizerId, relName, isDir, target);
+            }
+        }
+
         int moved = outcomes.Count(o => o.Status is TransferStatus.Moved or TransferStatus.Copied or TransferStatus.CopiedSourceRetained);
         int shortcuts = outcomes.Count(o => o.Status == TransferStatus.ShortcutCreated);
         int failed = outcomes.Count(o => o.Status == TransferStatus.Failed);

@@ -16,6 +16,8 @@ public sealed partial class ConsoleWindow
     private Guid? _autoOrganizeDraftOrganizerId;
     private bool _autoOrganizeDraftDirty;
     private bool _autoOrganizeBusy;
+    private bool _desktopUpdateSyncBusy;
+    private string? _lastDesktopUpdateSyncMessage;
 
     private sealed record AutoOrganizeFormDraft(AutoOrganizeSource Source, string Extensions, string Patterns);
 
@@ -34,6 +36,7 @@ public sealed partial class ConsoleWindow
             DesktopMarqueeSelectionToggle.IsOn = settings.DesktopMarqueeSelectionEnabled;
             FreeGridPlacementToggle.IsOn = settings.FreeGridPlacementEnabled;
             FreeGridPreferDirectSwapToggle.IsOn = settings.FreeGridPreferDirectSwap;
+            AutoSyncDesktopUpdatesToggle.IsOn = settings.AutoSyncDesktopUpdatesEnabled;
             UndoAutoOrganizeButton.IsEnabled = !_autoOrganizeBusy && _host.AutoOrganize.CanUndo;
 
             int uiErrors = App.RecoverableUiErrorCount;
@@ -48,6 +51,7 @@ public sealed partial class ConsoleWindow
             }
 
             RefreshAutoOrganizeTargetList();
+            RefreshDesktopUpdateSyncControls();
         }
         finally
         {
@@ -71,6 +75,8 @@ public sealed partial class ConsoleWindow
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(DesktopMarqueeSelectionToggle, AppStrings.Get("DesktopMarqueeSelectionTitle"));
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(FreeGridPlacementToggle, AppStrings.Get("FreeGridPlacementTitle"));
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(FreeGridPreferDirectSwapToggle, AppStrings.Get("FreeGridPreferDirectSwapTitle"));
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(AutoSyncDesktopUpdatesToggle, AppStrings.Get("DesktopUpdateSyncToggleTitle"));
+        RefreshDesktopUpdateSyncControls();
         if (AutoOrganizeTargetCombo.Items.Count > 0)
         {
             bool wasSyncing = _syncingProductivityControls;
@@ -107,6 +113,191 @@ public sealed partial class ConsoleWindow
         {
             ShowError(AppStrings.Get("SaveConfigurationError"), ex.Message);
             WithSuppressedProductivitySync(() => FreeGridPlacementToggle.IsOn = _host.State.GlobalSettings.FreeGridPlacementEnabled);
+        }
+    }
+
+    private void DesktopUpdateReconciler_StateChanged()
+    {
+        _ = DispatcherQueue.TryEnqueue(() =>
+        {
+            if (!_componentReady) return;
+            RefreshDesktopUpdateSyncControls();
+        });
+    }
+
+    private void SetDesktopUpdateSyncBusy(bool busy)
+    {
+        _desktopUpdateSyncBusy = busy;
+        ScanDesktopUpdatesButton.IsEnabled = !busy;
+        ResolveLockedUpdatesButton.IsEnabled = !busy;
+        RepairAppInstallPathsButton.IsEnabled = !busy;
+    }
+
+    private void RefreshDesktopUpdateSyncControls()
+    {
+        if (!_componentReady) return;
+        DesktopUpdateReconcilerService? reconciler = _host.DesktopUpdateReconciler;
+        int lockedCount = reconciler?.LockedPendingCount ?? 0;
+        int cleanupCount = reconciler?.CleanupPendingCount ?? 0;
+        int mismatchApps = reconciler?.DistinctMismatchedAppCount ?? 0;
+
+        ResolveLockedUpdatesButton.Visibility = lockedCount > 0 ? Visibility.Visible : Visibility.Collapsed;
+        RepairAppInstallPathsButton.Visibility = mismatchApps > 0 ? Visibility.Visible : Visibility.Collapsed;
+        RepairAppInstallPathsButton.Content = mismatchApps > 0
+            ? AppStrings.Format("DesktopUpdateSyncRepairPathsCountFormat", mismatchApps)
+            : AppStrings.Get("DesktopUpdateSyncRepairPaths");
+
+        var lines = new List<string>();
+        if (!string.IsNullOrWhiteSpace(_lastDesktopUpdateSyncMessage))
+            lines.Add(_lastDesktopUpdateSyncMessage);
+
+        if (reconciler is not null && lockedCount > 0)
+        {
+            IReadOnlyList<PendingDesktopUpdateItem> locked = reconciler.PendingItems
+                .Where(p => p.Status == DesktopUpdateMergeStatus.BlockedByLock)
+                .ToArray();
+            string names = string.Join("、", locked.Select(p =>
+            {
+                string procs = p.LockInfo is { Processes.Count: > 0 }
+                    ? string.Join("/", p.LockInfo.Processes.Select(lp => lp.ProcessName).Distinct(StringComparer.OrdinalIgnoreCase).Take(2))
+                    : p.LockInfo is { RunningServices.Count: > 0 }
+                        ? string.Join("/", p.LockInfo.RunningServices.Take(2))
+                        : "?";
+                return $"{p.Match.DesktopItem.Name} ({procs})";
+            }).Take(3));
+            lines.Add(AppStrings.Format("DesktopUpdateSyncLockedFormat", lockedCount, names));
+        }
+
+        if (cleanupCount > 0)
+            lines.Add(AppStrings.Format("DesktopUpdateSyncPublicCleanupFormat", cleanupCount));
+
+        if (reconciler is not null && mismatchApps > 0)
+        {
+            string appNames = string.Join("、", reconciler.RemainingMismatches
+                .Select(m => m.DisplayName)
+                .Where(n => !string.IsNullOrWhiteSpace(n))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .Take(4));
+            lines.Add(AppStrings.Format("DesktopUpdateSyncRegistryMismatchFormat", mismatchApps, appNames));
+        }
+
+        string combined = string.Join(Environment.NewLine, lines);
+        DesktopUpdateSyncStatusText.Text = combined;
+        DesktopUpdateSyncStatusText.Visibility = string.IsNullOrWhiteSpace(combined)
+            ? Visibility.Collapsed
+            : Visibility.Visible;
+    }
+
+    private async void AutoSyncDesktopUpdatesToggle_Toggled(object sender, RoutedEventArgs e)
+    {
+        if (_syncingProductivityControls) return;
+        try
+        {
+            await _host.SetAutoSyncDesktopUpdatesEnabledAsync(AutoSyncDesktopUpdatesToggle.IsOn);
+        }
+        catch (Exception ex)
+        {
+            ShowError(AppStrings.Get("SaveConfigurationError"), ex.Message);
+            WithSuppressedProductivitySync(() => AutoSyncDesktopUpdatesToggle.IsOn = _host.State.GlobalSettings.AutoSyncDesktopUpdatesEnabled);
+        }
+    }
+
+    private async void ScanDesktopUpdatesButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_desktopUpdateSyncBusy) return;
+        SetDesktopUpdateSyncBusy(true);
+        try
+        {
+            DesktopUpdateReconcileSummary summary = await _host.ReconcileDesktopUpdatesNowAsync(allowElevationUi: true);
+            int synced = summary.MergedCount + summary.DeduplicatedCount;
+            _lastDesktopUpdateSyncMessage = synced > 0 || summary.RepairedHkcuCount > 0
+                ? AppStrings.Format("DesktopUpdateSyncResultFormat", summary.MergedCount, summary.DeduplicatedCount, summary.RepairedHkcuCount)
+                : summary.PendingLockedCount == 0 && summary.RemainingRegistryMismatchCount == 0
+                    ? AppStrings.Get("DesktopUpdateSyncCleanStatus")
+                    : null;
+            RefreshDesktopUpdateSyncControls();
+        }
+        catch (Exception ex)
+        {
+            ShowError(AppStrings.Get("DesktopUpdateSyncErrorTitle"), ex.Message);
+        }
+        finally
+        {
+            SetDesktopUpdateSyncBusy(false);
+        }
+    }
+
+    private async void ResolveLockedUpdatesButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_desktopUpdateSyncBusy) return;
+        SetDesktopUpdateSyncBusy(true);
+        try
+        {
+            ElevatedRepairOutcome outcome = await _host.ResolveLockedDesktopUpdatesAndPathsAsync(
+                includeLockedMerges: true,
+                includeRegistryRepairs: true);
+            if (outcome.UserCancelled)
+            {
+                _lastDesktopUpdateSyncMessage = AppStrings.Get("DesktopUpdateSyncRepairCancelled");
+            }
+            else if (!outcome.Succeeded)
+            {
+                ShowError(AppStrings.Get("DesktopUpdateSyncErrorTitle"), outcome.ErrorMessage ?? AppStrings.Get("DesktopUpdateSyncErrorTitle"));
+            }
+            else
+            {
+                _lastDesktopUpdateSyncMessage = AppStrings.Format(
+                    "DesktopUpdateSyncRepairDoneFormat",
+                    outcome.MergedFilesCount,
+                    outcome.RepairedRegistryCount,
+                    outcome.RepairedServiceCount);
+            }
+            RefreshDesktopUpdateSyncControls();
+        }
+        catch (Exception ex)
+        {
+            ShowError(AppStrings.Get("DesktopUpdateSyncErrorTitle"), ex.Message);
+        }
+        finally
+        {
+            SetDesktopUpdateSyncBusy(false);
+        }
+    }
+
+    private async void RepairAppInstallPathsButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_desktopUpdateSyncBusy) return;
+        SetDesktopUpdateSyncBusy(true);
+        try
+        {
+            ElevatedRepairOutcome outcome = await _host.ResolveLockedDesktopUpdatesAndPathsAsync(
+                includeLockedMerges: false,
+                includeRegistryRepairs: true);
+            if (outcome.UserCancelled)
+            {
+                _lastDesktopUpdateSyncMessage = AppStrings.Get("DesktopUpdateSyncRepairCancelled");
+            }
+            else if (!outcome.Succeeded)
+            {
+                ShowError(AppStrings.Get("DesktopUpdateSyncErrorTitle"), outcome.ErrorMessage ?? AppStrings.Get("DesktopUpdateSyncErrorTitle"));
+            }
+            else
+            {
+                _lastDesktopUpdateSyncMessage = AppStrings.Format(
+                    "DesktopUpdateSyncRepairDoneFormat",
+                    outcome.MergedFilesCount,
+                    outcome.RepairedRegistryCount,
+                    outcome.RepairedServiceCount);
+            }
+            RefreshDesktopUpdateSyncControls();
+        }
+        catch (Exception ex)
+        {
+            ShowError(AppStrings.Get("DesktopUpdateSyncErrorTitle"), ex.Message);
+        }
+        finally
+        {
+            SetDesktopUpdateSyncBusy(false);
         }
     }
 

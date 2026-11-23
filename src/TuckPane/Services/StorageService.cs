@@ -236,6 +236,7 @@ public sealed class StorageService
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 Directory.Move(_itemsRoot, destination);
+                DesktopOriginLedger.Shared.RecordMovedOrCopiedToDesktop(destination, isCopy: false);
                 return PublishedMoveCompletion.Complete(_itemsRoot, destination, () => { }, DeleteEmptyParent);
             }
 
@@ -252,6 +253,7 @@ public sealed class StorageService
                 VerifyEquivalent(_itemsRoot, staging, cancellationToken);
                 cancellationToken.ThrowIfCancellationRequested();
                 Directory.Move(staging, destination);
+                DesktopOriginLedger.Shared.RecordMovedOrCopiedToDesktop(destination, isCopy: false);
                 return PublishedMoveCompletion.Complete(_itemsRoot, destination, () =>
                 {
                     cancellationToken.ThrowIfCancellationRequested();
@@ -287,9 +289,12 @@ public sealed class StorageService
         string desktop = AppPaths.DesktopRoot;
         if (string.IsNullOrWhiteSpace(desktop))
             return new(source, null, TransferStatus.Failed, AppStrings.Get("DesktopUnavailable"));
-        return await Task.Run(
+        TransferOutcome outcome = await Task.Run(
             () => MoveItemToDirectoryAsync(source, desktop, progress, cancellationToken),
             cancellationToken);
+        if (outcome.Status == TransferStatus.Moved && !string.IsNullOrWhiteSpace(outcome.DestinationPath))
+            DesktopOriginLedger.Shared.RecordMovedOrCopiedToDesktop(outcome.DestinationPath, isCopy: false);
+        return outcome;
     }
 
     public async Task<TransferOutcome> CopyItemToDesktopAsync(
@@ -302,6 +307,8 @@ public sealed class StorageService
             return new(sourcePath, null, TransferStatus.Failed, AppStrings.Get("DesktopUnavailable"));
         IReadOnlyList<TransferOutcome> outcomes = await new StorageService(desktop)
             .CopyBatchAsync([sourcePath], progress, cancellationToken);
+        if (outcomes[0].Status == TransferStatus.Copied && !string.IsNullOrWhiteSpace(outcomes[0].DestinationPath))
+            DesktopOriginLedger.Shared.RecordMovedOrCopiedToDesktop(outcomes[0].DestinationPath!, isCopy: true);
         return outcomes[0];
     }
 

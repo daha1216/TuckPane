@@ -50,6 +50,58 @@ public sealed class IconCacheService
         }
     }
 
+    internal static IconSnapshot? CreatePremultipliedIconSnapshot(string path, int size)
+    {
+        if (string.IsNullOrWhiteSpace(path) || size <= 0) return null;
+        if (!File.Exists(path) && !Directory.Exists(path)) return null;
+
+        IntPtr icon = IntPtr.Zero;
+        try
+        {
+            icon = GetPreferredIcon(path, size, out _);
+            if (icon == IntPtr.Zero) return null;
+
+            byte[] pixels = DrawIconPixels(icon, size);
+            if (NeedsPremultiplication(pixels))
+                PremultiplyAlpha(pixels);
+            else
+                ZeroTransparentRgb(pixels);
+
+            return new IconSnapshot(pixels, size, size);
+        }
+        catch
+        {
+            return null;
+        }
+        finally
+        {
+            if (icon != IntPtr.Zero) _ = NativeMethods.DestroyIcon(icon);
+        }
+    }
+
+    private static bool NeedsPremultiplication(byte[] pixels)
+    {
+        for (int index = 0; index < pixels.Length; index += 4)
+        {
+            byte alpha = pixels[index + 3];
+            if (alpha is 0 or 255) continue;
+            if (pixels[index] > alpha || pixels[index + 1] > alpha || pixels[index + 2] > alpha)
+                return true;
+        }
+        return false;
+    }
+
+    private static void ZeroTransparentRgb(byte[] pixels)
+    {
+        for (int index = 0; index < pixels.Length; index += 4)
+        {
+            if (pixels[index + 3] != 0) continue;
+            pixels[index] = 0;
+            pixels[index + 1] = 0;
+            pixels[index + 2] = 0;
+        }
+    }
+
     // Cache files have no expiry of their own, so leftovers are pruned once per startup:
     // interrupted writes leave .tmp files behind and the cache grows without bound.
     internal static Task SweepAsync(CancellationToken cancellationToken = default) => Task.Run(() =>

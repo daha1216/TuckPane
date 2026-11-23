@@ -61,6 +61,18 @@ if (args is ["--commercial-grade-audit"])
     return;
 }
 
+if (args is ["--desktop-update-reconciler"])
+{
+    await DesktopUpdateReconcilerChecks.RunAsync();
+    return;
+}
+
+if (args is ["--cross-window-drag"])
+{
+    await CrossWindowDragChecks.RunAsync();
+    return;
+}
+
 if (args.Length > 0 && args[0] == "--sep13-interactions")
 {
     if (args is not [_, string area]) throw new ArgumentException("Expected --sep13-interactions <resize|menu|shortcut>.");

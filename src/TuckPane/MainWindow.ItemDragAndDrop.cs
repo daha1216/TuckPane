@@ -25,6 +25,10 @@ namespace TuckPane;
 
 public sealed partial class MainWindow
 {
+    private long _floatingDragGhostToken;
+    private bool _floatingDragGhostDetached;
+    private NativeMethods.POINT _floatingDragSourceCenterPx;
+
     private void Item_PointerPressed(object sender, PointerRoutedEventArgs e)
     {
         if (sender is Border host) BeginItemPointerPress(host, e, host);
@@ -45,6 +49,7 @@ public sealed partial class MainWindow
         if (!point.Properties.IsLeftButtonPressed) return;
         int sourceIndex = IndexOfItem(relativeName);
         if (sourceIndex < 0) return;
+        SuppressItemHostToolTip(host);
         if (IsCompactList && e.Pointer.PointerDeviceType == PointerDeviceType.Mouse) BeginCompactClick(host, e);
         SetItemInteractionVisual(host, pressed: true);
         if (_itemDragTraceEnabled) AppLogger.Info($"换序跟踪：按下 source={sourceIndex} pointer={e.Pointer.PointerId}。");
@@ -250,6 +255,10 @@ public sealed partial class MainWindow
             return;
         }
         if (_itemReorderSession is not { IsActive: true } session || _itemDragHost is null) return;
+        SuppressItemHostToolTip(_itemDragHost);
+        CancelFloatingDragGhostIfStillActive();
+        _floatingDragSourceCenterPx = CaptureItemHostScreenCenter(_itemDragHost);
+        PrewarmFloatingDragGhostForSession(session, _itemDragHost);
         _compactClicks.Reset();
         if (_itemCapturedPointer is { } pointer && _itemPointerCaptureOwner is { } previousOwner &&
             !ReferenceEquals(previousOwner, _itemDragHost))
@@ -332,11 +341,14 @@ public sealed partial class MainWindow
         double contentOffsetX = repeaterMargin.Left + scrollPadding.Left;
         double contentOffsetY = repeaterMargin.Top + scrollPadding.Top;
         Point pointerInWindow;
+        NativeMethods.POINT cursorScreenPx;
         if (_itemDragPointerType == PointerDeviceType.Mouse)
         {
             if (!NativeMethods.GetCursorPos(out NativeMethods.POINT cursor)) return;
+            cursorScreenPx = cursor;
             if (!DragBoundaryMath.Contains(_itemDragBoundaryBounds, cursor))
             {
+                TryDetachFloatingDragGhostImmediate(session, cursorScreenPx, scale);
                 TryPostItemExternalDragPromotion();
                 return;
             }
@@ -348,6 +360,10 @@ public sealed partial class MainWindow
             pointerInWindow = new(
                 viewportOrigin.X + contentOffsetX + session.LatestPointerContent.X - ItemsScrollView.HorizontalOffset,
                 viewportOrigin.Y + contentOffsetY + session.LatestPointerContent.Y - ItemsScrollView.VerticalOffset);
+            if (!TryWindowDipToScreenPx(pointerInWindow, out cursorScreenPx))
+            {
+                _ = NativeMethods.GetCursorPos(out cursorScreenPx);
+            }
         }
         Point pointerInViewport = new(pointerInWindow.X - viewportOrigin.X, pointerInWindow.Y - viewportOrigin.Y);
         ApplyItemDragAutoScroll(pointerInViewport.Y, seconds);
@@ -357,6 +373,7 @@ public sealed partial class MainWindow
         if (_freeGridEngine is not null)
         {
             UpdateIosFluidReorderFrame(session, pointerContent, seconds);
+            UpdateFloatingDragGhostInsideWindow(session, pointerInWindow, cursorScreenPx, viewportOrigin, scale);
             return;
         }
         session.UpdateTarget(
@@ -378,6 +395,7 @@ public sealed partial class MainWindow
         draggedMotion.Translation = nextTranslation;
         draggedMotion.TranslationTarget = nextTranslation;
         _itemDragHost.Translation = nextTranslation;
+        UpdateFloatingDragGhostInsideWindow(session, pointerInWindow, cursorScreenPx, viewportOrigin, scale);
     }
 
     private bool TryGetMousePointerContent(out Point pointerContent)
@@ -880,6 +898,17 @@ public sealed partial class MainWindow
                 Math.Max(1, draggedHost.Width),
                 Math.Max(1, draggedHost.Height),
                 GetItemLayoutGapDip());
+            if (_floatingDragGhostDetached)
+            {
+                NativeMethods.POINT? landingCenter = TryGetNonFreeGridSlotScreenCenter(
+                    session,
+                    target,
+                    draggedHost,
+                    out NativeMethods.POINT slotCenterPx)
+                    ? slotCenterPx
+                    : null;
+                CompleteFloatingDragGhostLanding(landingCenter);
+            }
             if (_itemReorderUsesAnimations)
             {
                 ItemMotionState motion = GetItemMotion(draggedHost);
@@ -970,7 +999,7 @@ public sealed partial class MainWindow
                     WidgetItem item = _items[slot];
                     _realizedItemHosts.Register(item.RelativeName, host);
                     host.Tag = item.RelativeName;
-                    SetItemToolTip(host, IsDock || IsDocumentItem(item) || item.Kind == WidgetItemKind.Organizer ? item.Name : item.FullPath);
+                    SetItemToolTip(host, item.Name);
                     if (!canRotateRealizedContent && affectedSlots.Contains(slot)) PrepareReorderedItemIdentity(host, item);
                 }
                 _animationTrace?.Metrics.RecordWork(AnimationTraceWork.UpdateLayout);
@@ -1187,6 +1216,7 @@ public sealed partial class MainWindow
     private void ApplyNativeSourcePlaceholder(Border host)
     {
         _itemDragHost = host;
+        SuppressItemHostToolTip(host);
         host.Opacity = 0;
         host.Shadow = null;
         Canvas.SetZIndex(host, 0);
@@ -1200,8 +1230,17 @@ public sealed partial class MainWindow
     private void CancelItemReorder(bool runPendingRefresh = true, bool preserveHover = false, bool preserveClickSequence = false)
     {
         if (!preserveClickSequence) _compactClicks.Reset();
-        if (_itemReorderSession is not { } session) return;
+        if (_itemReorderSession is not { } session)
+        {
+            RestoreSuppressedItemHostToolTip();
+            return;
+        }
         session.MarkOutcome(ItemDragState.Cancelled);
+        if (_floatingDragGhostToken != 0)
+        {
+            if (_closing) CancelFloatingDragGhostIfStillActive();
+            else CompleteFloatingDragGhostRebound();
+        }
         StopItemDragInput(keepRendering: false);
         CleanupIosFreeGridOverlays();
         _freeGridEngine = null;
@@ -1235,6 +1274,7 @@ public sealed partial class MainWindow
 
     private void ResetItemDragVisuals(bool preserveHover = false)
     {
+        RestoreSuppressedItemHostToolTip();
         if (!preserveHover) ReturnHoverWave();
         if (_itemDragHost is { } pressedHost) ResetItemInteractionVisual(pressedHost);
         InvalidateHoverGeometry();
@@ -1255,6 +1295,9 @@ public sealed partial class MainWindow
 
     private void FinishItemReorderSession(bool runPendingRefresh = true)
     {
+        RestoreSuppressedItemHostToolTip();
+        if (!Volatile.Read(ref _shellDragActive) && _floatingDragGhostToken != 0)
+            CancelFloatingDragGhostIfStillActive();
         _externalDragCoordinator.DiscardNoteDragPreparation();
         if (_itemReorderSession is not { State: ItemDragState.Committed })
         {
@@ -1539,6 +1582,327 @@ public sealed partial class MainWindow
                 ClearPendingExternalDropSlot();
                 _dragHasLocalFile = false;
             }
+        }
+    }
+
+    internal bool IsFloatingDragGhostActive => _floatingDragGhostToken != 0;
+
+    internal long EnsureFloatingDragGhostActive(
+        WidgetItem item,
+        Border host,
+        ItemReorderSession session,
+        IReadOnlyList<WidgetItem>? payloadItems = null)
+    {
+        if (!ShouldUseFloatingDragGhost(item)) return 0;
+        if (_floatingDragGhostDetached && _floatingDragGhostToken != 0)
+            return _floatingDragGhostToken;
+
+        NativeMethods.POINT cursorPx = NativeMethods.GetCursorPos(out NativeMethods.POINT currentCursor)
+            ? currentCursor
+            : _floatingDragSourceCenterPx;
+        double dpiScale = Math.Max(1.0, NativeMethods.GetDpiForWindow(_hwnd) / 96.0);
+        return DetachVisualToFloatingDragGhost(item, host, session, cursorPx, dpiScale, payloadItems);
+    }
+
+    internal void CompleteFloatingDragGhostLanding(NativeMethods.POINT? landingCenterScreenPx)
+    {
+        long token = _floatingDragGhostToken;
+        _floatingDragGhostToken = 0;
+        _floatingDragGhostDetached = false;
+        if (token != 0)
+            FloatingDragGhostController.Shared.CompleteWithLanding(token, landingCenterScreenPx);
+    }
+
+    internal void CompleteFloatingDragGhostRebound()
+    {
+        long token = _floatingDragGhostToken;
+        _floatingDragGhostToken = 0;
+        _floatingDragGhostDetached = false;
+        if (token != 0)
+            FloatingDragGhostController.Shared.CompleteWithRebound(token, _floatingDragSourceCenterPx);
+    }
+
+    internal void CancelFloatingDragGhostIfStillActive()
+    {
+        long token = _floatingDragGhostToken;
+        _floatingDragGhostToken = 0;
+        _floatingDragGhostDetached = false;
+        if (token != 0)
+            FloatingDragGhostController.Shared.CancelImmediate(token);
+    }
+
+    private static bool ShouldUseFloatingDragGhost(WidgetItem item) =>
+        item.Kind != WidgetItemKind.Organizer;
+
+    private void PrewarmFloatingDragGhostForSession(ItemReorderSession session, Border host)
+    {
+        if (session.SourceIndex < 0 || session.SourceIndex >= _items.Count) return;
+        WidgetItem draggedItem = _items[session.SourceIndex];
+        if (!ShouldUseFloatingDragGhost(draggedItem)) return;
+
+        (double cardWidth, double cardHeight) = ResolveHostCardSizeDip(host);
+        double iconSizeDip = ResolveFloatingDragIconSizeDip(host, cardWidth, cardHeight);
+        double dpiScale = Math.Max(1.0, NativeMethods.GetDpiForWindow(_hwnd) / 96.0);
+        int iconPixelSize = Math.Clamp((int)Math.Ceiling(Math.Clamp(iconSizeDip, 28.0, 192.0) * dpiScale * 2.0), 96, 256);
+        IReadOnlyList<FloatingDragGhostItemDescriptor> prewarmItems =
+            BuildFloatingDragGhostItems(draggedItem, payloadItems: null, maxCount: 3);
+        FloatingDragGhostController.Shared.Prewarm(prewarmItems, iconPixelSize);
+    }
+
+    private void TryDetachFloatingDragGhostImmediate(
+        ItemReorderSession session,
+        NativeMethods.POINT cursorScreenPx,
+        double dpiScale)
+    {
+        if (_floatingDragGhostDetached || _itemDragHost is null ||
+            session.SourceIndex < 0 || session.SourceIndex >= _items.Count) return;
+        WidgetItem draggedItem = _items[session.SourceIndex];
+        if (!ShouldUseFloatingDragGhost(draggedItem)) return;
+        _ = DetachVisualToFloatingDragGhost(draggedItem, _itemDragHost, session, cursorScreenPx, dpiScale, payloadItems: null);
+    }
+
+    private void UpdateFloatingDragGhostInsideWindow(
+        ItemReorderSession session,
+        Point pointerInWindow,
+        NativeMethods.POINT cursorScreenPx,
+        Point viewportOrigin,
+        double dpiScale)
+    {
+        if (_itemDragHost is null || session.SourceIndex < 0 || session.SourceIndex >= _items.Count) return;
+        WidgetItem draggedItem = _items[session.SourceIndex];
+        if (!ShouldUseFloatingDragGhost(draggedItem)) return;
+
+        if (!_floatingDragGhostDetached)
+        {
+            if (ItemsScrollView.ActualWidth <= 1 || ItemsScrollView.ActualHeight <= 1 ||
+                WindowRoot.ActualWidth <= 1 || WindowRoot.ActualHeight <= 1)
+            {
+                return;
+            }
+            double clipLeft = Math.Max(0, viewportOrigin.X);
+            double clipTop = Math.Max(0, viewportOrigin.Y);
+            double clipRight = Math.Min(WindowRoot.ActualWidth, viewportOrigin.X + ItemsScrollView.ActualWidth);
+            double clipBottom = Math.Min(WindowRoot.ActualHeight, viewportOrigin.Y + ItemsScrollView.ActualHeight);
+            if (clipRight <= clipLeft || clipBottom <= clipTop) return;
+
+            (double cardWidth, double cardHeight) = ResolveHostCardSizeDip(_itemDragHost);
+            var cardRect = new DragRectDip(
+                pointerInWindow.X - session.GrabOffset.X,
+                pointerInWindow.Y - session.GrabOffset.Y,
+                cardWidth,
+                cardHeight);
+            var clipRect = new DragRectDip(clipLeft, clipTop, clipRight - clipLeft, clipBottom - clipTop);
+            double liftScale = _freeGridEngine is not null ? 1.12 : 1.06;
+            if (CrossWindowDragMath.ShouldDetachVisualToFloatingGhost(cardRect, clipRect, liftScale: liftScale, marginDip: 6.0))
+            {
+                _ = DetachVisualToFloatingDragGhost(
+                    draggedItem,
+                    _itemDragHost,
+                    session,
+                    cursorScreenPx,
+                    dpiScale,
+                    payloadItems: null);
+            }
+        }
+
+        if (_floatingDragGhostDetached)
+        {
+            HideInWindowDraggedVisualsForFloatingGhost();
+        }
+    }
+
+    private long DetachVisualToFloatingDragGhost(
+        WidgetItem item,
+        Border host,
+        ItemReorderSession session,
+        NativeMethods.POINT cursorScreenPx,
+        double dpiScale,
+        IReadOnlyList<WidgetItem>? payloadItems)
+    {
+        if (_floatingDragGhostDetached && _floatingDragGhostToken != 0)
+            return _floatingDragGhostToken;
+
+        (double cardWidth, double cardHeight) = ResolveHostCardSizeDip(host);
+        double iconSizeDip = ResolveFloatingDragIconSizeDip(host, cardWidth, cardHeight);
+        double grabOffsetX = Math.Clamp(session.GrabOffset.X, 0, cardWidth);
+        double grabOffsetY = Math.Clamp(session.GrabOffset.Y, 0, cardHeight);
+        float initialScale = _freeGridEngine is not null ? 1.12f : 1.06f;
+        float initialTilt = _freeGridEngine is not null ? _dragTiltAngleDeg : 0f;
+        ThemeValues theme = _host.State.GlobalSettings.GetTheme(OrganizerKinds.ThemeFor(_definition.PlacementMode));
+        IReadOnlyList<FloatingDragGhostItemDescriptor> ghostItems =
+            BuildFloatingDragGhostItems(item, payloadItems, maxCount: null);
+
+        var descriptor = new FloatingDragGhostDescriptor(
+            ghostItems,
+            cardWidth,
+            cardHeight,
+            iconSizeDip,
+            grabOffsetX,
+            grabOffsetY,
+            dpiScale,
+            cursorScreenPx,
+            initialScale,
+            initialTilt,
+            ThemePalette.IsDark(theme),
+            theme.ColorArgb);
+
+        long token = FloatingDragGhostController.Shared.BeginSession(descriptor);
+        if (token == 0) return 0;
+
+        _floatingDragGhostToken = token;
+        _floatingDragGhostDetached = true;
+        HideInWindowDraggedVisualsForFloatingGhost();
+        return token;
+    }
+
+    private void HideInWindowDraggedVisualsForFloatingGhost()
+    {
+        if (_itemDragHost is { } host && host.Opacity != 0)
+            host.Opacity = 0;
+        for (int k = 1; k < _dragStackIndices.Length; k++)
+        {
+            if (TryGetRealizedItemHost(_dragStackIndices[k], out Border follower) && follower.Opacity != 0)
+                follower.Opacity = 0;
+        }
+        if (FreeGridDragStackBadge.Visibility != Visibility.Collapsed)
+            FreeGridDragStackBadge.Visibility = Visibility.Collapsed;
+    }
+
+    private IReadOnlyList<FloatingDragGhostItemDescriptor> BuildFloatingDragGhostItems(
+        WidgetItem primaryItem,
+        IReadOnlyList<WidgetItem>? payloadItems,
+        int? maxCount)
+    {
+        IReadOnlyList<WidgetItem> source = payloadItems is { Count: > 0 }
+            ? payloadItems
+            : GetDragPayloadItems(primaryItem);
+        int capacity = maxCount is int cap ? Math.Min(source.Count, cap) : source.Count;
+        var result = new List<FloatingDragGhostItemDescriptor>(Math.Max(1, capacity))
+        {
+            new(primaryItem.FullPath, primaryItem.Name)
+        };
+        for (int i = 0; i < source.Count; i++)
+        {
+            if (maxCount is int limit && result.Count >= limit) break;
+            WidgetItem candidate = source[i];
+            if (candidate.RelativeName.Equals(primaryItem.RelativeName, StringComparison.OrdinalIgnoreCase))
+                continue;
+            result.Add(new FloatingDragGhostItemDescriptor(candidate.FullPath, candidate.Name));
+        }
+        return result;
+    }
+
+    private (double Width, double Height) ResolveHostCardSizeDip(Border host)
+    {
+        double w = double.IsFinite(host.Width) && host.Width > 1
+            ? host.Width
+            : host.ActualWidth > 1
+                ? host.ActualWidth
+                : Math.Max(1, _nativeDragCellWidth > 1 ? _nativeDragCellWidth : _freeSlotGridLayout.CellWidth);
+        double h = double.IsFinite(host.Height) && host.Height > 1
+            ? host.Height
+            : host.ActualHeight > 1
+                ? host.ActualHeight
+                : Math.Max(1, _nativeDragCellHeight > 1 ? _nativeDragCellHeight : _freeSlotGridLayout.CellHeight);
+        return (w, h);
+    }
+
+    private double ResolveFloatingDragIconSizeDip(Border host, double cardWidthDip, double cardHeightDip)
+    {
+        if (GetOrResolveItemHostParts(host) is { } parts)
+        {
+            double iconW = double.IsFinite(parts.IconContainer.Width) && parts.IconContainer.Width > 1
+                ? parts.IconContainer.Width
+                : parts.IconContainer.ActualWidth;
+            if (double.IsFinite(iconW) && iconW > 1) return iconW;
+        }
+        if (IsDock) return Math.Max(24, _dockGeometry.IconSize);
+        if (IsCompactList) return Math.Max(16, CompactListIconSizeDip * _definition.CompactListItemScale * ContentScale);
+        return Math.Clamp(Math.Min(cardWidthDip, cardHeightDip) * 0.62, 24, 96);
+    }
+
+    private NativeMethods.POINT CaptureItemHostScreenCenter(Border host)
+    {
+        try
+        {
+            (double w, double h) = ResolveHostCardSizeDip(host);
+            Point centerWindow = host.TransformToVisual(WindowRoot).TransformPoint(new Point(w / 2.0, h / 2.0));
+            if (TryWindowDipToScreenPx(centerWindow, out NativeMethods.POINT centerPx))
+                return centerPx;
+        }
+        catch (InvalidOperationException) { }
+        return NativeMethods.GetCursorPos(out NativeMethods.POINT fallback) ? fallback : default;
+    }
+
+    private bool TryWindowDipToScreenPx(Point windowDip, out NativeMethods.POINT screenPx)
+    {
+        screenPx = default;
+        var clientOrigin = new NativeMethods.POINT();
+        if (!NativeMethods.ClientToScreen(_hwnd, ref clientOrigin)) return false;
+        double scale = Math.Max(1.0, WindowRoot.XamlRoot?.RasterizationScale ?? NativeMethods.GetDpiForWindow(_hwnd) / 96.0);
+        screenPx = new NativeMethods.POINT
+        {
+            X = clientOrigin.X + (int)Math.Round(windowDip.X * scale),
+            Y = clientOrigin.Y + (int)Math.Round(windowDip.Y * scale)
+        };
+        return true;
+    }
+
+    private bool TryGetFreeGridSlotScreenCenter(
+        int slot,
+        int columns,
+        double cellWidth,
+        double cellHeight,
+        double gap,
+        out NativeMethods.POINT centerScreenPx)
+    {
+        centerScreenPx = default;
+        try
+        {
+            Point repeaterOrigin = ItemsRepeater.TransformToVisual(WindowRoot).TransformPoint(new Point());
+            Point slotOrigin = FreeGridSlotMap.SlotOrigin(slot, columns, cellWidth, cellHeight, gap);
+            Point centerWindow = new(
+                repeaterOrigin.X + slotOrigin.X + cellWidth / 2.0,
+                repeaterOrigin.Y + slotOrigin.Y + cellHeight / 2.0);
+            return TryWindowDipToScreenPx(centerWindow, out centerScreenPx);
+        }
+        catch (InvalidOperationException)
+        {
+            return false;
+        }
+    }
+
+    private bool TryGetNonFreeGridSlotScreenCenter(
+        ItemReorderSession session,
+        Vector2 targetTranslation,
+        Border draggedHost,
+        out NativeMethods.POINT centerScreenPx)
+    {
+        centerScreenPx = default;
+        try
+        {
+            (double cellW, double cellH) = ResolveHostCardSizeDip(draggedHost);
+            if (!IsDock)
+            {
+                int columns = Math.Max(1, GetItemLayoutColumnCount());
+                int visualIndex = session.GetVisualIndex(session.SourceIndex);
+                double gap = GetItemLayoutGapDip();
+                Point repeaterOrigin = ItemsRepeater.TransformToVisual(WindowRoot).TransformPoint(new Point());
+                Point centerWindow = new(
+                    repeaterOrigin.X + (visualIndex % columns) * (cellW + gap) + cellW / 2.0,
+                    repeaterOrigin.Y + (visualIndex / columns) * (cellH + gap) + cellH / 2.0);
+                return TryWindowDipToScreenPx(centerWindow, out centerScreenPx);
+            }
+            Point currentCenter = draggedHost.TransformToVisual(WindowRoot).TransformPoint(new Point(cellW / 2.0, cellH / 2.0));
+            Vector3 currentTranslation = draggedHost.Translation;
+            Point dockTargetCenter = new(
+                currentCenter.X - currentTranslation.X + targetTranslation.X,
+                currentCenter.Y - currentTranslation.Y + targetTranslation.Y);
+            return TryWindowDipToScreenPx(dockTargetCenter, out centerScreenPx);
+        }
+        catch (InvalidOperationException)
+        {
+            return false;
         }
     }
 }

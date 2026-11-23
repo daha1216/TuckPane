@@ -509,11 +509,22 @@ public sealed partial class MainWindow
             Point primaryOrigin = FreeGridSlotMap.SlotOrigin(_freeGridEngine.SourceSlot, columns, cellWidth, cellHeight, gap);
             Point livePrimaryTopLeft = new(primaryOrigin.X + nextTranslation.X, primaryOrigin.Y + nextTranslation.Y);
             UpdateDragStackFollowers(livePrimaryTopLeft, columns, cellWidth, cellHeight, gap);
-            FreeGridDragStackBadge.Translation = new Vector3(
-                (float)(livePrimaryTopLeft.X + cellWidth - 18),
-                (float)(livePrimaryTopLeft.Y - 6),
-                0f);
+            if (_floatingDragGhostDetached)
+            {
+                if (FreeGridDragStackBadge.Visibility != Visibility.Collapsed)
+                    FreeGridDragStackBadge.Visibility = Visibility.Collapsed;
+            }
+            else
+            {
+                FreeGridDragStackBadge.Translation = new Vector3(
+                    (float)(livePrimaryTopLeft.X + cellWidth - 18),
+                    (float)(livePrimaryTopLeft.Y - 6),
+                    0f);
+            }
         }
+
+        if (_floatingDragGhostDetached && _itemDragHost.Opacity != 0)
+            _itemDragHost.Opacity = 0;
 
         // Continuously integrate all sibling icons with velocity-preserving iOS underdamped springs!
         StepIosFluidItemSprings(seconds, directDragHost: _itemDragHost);
@@ -543,7 +554,7 @@ public sealed partial class MainWindow
                 (float)(livePrimaryTopLeft.Y - orig.Y) + fanDy,
                 fanZ);
             motion.ScaleTarget = new Vector3(1.06f - fanLayer * 0.02f, 1.06f - fanLayer * 0.02f, 1f);
-            follower.Opacity = k <= 3 ? 0.94 - fanLayer * 0.08 : 0.0;
+            follower.Opacity = _floatingDragGhostDetached ? 0.0 : (k <= 3 ? 0.94 - fanLayer * 0.08 : 0.0);
             float fanAngle = fanLayer % 2 == 1 ? -3.5f : 3.5f;
             motion.RotationAngle = fanAngle;
             follower.Rotation = fanAngle;
@@ -756,6 +767,20 @@ public sealed partial class MainWindow
                     landCellW,
                     landCellH,
                     gap);
+
+                if (_floatingDragGhostDetached)
+                {
+                    NativeMethods.POINT? landingCenter = TryGetFreeGridSlotScreenCenter(
+                        finalSlots[engine.SourceItemIndex],
+                        columns,
+                        landCellW,
+                        landCellH,
+                        gap,
+                        out NativeMethods.POINT slotCenterPx)
+                        ? slotCenterPx
+                        : null;
+                    CompleteFloatingDragGhostLanding(landingCenter);
+                }
 
                 if (_itemReorderUsesAnimations)
                 {

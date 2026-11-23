@@ -1446,6 +1446,28 @@ public sealed partial class AppHost : IDisposable
             !OrganizerContainment.IsAncestor(State.Organizers, source.OrganizerId, target.OrganizerId) &&
             target.TryGetOrganizerDropIndex(dropPoint, out _));
 
+    internal bool TryFindOrganizerUnderCursor(
+        NativeMethods.POINT screenPoint,
+        Guid excludeOrganizerId,
+        out string organizerName)
+    {
+        organizerName = string.Empty;
+        IntPtr hitHwnd = NativeMethods.WindowFromPoint(screenPoint);
+        if (hitHwnd == IntPtr.Zero) return false;
+        foreach (MainWindow candidate in _windows.Values)
+        {
+            if (candidate.OrganizerId == excludeOrganizerId || candidate.IsClosing) continue;
+            if (hitHwnd != candidate.Hwnd && !NativeMethods.IsChild(candidate.Hwnd, hitHwnd)) continue;
+            bool inside = candidate.ContainsScreenPoint(screenPoint) ||
+                (candidate.TryGetCompactDropBounds(out NativeMethods.RECT compactBounds) &&
+                 DragBoundaryMath.Contains(compactBounds, screenPoint));
+            if (!inside) continue;
+            organizerName = candidate.Definition.Name;
+            return true;
+        }
+        return false;
+    }
+
     internal bool IsOrganizerDragHoverTarget(MainWindow source, NativeMethods.POINT point) =>
         _organizerDragHoverSource == source && _organizerDragHoverTarget is not null &&
         (DragBoundaryMath.Contains(_organizerDragHoverBounds, point) ||
@@ -2103,6 +2125,7 @@ public sealed partial class AppHost : IDisposable
         AppLogger.Lifecycle("exit-commit", $"source={source} {LifecycleWindowCounts()}");
         attempt.Commit();
         Updates?.Dispose();
+        FloatingDragGhostController.ShutdownShared();
         DisposeProductivityServices();
         DisposeDockRunningState();
         ShellLauncher.Dispose();
@@ -2233,6 +2256,7 @@ public sealed partial class AppHost : IDisposable
         _expansionModes.Clear();
         DisposeProductivityServices();
         DisposeDockRunningState();
+        FloatingDragGhostController.ShutdownShared();
         Updates?.Dispose();
         ShellLauncher.Dispose();
         AppLogger.Lifecycle("host-dispose", LifecycleWindowCounts());

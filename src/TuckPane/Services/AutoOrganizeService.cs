@@ -57,7 +57,8 @@ internal sealed class AutoOrganizeService
     internal async Task<AutoOrganizeRunSummary> ExecutePlanAsync(
         IReadOnlyList<AutoOrganizePlannedMove> plan,
         TransferQueue? transferQueue = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        Action<string, string, Guid>? onDesktopFolderImported = null)
     {
         if (plan.Count == 0) return new(0, 0, 0, null);
 
@@ -85,6 +86,18 @@ internal sealed class AutoOrganizeService
                     case TransferStatus.Moved when !string.IsNullOrWhiteSpace(outcome.DestinationPath):
                         moved++;
                         undoEntries.Add(new AutoOrganizeUndoEntry(outcome.SourcePath, outcome.DestinationPath, CreatedShortcutOnly: false));
+                        if (ShellFileOperationService.IsDesktopOrigin(outcome.SourcePath))
+                        {
+                            Guid orgId = group.First().TargetOrganizerId;
+                            bool isDir = Directory.Exists(outcome.DestinationPath);
+                            string relName = Path.GetFileName(outcome.DestinationPath.TrimEnd(Path.DirectorySeparatorChar));
+                            string? target = !isDir && Path.GetExtension(outcome.DestinationPath).Equals(".lnk", StringComparison.OrdinalIgnoreCase)
+                                ? ShortcutIntegrityService.InspectLink(outcome.DestinationPath)?.ExpandedTargetPath
+                                : null;
+                            DesktopOriginLedger.Shared.RecordMovedFromDesktop(outcome.SourcePath, orgId, relName, isDir, target);
+                            if (isDir)
+                                onDesktopFolderImported?.Invoke(outcome.SourcePath, outcome.DestinationPath, orgId);
+                        }
                         break;
                     case TransferStatus.ShortcutCreated when !string.IsNullOrWhiteSpace(outcome.DestinationPath):
                         shortcuts++;

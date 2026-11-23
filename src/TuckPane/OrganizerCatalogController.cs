@@ -940,6 +940,7 @@ internal sealed class OrganizerCatalogController
                 diagnostic.Complete(outcomes.Count);
             else diagnostic.Fail(new IOException());
             RebindMovedPortableWindows(outcomes);
+            RecordMovedFromDesktopOrigins(outcomes);
             if (_window.IsClosing) return;
             if (outcomes.Any(outcome => outcome.Status is TransferStatus.Moved or TransferStatus.Copied or TransferStatus.ShortcutCreated))
                 _window.InvalidateActiveSortCriterion();
@@ -1023,6 +1024,7 @@ internal sealed class OrganizerCatalogController
                     ? _window.Storage.ImportBatchAsync(paths, progress, token)
                     : _window.Storage.CopyBatchAsync(paths, progress, token));
                 RebindMovedPortableWindows(outcomes);
+                RecordMovedFromDesktopOrigins(outcomes);
                 if (outcomes.Any(outcome => outcome.Status is TransferStatus.Moved or TransferStatus.Copied or TransferStatus.ShortcutCreated))
                     _window.InvalidateActiveSortCriterion();
                 StartWatcher();
@@ -1370,6 +1372,7 @@ internal sealed class OrganizerCatalogController
         IReadOnlyList<TransferOutcome> outcomes = await _window.Host.TransferQueue.RunAsync(
             token => _window.Storage.ImportBatchAsync([path], progress: null, token));
         RebindMovedPortableWindows(outcomes);
+        RecordMovedFromDesktopOrigins(outcomes);
         bool moved = outcomes.Any(outcome => outcome.Status is TransferStatus.Moved or TransferStatus.ShortcutCreated);
         if (moved)
         {
@@ -1378,6 +1381,25 @@ internal sealed class OrganizerCatalogController
             await RefreshCatalogAsync(notifyUnsupported: false);
         }
         return moved;
+    }
+
+    private void RecordMovedFromDesktopOrigins(IEnumerable<TransferOutcome> outcomes)
+    {
+        Guid organizerId = _window.Definition.Id;
+        foreach (TransferOutcome outcome in outcomes)
+        {
+            if (outcome.Status != TransferStatus.Moved || string.IsNullOrWhiteSpace(outcome.DestinationPath)) continue;
+            if (!ShellFileOperationService.IsDesktopOrigin(outcome.SourcePath)) continue;
+            string destPath = outcome.DestinationPath;
+            bool isDir = Directory.Exists(destPath);
+            string relName = Path.GetFileName(destPath.TrimEnd(Path.DirectorySeparatorChar));
+            string? target = !isDir && Path.GetExtension(destPath).Equals(".lnk", StringComparison.OrdinalIgnoreCase)
+                ? ShortcutIntegrityService.InspectLink(destPath)?.ExpandedTargetPath
+                : null;
+            DesktopOriginLedger.Shared.RecordMovedFromDesktop(outcome.SourcePath, organizerId, relName, isDir, target);
+            if (isDir)
+                _window.Host.NotifyDesktopFolderImported(outcome.SourcePath, destPath, organizerId);
+        }
     }
 
     private void RebindMovedPortableWindows(IEnumerable<TransferOutcome> outcomes)
