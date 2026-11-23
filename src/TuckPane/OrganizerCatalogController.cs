@@ -1397,6 +1397,8 @@ internal sealed class OrganizerCatalogController
                 ? ShortcutIntegrityService.InspectLink(destPath)?.ExpandedTargetPath
                 : null;
             DesktopOriginLedger.Shared.RecordMovedFromDesktop(outcome.SourcePath, organizerId, relName, isDir, target);
+            if (isDir)
+                _window.Host.NotifyDesktopFolderImported(outcome.SourcePath, destPath, organizerId);
         }
     }
 

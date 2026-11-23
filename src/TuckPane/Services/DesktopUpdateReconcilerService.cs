@@ -98,7 +98,11 @@ internal sealed class DesktopUpdateReconcilerService : IDisposable
             lock (_stateSync)
             {
                 return _remainingMismatches
-                    .Select(m => m.IsService ? $"svc:{m.ServiceName}" : $"{m.RegistryHive}:{m.RegistrySubKeyPath}")
+                    .Select(m => m.IsService
+                        ? $"svc:{m.ServiceName}"
+                        : m.RegistrySubKeyPath.EndsWith(@"\Run", StringComparison.OrdinalIgnoreCase)
+                            ? $"{m.RegistryHive}:{m.RegistrySubKeyPath}:{m.ValueName}"
+                            : $"{m.RegistryHive}:{m.RegistrySubKeyPath}")
                     .Distinct(StringComparer.OrdinalIgnoreCase)
                     .Count();
             }
@@ -136,17 +140,131 @@ internal sealed class DesktopUpdateReconcilerService : IDisposable
         CancellationToken cancellationToken = default) =>
         RunReconcileCoreAsync(specificPaths: null, allowElevationUi, cancellationToken);
 
+    internal void NotifyFolderImportedFromDesktop(string oldDesktopPath, string newOrganizerPath, Guid organizerId)
+    {
+        if (!_enabled || _disposed) return;
+        if (string.IsNullOrWhiteSpace(oldDesktopPath) || string.IsNullOrWhiteSpace(newOrganizerPath)) return;
+
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await NotifyFolderImportedFromDesktopAsync(oldDesktopPath, newOrganizerPath, organizerId, _lifetime.Token);
+            }
+            catch (OperationCanceledException) { }
+            catch (ObjectDisposedException) { }
+            catch (Exception ex)
+            {
+                AppLogger.Error($"桌面目录入窗源头重绑失败：{oldDesktopPath} -> {newOrganizerPath}", ex);
+            }
+        });
+    }
+
+    internal async Task NotifyFolderImportedFromDesktopAsync(
+        string oldDesktopPath,
+        string newOrganizerPath,
+        Guid organizerId,
+        CancellationToken cancellationToken = default)
+    {
+        if (!_enabled || _disposed) return;
+
+        string normOld = DesktopUpdateMatchRules.NormalizePath(oldDesktopPath);
+        string normNew = DesktopUpdateMatchRules.NormalizePath(newOrganizerPath);
+        if (string.IsNullOrWhiteSpace(normOld) ||
+            string.IsNullOrWhiteSpace(normNew) ||
+            string.Equals(normOld, normNew, StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        CancellationTokenSource? linked = null;
+        try
+        {
+            linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _lifetime.Token);
+            CancellationToken ct = linked.Token;
+
+            await _reconcileGate.WaitAsync(ct);
+            try
+            {
+                if (!_enabled || _disposed) return;
+
+                AppStateV2 state = _getState();
+                List<string> shortcutRoots = BuildShortcutSearchRoots(state);
+
+                // Also search the parent directory of oldDesktopPath (e.g. a custom/temp Desktop root)
+                // unless it is the read-only Public Desktop directory.
+                string? oldParent = Path.GetDirectoryName(normOld);
+                string publicDesktop = DesktopUpdateMatchRules.NormalizePath(
+                    Environment.GetFolderPath(Environment.SpecialFolder.CommonDesktopDirectory));
+                if (!string.IsNullOrWhiteSpace(oldParent) &&
+                    Directory.Exists(oldParent) &&
+                    !string.Equals(DesktopUpdateMatchRules.NormalizePath(oldParent), publicDesktop, StringComparison.OrdinalIgnoreCase))
+                {
+                    shortcutRoots.Add(oldParent);
+                }
+
+                // 1. Immediately rebind all .lnk shortcuts across User Desktop, Start Menu, and all organizers.
+                int reboundCount = await Task.Run(
+                    () => DesktopUpdateMergeEngine.RebindShortcutsPointingToPrefix(normOld, normNew, shortcutRoots),
+                    ct);
+
+                // 2. Immediately scan installed app paths and silently repair all HKCU entries without UAC.
+                IReadOnlyList<InstalledAppPathMismatch> mismatches = await Task.Run(
+                    () => InstalledAppPathService.ScanMismatches(state),
+                    ct);
+                int hkcuRepaired = InstalledAppPathService.RepairCurrentUserMismatches(mismatches);
+                if (hkcuRepaired > 0)
+                {
+                    mismatches = await Task.Run(
+                        () => InstalledAppPathService.ScanMismatches(state),
+                        ct);
+                }
+
+                // 3. Refresh remaining mismatches so ConsoleWindow immediately surfaces any HKLM / Service
+                //    sync notice BEFORE the app ever attempts an update.
+                lock (_stateSync)
+                {
+                    _remainingMismatches = mismatches.ToList();
+                }
+
+                if (reboundCount > 0 || hkcuRepaired > 0 || mismatches.Count > 0)
+                {
+                    AppLogger.Info(
+                        $"收纳目录入窗源头重绑完成（Organizer={organizerId}）：{Path.GetFileName(normNew)}（快捷方式重绑 {reboundCount}，HKCU 修复 {hkcuRepaired}，待提权同步 {mismatches.Count}）");
+                }
+
+                StateChanged?.Invoke();
+            }
+            finally
+            {
+                _reconcileGate.Release();
+            }
+        }
+        catch (ObjectDisposedException) when (_disposed)
+        {
+            // Service disposed concurrently during shutdown.
+        }
+        finally
+        {
+            linked?.Dispose();
+        }
+    }
+
     internal async Task<ElevatedRepairOutcome> ResolveLockedAndRepairAllAsync(
         bool includeLockedMerges,
         bool includeRegistryRepairs,
         CancellationToken cancellationToken = default)
     {
         IReadOnlyList<PendingDesktopUpdateItem> lockedItems;
+        IReadOnlyList<PendingDesktopUpdateItem> cleanupItems;
         IReadOnlyList<InstalledAppPathMismatch> mismatches;
         lock (_stateSync)
         {
             lockedItems = _pendingItems
                 .Where(p => p.Status == DesktopUpdateMergeStatus.BlockedByLock && p.Match.DesktopItem.IsDirectory)
+                .ToArray();
+            cleanupItems = _pendingItems
+                .Where(p => p.Status == DesktopUpdateMergeStatus.MergedPendingSourceCleanup && !p.Match.DesktopItem.IsDirectory)
                 .ToArray();
             mismatches = _remainingMismatches.ToArray();
         }
@@ -201,7 +319,35 @@ internal sealed class DesktopUpdateReconcilerService : IDisposable
             }
         }
 
-        if (elevatedMismatches.Length == 0 && directives.Count == 0)
+        // Collect Public Desktop duplicate files whose updated organizer target is verified present on disk,
+        // so both locked folder merges and Public Desktop cleanups finish in a single UAC click.
+        var cleanupFilePaths = new List<string>();
+        var verifiedCleanupItems = new List<PendingDesktopUpdateItem>();
+        if (includeLockedMerges || includeRegistryRepairs)
+        {
+            foreach (PendingDesktopUpdateItem pending in cleanupItems)
+            {
+                string sourcePath = DesktopUpdateMatchRules.NormalizePath(pending.Match.DesktopItem.FullPath);
+                string targetPath = DesktopUpdateMatchRules.NormalizePath(pending.Match.TargetFullPath);
+                string storageDir = DesktopUpdateMatchRules.NormalizePath(pending.Match.TargetStorageDirectory);
+                if (string.IsNullOrWhiteSpace(sourcePath) ||
+                    string.IsNullOrWhiteSpace(targetPath) ||
+                    string.IsNullOrWhiteSpace(storageDir))
+                {
+                    continue;
+                }
+
+                if (!targetPath.StartsWith(storageDir + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
+                    continue;
+                if (!File.Exists(targetPath) || !File.Exists(sourcePath))
+                    continue;
+
+                cleanupFilePaths.Add(sourcePath);
+                verifiedCleanupItems.Add(pending);
+            }
+        }
+
+        if (elevatedMismatches.Length == 0 && directives.Count == 0 && cleanupFilePaths.Count == 0)
         {
             _ = await ReconcileAllAsync(allowElevationUi: false, cancellationToken);
             return new(true, false, hkcuHealed, 0, 0, null, null, []);
@@ -215,12 +361,15 @@ internal sealed class DesktopUpdateReconcilerService : IDisposable
                 elevatedMismatches,
                 directives,
                 shortcutRoots,
-                token),
+                token,
+                cleanupFilePaths),
             cancellationToken);
 
         // Refresh affected organizers and re-scan state cleanly.
         if (outcome.Succeeded)
         {
+            foreach (PendingDesktopUpdateItem item in verifiedCleanupItems)
+                ShellChangeNotificationService.NotifyMoved(item.Match.DesktopItem.FullPath, item.Match.TargetFullPath);
             foreach (PendingDesktopUpdateItem item in lockedItems)
                 _onOrganizerUpdated(item.Match.TargetOrganizerId, item.Match.TargetRelativeName);
         }
@@ -527,11 +676,14 @@ internal sealed class DesktopUpdateReconcilerService : IDisposable
         }
     }
 
-    private static List<string> BuildShortcutSearchRoots(AppStateV2 state)
+    internal static List<string> BuildShortcutSearchRoots(AppStateV2 state)
     {
         var roots = new List<string>();
-        if (!string.IsNullOrWhiteSpace(AppPaths.DesktopRoot))
+        if (!string.IsNullOrWhiteSpace(AppPaths.DesktopRoot) && Directory.Exists(AppPaths.DesktopRoot))
             roots.Add(AppPaths.DesktopRoot);
+        string startMenu = Environment.GetFolderPath(Environment.SpecialFolder.StartMenu);
+        if (!string.IsNullOrWhiteSpace(startMenu) && Directory.Exists(startMenu))
+            roots.Add(startMenu);
         foreach (OrganizerDefinition organizer in state.Organizers)
         {
             string storageDir = AppPaths.ResolveStoragePath(organizer);

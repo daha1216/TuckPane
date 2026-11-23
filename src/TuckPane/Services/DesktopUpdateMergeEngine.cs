@@ -560,19 +560,85 @@ internal static class DesktopUpdateMergeEngine
         foreach (string root in searchRoots.Distinct(StringComparer.OrdinalIgnoreCase))
         {
             if (string.IsNullOrWhiteSpace(root) || !Directory.Exists(root)) continue;
-            try
+            int maxDepth = IsStartMenuRoot(root) ? 3 : 1;
+            rebound += RebindShortcutsInDirectory(root, oldDirectoryPrefix, newDirectoryPrefix, currentDepth: 0, maxDepth);
+        }
+        return rebound;
+    }
+
+    private static bool IsStartMenuRoot(string root)
+    {
+        string norm = DesktopUpdateMatchRules.NormalizePath(root);
+        if (string.IsNullOrWhiteSpace(norm)) return false;
+
+        string userStartMenu = DesktopUpdateMatchRules.NormalizePath(
+            Environment.GetFolderPath(Environment.SpecialFolder.StartMenu));
+        if (!string.IsNullOrWhiteSpace(userStartMenu) &&
+            (norm.Equals(userStartMenu, StringComparison.OrdinalIgnoreCase) ||
+             norm.StartsWith(userStartMenu + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)))
+        {
+            return true;
+        }
+
+        string commonStartMenu = DesktopUpdateMatchRules.NormalizePath(
+            Environment.GetFolderPath(Environment.SpecialFolder.CommonStartMenu));
+        return !string.IsNullOrWhiteSpace(commonStartMenu) &&
+            (norm.Equals(commonStartMenu, StringComparison.OrdinalIgnoreCase) ||
+             norm.StartsWith(commonStartMenu + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static int RebindShortcutsInDirectory(
+        string directory,
+        string oldDirectoryPrefix,
+        string newDirectoryPrefix,
+        int currentDepth,
+        int maxDepth)
+    {
+        int rebound = 0;
+        try
+        {
+            foreach (string lnk in Directory.EnumerateFiles(directory, "*.lnk", SearchOption.TopDirectoryOnly))
             {
-                foreach (string lnk in Directory.EnumerateFiles(root, "*.lnk", SearchOption.TopDirectoryOnly))
-                {
-                    if (ShortcutIntegrityService.RebindShortcutPrefix(lnk, oldDirectoryPrefix, newDirectoryPrefix))
-                        rebound++;
-                }
-            }
-            catch
-            {
-                // Ignore inaccessible search roots.
+                if (ShortcutIntegrityService.RebindShortcutPrefix(lnk, oldDirectoryPrefix, newDirectoryPrefix))
+                    rebound++;
             }
         }
+        catch
+        {
+            // Ignore inaccessible directory.
+        }
+
+        if (currentDepth >= maxDepth)
+            return rebound;
+
+        try
+        {
+            foreach (string childDir in Directory.EnumerateDirectories(directory, "*", SearchOption.TopDirectoryOnly))
+            {
+                try
+                {
+                    FileAttributes attrs = File.GetAttributes(childDir);
+                    if ((attrs & (FileAttributes.Hidden | FileAttributes.System | FileAttributes.ReparsePoint)) != 0)
+                        continue;
+
+                    rebound += RebindShortcutsInDirectory(
+                        childDir,
+                        oldDirectoryPrefix,
+                        newDirectoryPrefix,
+                        currentDepth + 1,
+                        maxDepth);
+                }
+                catch
+                {
+                    // Ignore inaccessible subdirectory.
+                }
+            }
+        }
+        catch
+        {
+            // Ignore inaccessible directory.
+        }
+
         return rebound;
     }
 

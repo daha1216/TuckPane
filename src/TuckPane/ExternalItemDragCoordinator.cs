@@ -181,13 +181,12 @@ internal sealed class ExternalItemDragCoordinator
             return;
         }
         IReadOnlyList<WidgetItem> dragItems = _window.GetDragPayloadItems(item);
-        bool useNativeShellDrag = item.Kind is WidgetItemKind.Shortcut or WidgetItemKind.InternetShortcut ||
-            dragItems.Count > 1;
+        bool useNativeShellDrag = item.Kind != WidgetItemKind.Note;
         if (useNativeShellDrag)
         {
             await _window.RunWindowSafelyAsync(
                 () => BeginNativeShellDragAsync(item, host, session, dragItems),
-                "快捷方式 Shell 拖出启动失败");
+                "Shell 文件拖出启动失败");
             return;
         }
         await _window.RunWindowSafelyAsync(
@@ -293,25 +292,105 @@ internal sealed class ExternalItemDragCoordinator
         bool internalDropAccepted = false;
         bool dragCompleted = false;
         bool visualStateFinished = false;
+        long ghostToken = _window.EnsureFloatingDragGhostActive(item, host, session, dragWidgets);
         _window.BeginExternalDragHandoff(host, item.RelativeName, keepBoundaryHook: true, releasePointerCapture: true, startMotionRendering: true);
         using CancellationTokenSource preparationCancellation = new(TimeSpan.FromSeconds(10));
         _shellPreparationCancellation = preparationCancellation;
         try
         {
             (double cellWidth, double cellHeight) = _window.NativeDragCellDimensions;
+            bool preferMove = OrganizerInteractionMath.ExternalDragRequestedOperation(item.Kind) == DataPackageOperation.Move;
+            bool allowLink = OrganizerInteractionMath.ExternalDragAllowedOperations(item.Kind).HasFlag(DataPackageOperation.Link);
             shellSession = await ShellDragService.PrepareAsync(
                 dragPaths,
                 session.GrabOffset.X / cellWidth,
                 session.GrabOffset.Y / cellHeight,
-                cancellationToken: preparationCancellation.Token);
+                preferMove: preferMove,
+                cancellationToken: preparationCancellation.Token,
+                suppressSystemDragImage: ghostToken != 0);
+
+            FloatingDragBadgeKind lastBadgeKind = FloatingDragBadgeKind.None;
+            string? lastBadgeText = null;
+            void HandleShellDragFeedback(ShellDragFeedbackSnapshot fb)
+            {
+                if (ghostToken == 0) return;
+                FloatingDragBadgeKind nextKind = FloatingDragBadgeKind.None;
+                string? nextText = null;
+                if (_window.ContainsScreenPoint(fb.Cursor) && _window.IsPointerOverWindow(fb.Cursor))
+                {
+                    nextKind = FloatingDragBadgeKind.None;
+                    nextText = null;
+                }
+                else if (_window.Host.TryFindOrganizerUnderCursor(fb.Cursor, _window.OrganizerId, out string targetOrgName))
+                {
+                    if (fb.ControlHeld)
+                    {
+                        nextKind = FloatingDragBadgeKind.CopyToOrganizer;
+                        nextText = AppStrings.Format("DragBadgeCopyToOrganizerFormat", targetOrgName);
+                    }
+                    else
+                    {
+                        nextKind = FloatingDragBadgeKind.MoveToOrganizer;
+                        nextText = AppStrings.Format("DragBadgeMoveToOrganizerFormat", targetOrgName);
+                    }
+                }
+                else if (fb.OverDesktop)
+                {
+                    if (fb.ControlHeld)
+                    {
+                        nextKind = FloatingDragBadgeKind.CopyToDesktop;
+                        nextText = AppStrings.Get("DragBadgeCopyToDesktop");
+                    }
+                    else
+                    {
+                        nextKind = FloatingDragBadgeKind.MoveToDesktop;
+                        nextText = AppStrings.Get("DragBadgeMoveToDesktop");
+                    }
+                }
+
+                if (nextKind != lastBadgeKind || !string.Equals(nextText, lastBadgeText, StringComparison.Ordinal))
+                {
+                    lastBadgeKind = nextKind;
+                    lastBadgeText = nextText;
+                    FloatingDragGhostController.Shared.UpdateBadge(ghostToken, nextKind, nextText);
+                }
+            }
+
             ShellDragResult result = ShellDragService.Move(
                 _window.Hwnd,
                 shellSession,
                 default,
-                () => _window.IsClosing);
+                () => _window.IsClosing,
+                allowLink: allowLink,
+                onFeedback: ghostToken != 0 ? HandleShellDragFeedback : null);
             dragCompleted = result.Outcome != ShellDragOutcome.Cancelled;
             internalDropAccepted = _window.WasInternalOleDropAccepted;
             AppLogger.Info($"Shell拖出交接：结果={result.Outcome}，桌面复制={result.DesktopCopyRequested}，项目数={dragPaths.Length}，路径={dragPath}。");
+
+            NativeMethods.POINT? desktopDropPoint = null;
+            if (internalDropAccepted)
+            {
+                _window.CompleteFloatingDragGhostLanding(null);
+            }
+            else if (result.Outcome == ShellDragOutcome.DesktopRequested)
+            {
+                NativeMethods.POINT dropPoint = result.DesktopDropPoint
+                    ?? result.LastCursorPoint
+                    ?? (NativeMethods.GetCursorPos(out NativeMethods.POINT currentCursor) ? currentCursor : default);
+                desktopDropPoint = dropPoint;
+                _window.CompleteFloatingDragGhostLanding(dropPoint);
+            }
+            else if (result.Outcome == ShellDragOutcome.Cancelled)
+            {
+                _window.CompleteFloatingDragGhostRebound();
+            }
+            else
+            {
+                NativeMethods.POINT? landingPoint = result.LastCursorPoint
+                    ?? (NativeMethods.GetCursorPos(out NativeMethods.POINT dropPt) ? dropPt : null);
+                _window.CompleteFloatingDragGhostLanding(landingPoint);
+            }
+
             if (internalDropAccepted && ReferenceEquals(_window.ActiveReorderSession, session))
             {
                 await _window.CommitNativeItemReorderAsync(session);
@@ -333,6 +412,7 @@ internal sealed class ExternalItemDragCoordinator
 
             if (result.Outcome == ShellDragOutcome.DesktopRequested)
             {
+                var positionedDesktopPaths = new List<string>(dragPaths.Length);
                 if (result.DesktopCopyRequested)
                 {
                     bool anyCopied = false;
@@ -354,6 +434,7 @@ internal sealed class ExternalItemDragCoordinator
                         else if (copied.DestinationPath is { } copiedDestination)
                         {
                             anyCopied = true;
+                            positionedDesktopPaths.Add(copiedDestination);
                             await Task.Run(() => ShellChangeNotificationService.NotifyCreated(copiedDestination));
                         }
                     }
@@ -374,8 +455,12 @@ internal sealed class ExternalItemDragCoordinator
                                 : moved.Status == TransferStatus.CopiedSourceRetained ? InfoBarSeverity.Warning : InfoBarSeverity.Error);
                             if (moved.Status == TransferStatus.CopiedSourceRetained)
                             {
-                                if (!File.Exists(currentPath) && moved.DestinationPath is { } retained && File.Exists(retained))
-                                    _window.Host.RebindPortableWindowAfterMove(currentPath, retained);
+                                if (moved.DestinationPath is { } retained && (File.Exists(retained) || Directory.Exists(retained)))
+                                {
+                                    positionedDesktopPaths.Add(retained);
+                                    if (!File.Exists(currentPath))
+                                        _window.Host.RebindPortableWindowAfterMove(currentPath, retained);
+                                }
                                 anyChanged = true;
                             }
                         }
@@ -383,6 +468,7 @@ internal sealed class ExternalItemDragCoordinator
                         {
                             if (moved.DestinationPath is { } destination)
                             {
+                                positionedDesktopPaths.Add(destination);
                                 _window.Host.RebindPortableWindowAfterMove(currentPath, destination);
                                 await Task.Run(() => ShellChangeNotificationService.NotifyMoved(currentPath, destination));
                             }
@@ -394,6 +480,11 @@ internal sealed class ExternalItemDragCoordinator
                         if (dragPaths.Length > 1) _window.ClearItemSelection();
                         await _window.RefreshCatalogAsync(notifyUnsupported: false);
                     }
+                }
+
+                if (positionedDesktopPaths.Count > 0 && desktopDropPoint is NativeMethods.POINT dropPointPx)
+                {
+                    _ = PositionDroppedDesktopItemsSafelyAsync(positionedDesktopPaths, dropPointPx);
                 }
             }
             else if (result.Outcome == ShellDragOutcome.ExternalMoved)
@@ -414,13 +505,14 @@ internal sealed class ExternalItemDragCoordinator
         }
         catch (Exception ex)
         {
-            AppLogger.Error($"快捷方式Shell拖出失败：{item.FullPath}", ex);
+            AppLogger.Error($"Shell文件拖出失败：{item.FullPath}", ex);
             _window.ShowOrganizerMessage(AppStrings.Format("DragItemErrorFormat", item.Name, ex.Message), InfoBarSeverity.Error);
         }
         finally
         {
             try
             {
+                _window.CancelFloatingDragGhostIfStillActive();
                 _window.StopBoundaryHookForExternalDrag();
                 if (!visualStateFinished) _window.CompleteExternalDragVisualState(session);
                 shellSession?.Dispose();
@@ -431,7 +523,8 @@ internal sealed class ExternalItemDragCoordinator
             }
             catch (Exception cleanupError)
             {
-                AppLogger.Error("快捷方式 Shell 拖出清理失败。", cleanupError);
+                AppLogger.Error("Shell 文件拖出清理失败。", cleanupError);
+                _window.CancelFloatingDragGhostIfStillActive();
                 _window.StopBoundaryHookForExternalDrag();
                 shellSession?.Dispose();
                 _window.ClearExternalDragFlags();
@@ -439,6 +532,25 @@ internal sealed class ExternalItemDragCoordinator
             }
             if (ReferenceEquals(_shellPreparationCancellation, preparationCancellation))
                 _shellPreparationCancellation = null;
+        }
+    }
+
+    private static async Task PositionDroppedDesktopItemsSafelyAsync(
+        IReadOnlyList<string> destinationPaths,
+        NativeMethods.POINT dropPointPx)
+    {
+        try
+        {
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(4));
+            _ = await DesktopIconPositionService.PositionDroppedDesktopItemsAsync(
+                destinationPaths,
+                dropPointPx,
+                cts.Token);
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception ex)
+        {
+            AppLogger.Error("无法将拖出至桌面的图标定位到释放坐标。", ex);
         }
     }
 
@@ -519,6 +631,15 @@ internal sealed class ExternalItemDragCoordinator
                 sourceItemExists);
             dragCompleted = operation != DataPackageOperation.None || externalSourceMoved;
             AppLogger.Info($"WinUI拖出交接：结果={operation}，路径={dragPath}。");
+            if (_window.IsFloatingDragGhostActive)
+            {
+                if (internalDropAccepted)
+                    _window.CompleteFloatingDragGhostLanding(null);
+                else if (dragCompleted)
+                    _window.CompleteFloatingDragGhostLanding(NativeMethods.GetCursorPos(out NativeMethods.POINT dropPt) ? dropPt : null);
+                else
+                    _window.CompleteFloatingDragGhostRebound();
+            }
             if (internalDropAccepted && ReferenceEquals(_window.ActiveReorderSession, session))
             {
                 await _window.CommitNativeItemReorderAsync(session);
@@ -582,6 +703,7 @@ internal sealed class ExternalItemDragCoordinator
                         AppLogger.Error($"无法恢复取消的便签拖出：{noteId}", cleanupError);
                     }
                 }
+                _window.CancelFloatingDragGhostIfStillActive();
                 host.DragStarting -= PopulateDragData;
                 host.ReleasePointerCaptures();
                 _ = NativeMethods.ReleaseCapture();
@@ -594,6 +716,7 @@ internal sealed class ExternalItemDragCoordinator
             catch (Exception cleanupError)
             {
                 AppLogger.Error("WinUI 文件拖出清理失败。", cleanupError);
+                _window.CancelFloatingDragGhostIfStillActive();
                 host.DragStarting -= PopulateDragData;
                 host.ReleasePointerCaptures();
                 _ = NativeMethods.ReleaseCapture();

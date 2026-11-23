@@ -69,7 +69,8 @@ internal static class CiHeadlessRunner
         ["--desktop-move-8x8"],
         ["--liquid-glass-perf"],
         ["--commercial-grade-audit"],
-        ["--desktop-update-reconciler"]
+        ["--desktop-update-reconciler"],
+        ["--cross-window-drag"]
     ];
 
     internal static async Task RunAsync()

@@ -543,4 +543,8 @@ Storage path: {2}</value></data>
   <data name="DesktopUpdateSyncRepairDoneFormat" xml:space="preserve"><value>Repair complete: merged {0} files, updated {1} registry paths and {2} service paths (.reg backup saved).</value></data>
   <data name="DesktopUpdateSyncRepairCancelled" xml:space="preserve"><value>Administrator approval was cancelled. No registry entries or running apps were modified.</value></data>
   <data name="DesktopUpdateSyncErrorTitle" xml:space="preserve"><value>Desktop update sync failed</value></data>
+  <data name="DragBadgeMoveToDesktop" xml:space="preserve"><value>Move to Desktop</value></data>
+  <data name="DragBadgeCopyToDesktop" xml:space="preserve"><value>Copy to Desktop</value></data>
+  <data name="DragBadgeMoveToOrganizerFormat" xml:space="preserve"><value>Move to "{0}"</value></data>
+  <data name="DragBadgeCopyToOrganizerFormat" xml:space="preserve"><value>Copy to "{0}"</value></data>
 </root>

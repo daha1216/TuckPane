@@ -1396,7 +1396,7 @@ public sealed partial class MainWindow : Window
     private void PrepareItemElement(Border host, WidgetItem item, bool loadIcon)
     {
         host.Tag = item.RelativeName;
-        SetItemToolTip(host, IsDock || IsDocumentItem(item) || item.Kind == WidgetItemKind.Organizer ? item.Name : item.FullPath);
+        SetItemToolTip(host, item.Name);
         if (item.NoteId is Guid noteId)
         {
             Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(host, item.Name);
@@ -1545,7 +1545,7 @@ public sealed partial class MainWindow : Window
             return;
         }
         host.Tag = item.RelativeName;
-        SetItemToolTip(host, IsDock || IsDocumentItem(item) ? item.Name : item.FullPath);
+        SetItemToolTip(host, item.Name);
         if (item.NoteId is Guid noteId)
         {
             Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(host, item.Name);
@@ -3061,6 +3061,7 @@ public sealed partial class MainWindow : Window
 
     internal void ClosePermanently()
     {
+        CancelFloatingDragGhostIfStillActive();
         _host.EndOrganizerDragHover(this);
         _compactClicks.Reset();
         try { _compactBackdrop.DetachAndClose(); }

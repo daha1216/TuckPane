@@ -49,6 +49,12 @@ internal enum ShellDragOutcome
     Cancelled,
 }
 
+internal readonly record struct ShellDragFeedbackSnapshot(
+    NativeMethods.POINT Cursor,
+    bool OverDesktop,
+    bool ControlHeld,
+    uint Effect);
+
 internal readonly record struct ShellDragResult(
     ShellDragOutcome Outcome,
     NativeMethods.POINT? DesktopDropPoint,
@@ -57,7 +63,8 @@ internal readonly record struct ShellDragResult(
     TimeSpan? FirstFeedbackDelay,
     int CallbackCount,
     TimeSpan MaximumCallbackInterval,
-    TimeSpan DragDuration);
+    TimeSpan DragDuration,
+    NativeMethods.POINT? LastCursorPoint = null);
 
 internal static class ShellDragService
 {
@@ -282,7 +289,8 @@ internal static class ShellDragService
         string path,
         double grabRatioX = .5,
         double grabRatioY = .5,
-        bool preferMove = false)
+        bool preferMove = false,
+        bool suppressSystemDragImage = false)
     {
         long started = Stopwatch.GetTimestamp();
         ShellDataObject data = CreateDataObject(path);
@@ -296,29 +304,32 @@ internal static class ShellDragService
                 try { SetPreferredDropEffect((IDataObject)dataObject, DropEffectMove); }
                 finally { if (Marshal.IsComObject(dataObject)) _ = Marshal.ReleaseComObject(dataObject); }
             }
-            try
+            if (!suppressSystemDragImage)
             {
-                bitmap = IconCacheService.CreateDragBitmap(path, DragImageSize);
-                var grabOffset = new ShellDragPoint
+                try
                 {
-                    X = Math.Clamp((int)Math.Round(grabRatioX * DragImageSize), 0, DragImageSize - 1),
-                    Y = Math.Clamp((int)Math.Round(grabRatioY * DragImageSize), 0, DragImageSize - 1)
-                };
-                dragImageInitialized = TryInitializeDragImage(data.Pointer, bitmap, grabOffset);
-                if (dragImageInitialized)
-                {
-                    // IDragSourceHelper::InitializeFromBitmap transfers HBITMAP ownership to IDataObject on S_OK.
-                    bitmap = IntPtr.Zero;
+                    bitmap = IconCacheService.CreateDragBitmap(path, DragImageSize);
+                    var grabOffset = new ShellDragPoint
+                    {
+                        X = Math.Clamp((int)Math.Round(grabRatioX * DragImageSize), 0, DragImageSize - 1),
+                        Y = Math.Clamp((int)Math.Round(grabRatioY * DragImageSize), 0, DragImageSize - 1)
+                    };
+                    dragImageInitialized = TryInitializeDragImage(data.Pointer, bitmap, grabOffset);
+                    if (dragImageInitialized)
+                    {
+                        // IDragSourceHelper::InitializeFromBitmap transfers HBITMAP ownership to IDataObject on S_OK.
+                        bitmap = IntPtr.Zero;
+                    }
+                    else if (bitmap != IntPtr.Zero)
+                    {
+                        _ = NativeMethods.DeleteObject(bitmap);
+                        bitmap = IntPtr.Zero;
+                    }
                 }
-                else if (bitmap != IntPtr.Zero)
+                catch (Exception ex)
                 {
-                    _ = NativeMethods.DeleteObject(bitmap);
-                    bitmap = IntPtr.Zero;
+                    AppLogger.Error("无法准备自定义Shell拖动图像，将继续使用系统默认反馈。", ex);
                 }
-            }
-            catch (Exception ex)
-            {
-                AppLogger.Error("无法准备自定义Shell拖动图像，将继续使用系统默认反馈。", ex);
             }
             return new ShellDragSession(path, data, bitmap, dragImageInitialized, Stopwatch.GetElapsedTime(started));
         }
@@ -335,7 +346,8 @@ internal static class ShellDragService
         ShellDragSession session,
         NativeMethods.RECT desktopExclusionBounds,
         Func<bool>? cancellationRequested = null,
-        bool allowLink = true)
+        bool allowLink = true,
+        Action<ShellDragFeedbackSnapshot>? onFeedback = null)
     {
         ArgumentNullException.ThrowIfNull(session);
         session.ThrowIfDisposed();
@@ -346,7 +358,8 @@ internal static class ShellDragService
             desktopExclusionBounds,
             desktopSnapshot,
             dragStarted,
-            cancellationRequested);
+            cancellationRequested,
+            onFeedback);
         int oleResult = NativeMethods.OleInitialize(IntPtr.Zero);
         if (oleResult < 0) Marshal.ThrowExceptionForHR(oleResult);
         IntPtr dropSourcePointer = IntPtr.Zero;
@@ -372,7 +385,8 @@ internal static class ShellDragService
                 session.FirstFeedbackDelay,
                 session.CallbackCount,
                 session.MaximumCallbackInterval,
-                session.DragDuration);
+                session.DragDuration,
+                dropSource.LastCursorPoint);
         }
         finally
         {
@@ -498,12 +512,21 @@ internal static class ShellDragService
         NativeMethods.RECT desktopExclusionBounds,
         DesktopTargetSnapshot desktopSnapshot,
         long dragStarted,
-        Func<bool>? cancellationRequested) : IDropSource
+        Func<bool>? cancellationRequested,
+        Action<ShellDragFeedbackSnapshot>? onFeedback) : IDropSource
     {
+        private static readonly long FeedbackThrottleTicks = Math.Max(1L, Stopwatch.Frequency / 60);
+
         private long _lastCallbackAt;
+        private long _lastFeedbackAt;
+        private bool _hasPublishedFeedback;
+        private bool _lastOverDesktop;
+        private bool _lastControlHeld;
+        private uint _lastEffect;
 
         public bool DesktopRequested { get; private set; }
         public NativeMethods.POINT? DesktopDropPoint { get; private set; }
+        public NativeMethods.POINT? LastCursorPoint { get; private set; }
         public bool DesktopCopyRequested { get; private set; }
         public TimeSpan? FirstFeedbackDelay { get; private set; }
         public int CallbackCount { get; private set; }
@@ -511,15 +534,24 @@ internal static class ShellDragService
 
         public int QueryContinueDrag([MarshalAs(UnmanagedType.Bool)] bool escapePressed, uint keyState)
         {
-            NotifyShellLoopActive();
+            long now = NotifyShellLoopActive();
+            bool controlHeld = (keyState & MouseKeyControl) != 0;
+            bool hasCursor = NativeMethods.GetCursorPos(out NativeMethods.POINT cursor);
+            if (hasCursor) LastCursorPoint = cursor;
+
             if (escapePressed || cancellationRequested?.Invoke() == true) return DragDropCancel;
-            if ((keyState & MouseKeyLeft) != 0) return Success;
-            if (desktopSnapshot.TryGetDesktopDrop(owner, out NativeMethods.POINT dropPoint))
+            if ((keyState & MouseKeyLeft) != 0)
             {
-                if (DragBoundaryMath.Contains(desktopExclusionBounds, dropPoint)) return DragDropCancel;
+                if (hasCursor && onFeedback is not null)
+                    PublishFeedback(now, cursor, controlHeld, _lastEffect);
+                return Success;
+            }
+            if (hasCursor && desktopSnapshot.IsPointOverDesktop(owner, cursor))
+            {
+                if (DragBoundaryMath.Contains(desktopExclusionBounds, cursor)) return DragDropCancel;
                 DesktopRequested = true;
-                DesktopDropPoint = dropPoint;
-                DesktopCopyRequested = (keyState & MouseKeyControl) != 0;
+                DesktopDropPoint = cursor;
+                DesktopCopyRequested = controlHeld;
                 return DragDropCancel;
             }
             return DragDropDrop;
@@ -527,11 +559,47 @@ internal static class ShellDragService
 
         public int GiveFeedback(uint effect)
         {
-            NotifyShellLoopActive();
+            long now = NotifyShellLoopActive();
+            if (NativeMethods.GetCursorPos(out NativeMethods.POINT cursor))
+            {
+                LastCursorPoint = cursor;
+                if (onFeedback is not null)
+                {
+                    bool controlHeld = (NativeMethods.GetAsyncKeyState(NativeMethods.VK_CONTROL) & 0x8000) != 0;
+                    PublishFeedback(now, cursor, controlHeld, effect);
+                    return DragDropUseDefaultCursors;
+                }
+            }
+            _lastEffect = effect;
             return DragDropUseDefaultCursors;
         }
 
-        private void NotifyShellLoopActive()
+        private void PublishFeedback(long now, NativeMethods.POINT cursor, bool controlHeld, uint effect)
+        {
+            bool overDesktop = desktopSnapshot.IsPointOverDesktop(owner, cursor) &&
+                !DragBoundaryMath.Contains(desktopExclusionBounds, cursor);
+            bool stateChanged = !_hasPublishedFeedback ||
+                overDesktop != _lastOverDesktop ||
+                controlHeld != _lastControlHeld ||
+                effect != _lastEffect;
+            if (!stateChanged && now - _lastFeedbackAt < FeedbackThrottleTicks) return;
+
+            _hasPublishedFeedback = true;
+            _lastFeedbackAt = now;
+            _lastOverDesktop = overDesktop;
+            _lastControlHeld = controlHeld;
+            _lastEffect = effect;
+            try
+            {
+                onFeedback?.Invoke(new ShellDragFeedbackSnapshot(cursor, overDesktop, controlHeld, effect));
+            }
+            catch (Exception ex)
+            {
+                AppLogger.Error("Shell拖动反馈回调失败。", ex);
+            }
+        }
+
+        private long NotifyShellLoopActive()
         {
             long now = Stopwatch.GetTimestamp();
             if (CallbackCount == 0)
@@ -545,6 +613,7 @@ internal static class ShellDragService
             }
             _lastCallbackAt = now;
             CallbackCount++;
+            return now;
         }
     }
 
@@ -577,16 +646,20 @@ internal static class ShellDragService
                 desktopView == IntPtr.Zero ? IntPtr.Zero : NativeMethods.GetParent(desktopView));
         }
 
-        internal bool TryGetDesktopDrop(IntPtr owner, out NativeMethods.POINT point)
+        internal bool IsPointOverDesktop(IntPtr owner, NativeMethods.POINT point)
         {
-            point = default;
-            if (DesktopView == IntPtr.Zero || !NativeMethods.IsWindow(DesktopView) ||
-                !NativeMethods.GetCursorPos(out point)) return false;
+            if (DesktopView == IntPtr.Zero || !NativeMethods.IsWindow(DesktopView)) return false;
             IntPtr hit = NativeMethods.WindowFromPoint(point);
             if (hit == IntPtr.Zero || hit == owner || NativeMethods.IsChild(owner, hit)) return false;
             return hit == ListView || hit == DesktopView || hit == DesktopHost ||
                 (ListView != IntPtr.Zero && NativeMethods.IsChild(ListView, hit)) ||
                 (DesktopView != IntPtr.Zero && NativeMethods.IsChild(DesktopView, hit));
+        }
+
+        internal bool TryGetDesktopDrop(IntPtr owner, out NativeMethods.POINT point)
+        {
+            point = default;
+            return NativeMethods.GetCursorPos(out point) && IsPointOverDesktop(owner, point);
         }
     }
 
@@ -595,15 +668,17 @@ internal static class ShellDragService
         double grabRatioX = .5,
         double grabRatioY = .5,
         bool preferMove = false,
-        CancellationToken cancellationToken = default) =>
-        PrepareAsync([path], grabRatioX, grabRatioY, preferMove, cancellationToken);
+        CancellationToken cancellationToken = default,
+        bool suppressSystemDragImage = false) =>
+        PrepareAsync([path], grabRatioX, grabRatioY, preferMove, cancellationToken, suppressSystemDragImage);
 
     internal static async Task<ShellDragSession> PrepareAsync(
         IReadOnlyList<string> paths,
         double grabRatioX = .5,
         double grabRatioY = .5,
         bool preferMove = false,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        bool suppressSystemDragImage = false)
     {
         ArgumentNullException.ThrowIfNull(paths);
         if (paths.Count == 0) throw new FileNotFoundException(AppStrings.Get("ShellDragMissing"));
@@ -623,58 +698,61 @@ internal static class ShellDragService
                 finally { if (Marshal.IsComObject(dataObject)) _ = Marshal.ReleaseComObject(dataObject); }
             }
 
-            try
+            if (!suppressSystemDragImage)
             {
-                Task<IntPtr> bitmapTask = Task.Run(
-                    () => IconCacheService.CreateDragBitmap(primaryPath, DragImageSize));
-                if (cancellationToken.CanBeCanceled)
+                try
                 {
-                    Task completed = await Task.WhenAny(
-                        bitmapTask,
-                        Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken));
-                    if (!ReferenceEquals(completed, bitmapTask))
+                    Task<IntPtr> bitmapTask = Task.Run(
+                        () => IconCacheService.CreateDragBitmap(primaryPath, DragImageSize));
+                    if (cancellationToken.CanBeCanceled)
                     {
-                        _ = bitmapTask.ContinueWith(
-                            task =>
-                            {
-                                if (task.Status == TaskStatus.RanToCompletion && task.Result != IntPtr.Zero)
-                                    _ = NativeMethods.DeleteObject(task.Result);
-                                else if (task.IsFaulted)
-                                    _ = task.Exception;
-                            },
-                            CancellationToken.None,
-                            TaskContinuationOptions.ExecuteSynchronously,
-                            TaskScheduler.Default);
-                        cancellationToken.ThrowIfCancellationRequested();
+                        Task completed = await Task.WhenAny(
+                            bitmapTask,
+                            Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken));
+                        if (!ReferenceEquals(completed, bitmapTask))
+                        {
+                            _ = bitmapTask.ContinueWith(
+                                task =>
+                                {
+                                    if (task.Status == TaskStatus.RanToCompletion && task.Result != IntPtr.Zero)
+                                        _ = NativeMethods.DeleteObject(task.Result);
+                                    else if (task.IsFaulted)
+                                        _ = task.Exception;
+                                },
+                                CancellationToken.None,
+                                TaskContinuationOptions.ExecuteSynchronously,
+                                TaskScheduler.Default);
+                            cancellationToken.ThrowIfCancellationRequested();
+                        }
                     }
+                    bitmap = await bitmapTask;
+                    cancellationToken.ThrowIfCancellationRequested();
+                    var grabOffset = new ShellDragPoint
+                    {
+                        X = Math.Clamp((int)Math.Round(grabRatioX * DragImageSize), 0, DragImageSize - 1),
+                        Y = Math.Clamp((int)Math.Round(grabRatioY * DragImageSize), 0, DragImageSize - 1)
+                    };
+                    dragImageInitialized = TryInitializeDragImage(data.Pointer, bitmap, grabOffset);
+                    if (dragImageInitialized)
+                    {
+                        // IDragSourceHelper::InitializeFromBitmap transfers HBITMAP ownership to IDataObject on S_OK.
+                        bitmap = IntPtr.Zero;
+                    }
+                    else if (bitmap != IntPtr.Zero)
+                    {
+                        _ = NativeMethods.DeleteObject(bitmap);
+                        bitmap = IntPtr.Zero;
+                    }
+                    cancellationToken.ThrowIfCancellationRequested();
                 }
-                bitmap = await bitmapTask;
-                cancellationToken.ThrowIfCancellationRequested();
-                var grabOffset = new ShellDragPoint
+                catch (OperationCanceledException)
                 {
-                    X = Math.Clamp((int)Math.Round(grabRatioX * DragImageSize), 0, DragImageSize - 1),
-                    Y = Math.Clamp((int)Math.Round(grabRatioY * DragImageSize), 0, DragImageSize - 1)
-                };
-                dragImageInitialized = TryInitializeDragImage(data.Pointer, bitmap, grabOffset);
-                if (dragImageInitialized)
-                {
-                    // IDragSourceHelper::InitializeFromBitmap transfers HBITMAP ownership to IDataObject on S_OK.
-                    bitmap = IntPtr.Zero;
+                    throw;
                 }
-                else if (bitmap != IntPtr.Zero)
+                catch (Exception ex)
                 {
-                    _ = NativeMethods.DeleteObject(bitmap);
-                    bitmap = IntPtr.Zero;
+                    AppLogger.Error("无法准备自定义Shell拖动图像，将继续使用系统默认反馈。", ex);
                 }
-                cancellationToken.ThrowIfCancellationRequested();
-            }
-            catch (OperationCanceledException)
-            {
-                throw;
-            }
-            catch (Exception ex)
-            {
-                AppLogger.Error("无法准备自定义Shell拖动图像，将继续使用系统默认反馈。", ex);
             }
 
             cancellationToken.ThrowIfCancellationRequested();

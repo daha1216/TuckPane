@@ -1,3 +1,7 @@
+using System.Diagnostics;
+using System.Runtime.InteropServices;
+using System.Runtime.InteropServices.ComTypes;
+using System.Text;
 using System.Xml.Linq;
 using TuckPane.Core;
 using TuckPane.Models;
@@ -14,8 +18,11 @@ internal static class DesktopUpdateReconcilerChecks
 
         CheckMultiSignalMatching(Require);
         CheckRegistryPathPrefixRewriting(Require);
+        CheckDepth2FolderMappingAndTargetResolution(Require);
+        CheckElevatedRepairScriptContractsAndPowerShellSyntax(Require);
         CheckOriginLedgerAndSuppression(Require);
         await CheckAtomicFileAndDirectoryMergesAsync(Require);
+        await CheckProactiveImportShortcutRebindAsync(Require);
         await CheckSettingsRoundTripAndUiContractsAsync(Require);
 
         Console.WriteLine("DesktopUpdateReconcilerChecks: all assertions passed.");
@@ -137,6 +144,239 @@ internal static class DesktopUpdateReconcilerChecks
 
         require(!DesktopUpdateMatchRules.TryRewritePathPrefix(@"C:\Users\mjq\Desktop\vpn2\Bettbox\", oldPrefix, newPrefix, out _),
             "路径前缀边界校验失效：Desktop\\vpn 错误匹配到了 Desktop\\vpn2。");
+
+        // InstallSource & ModifyPath edge cases
+        require(DesktopUpdateMatchRules.TryRewritePathPrefix(@"C:\Users\mjq\Desktop\vpn\Bettbox\", oldPrefix, newPrefix, out string rInstallSource) &&
+                rInstallSource == @"C:\Users\mjq\TuckPane\Windows\Core\vpn\Bettbox\" &&
+                DesktopUpdateMatchRules.ExtractLeadingPath(rInstallSource) == @"C:\Users\mjq\TuckPane\Windows\Core\vpn\Bettbox\",
+            $"InstallSource 路径重写或提取失败：{rInstallSource}");
+
+        require(DesktopUpdateMatchRules.TryRewritePathPrefix("MsiExec.exe /I \"C:\\Users\\mjq\\Desktop\\vpn\\Bettbox\\setup.msi\"", oldPrefix, newPrefix, out string rModifyQuoted) &&
+                rModifyQuoted == "MsiExec.exe /I \"C:\\Users\\mjq\\TuckPane\\Windows\\Core\\vpn\\Bettbox\\setup.msi\"",
+            $"ModifyPath 带引号 MSI 参数重写失败：{rModifyQuoted}");
+
+        require(DesktopUpdateMatchRules.TryRewritePathPrefix(@"MsiExec.exe /I{GUID} INSTALLDIR=C:\Users\mjq\Desktop\vpn\Bettbox", oldPrefix, newPrefix, out string rModifyProp) &&
+                rModifyProp == @"MsiExec.exe /I{GUID} INSTALLDIR=C:\Users\mjq\TuckPane\Windows\Core\vpn\Bettbox",
+            $"ModifyPath INSTALLDIR= 参数重写失败：{rModifyProp}");
+
+        // App Paths (Default) & semicolon-delimited Path list edge cases
+        require(DesktopUpdateMatchRules.TryRewritePathPrefix(@"C:\Users\mjq\Desktop\vpn\Bettbox;C:\Users\mjq\Desktop\vpn\Bettbox\bin", oldPrefix, newPrefix, out string rAppPathList) &&
+                rAppPathList == @"C:\Users\mjq\TuckPane\Windows\Core\vpn\Bettbox;C:\Users\mjq\TuckPane\Windows\Core\vpn\Bettbox\bin",
+            $"App Paths 分号多段 Path 重写失败：{rAppPathList}");
+
+        require(DesktopUpdateMatchRules.TryRewritePathPrefix(@"C:\Users\mjq\Desktop\vpn2;C:\Users\mjq\Desktop\vpn\Bettbox", oldPrefix, newPrefix, out string rAppPathSkipFalse) &&
+                rAppPathSkipFalse == @"C:\Users\mjq\Desktop\vpn2;C:\Users\mjq\TuckPane\Windows\Core\vpn\Bettbox",
+            $"App Paths 跳过假前缀并重写后续段失败：{rAppPathSkipFalse}");
+
+        require(DesktopUpdateMatchRules.ExtractLeadingPath(@"C:\Users\mjq\Desktop\vpn\Bettbox;C:\Users\mjq\Desktop\vpn\Bettbox\bin") == @"C:\Users\mjq\Desktop\vpn\Bettbox",
+            "ExtractLeadingPath 未正确提取分号分隔 PATH 的首段。");
+
+        // Run auto-start quoted / unquoted command lines & icon/comma edge cases
+        require(DesktopUpdateMatchRules.TryRewritePathPrefix("\"C:\\Users\\mjq\\Desktop\\vpn\\Clash Verge\\clash-verge.exe\" --minimized", oldPrefix, newPrefix, out string rRunQuoted) &&
+                rRunQuoted == "\"C:\\Users\\mjq\\TuckPane\\Windows\\Core\\vpn\\Clash Verge\\clash-verge.exe\" --minimized" &&
+                DesktopUpdateMatchRules.ExtractLeadingPath(rRunQuoted) == @"C:\Users\mjq\TuckPane\Windows\Core\vpn\Clash Verge\clash-verge.exe",
+            $"Run 带引号自启动命令行重写或提取失败：{rRunQuoted}");
+
+        require(DesktopUpdateMatchRules.TryRewritePathPrefix(@"C:\Users\mjq\Desktop\vpn\Bettbox\Bettbox.exe --autostart", oldPrefix, newPrefix, out string rRunUnquoted) &&
+                DesktopUpdateMatchRules.ExtractLeadingPath(rRunUnquoted) == @"C:\Users\mjq\TuckPane\Windows\Core\vpn\Bettbox\Bettbox.exe",
+            $"Run 无引号 .exe 自启动命令行重写或提取失败：{rRunUnquoted}");
+
+        require(DesktopUpdateMatchRules.ExtractLeadingPath(@"C:\Users\mjq\Desktop\vpn\Bettbox\start.bat /silent") == @"C:\Users\mjq\Desktop\vpn\Bettbox\start.bat",
+            "ExtractLeadingPath 未正确截断无引号 .bat 命令行参数。");
+
+        require(DesktopUpdateMatchRules.ExtractLeadingPath("\"C:\\Users\\mjq\\Desktop\\vpn\\Bettbox\\Bettbox.exe,0\"") == @"C:\Users\mjq\Desktop\vpn\Bettbox\Bettbox.exe",
+            "ExtractLeadingPath 未剥离引号内末尾图标索引 ,0。");
+
+        require(DesktopUpdateMatchRules.ExtractLeadingPath(@"C:\Users\mjq\Desktop\vpn\My Folder, 2026\App.exe") == @"C:\Users\mjq\Desktop\vpn\My Folder, 2026\App.exe",
+            "ExtractLeadingPath 误剥离了目录名中的非索引逗号。");
+    }
+
+    private static void CheckDepth2FolderMappingAndTargetResolution(Action<bool, string> require)
+    {
+        string tempRoot = Path.Combine(Path.GetTempPath(), "TuckPane-Depth2Map-" + Guid.NewGuid().ToString("N"));
+        string hiddenApp = Path.Combine(tempRoot, "OrgCore", "vpn", "HiddenApp");
+        string hiddenGroup = Path.Combine(tempRoot, "OrgCore", "HiddenGroup");
+        try
+        {
+            string desktopDir = Path.Combine(tempRoot, "Desktop");
+            string orgCore = Path.Combine(tempRoot, "OrgCore");
+            Directory.CreateDirectory(desktopDir);
+            Directory.CreateDirectory(Path.Combine(orgCore, "Alpha"));
+            Directory.CreateDirectory(Path.Combine(orgCore, "vpn", "Alpha"));
+            Directory.CreateDirectory(Path.Combine(orgCore, "vpn", "Bettbox", "DeepSub"));
+            Directory.CreateDirectory(hiddenApp);
+            Directory.CreateDirectory(Path.Combine(orgCore, "vpn", "staging.tmp"));
+            Directory.CreateDirectory(Path.Combine(hiddenGroup, "InsideHidden"));
+
+            File.SetAttributes(hiddenApp, FileAttributes.Directory | FileAttributes.Hidden);
+            File.SetAttributes(hiddenGroup, FileAttributes.Directory | FileAttributes.Hidden);
+
+            Guid orgId = Guid.NewGuid();
+            var state = new AppStateV2
+            {
+                Organizers =
+                [
+                    new OrganizerDefinition
+                    {
+                        Id = orgId,
+                        Name = "核心文件",
+                        StorageAbsolutePath = orgCore
+                    }
+                ]
+            };
+
+            IReadOnlyList<OrganizerFolderMapping> mappings = InstalledAppPathService.BuildFolderMappings(state, desktopDir);
+
+            // Depth-1 Alpha MUST win over depth-2 vpn\Alpha.
+            string desktopAlpha = DesktopUpdateMatchRules.NormalizePath(Path.Combine(desktopDir, "Alpha"));
+            OrganizerFolderMapping[] alphaMaps = mappings
+                .Where(m => m.OldDesktopPrefix.Equals(desktopAlpha, StringComparison.OrdinalIgnoreCase))
+                .ToArray();
+            require(alphaMaps.Length == 1 &&
+                    alphaMaps[0].Depth == 1 &&
+                    alphaMaps[0].NewOrganizerPrefix.Equals(DesktopUpdateMatchRules.NormalizePath(Path.Combine(orgCore, "Alpha")), StringComparison.OrdinalIgnoreCase),
+                "同名目录存在 depth-1 与 depth-2 时，depth-1 必须唯一胜出。");
+
+            // Depth-1 vpn MUST exist.
+            string desktopVpn = DesktopUpdateMatchRules.NormalizePath(Path.Combine(desktopDir, "vpn"));
+            require(mappings.Any(m => m.OldDesktopPrefix.Equals(desktopVpn, StringComparison.OrdinalIgnoreCase) && m.Depth == 1),
+                "depth-1 顶层目录 vpn 映射缺失。");
+
+            // Depth-2 vpn\Bettbox MUST map Desktop\Bettbox -> OrgCore\vpn\Bettbox.
+            string desktopBettbox = DesktopUpdateMatchRules.NormalizePath(Path.Combine(desktopDir, "Bettbox"));
+            OrganizerFolderMapping? bettboxMap = mappings.FirstOrDefault(m =>
+                m.OldDesktopPrefix.Equals(desktopBettbox, StringComparison.OrdinalIgnoreCase));
+            require(bettboxMap is not null &&
+                    bettboxMap.Depth == 2 &&
+                    bettboxMap.NewOrganizerPrefix.Equals(DesktopUpdateMatchRules.NormalizePath(Path.Combine(orgCore, "vpn", "Bettbox")), StringComparison.OrdinalIgnoreCase),
+                "depth-2 嵌套应用目录 vpn\\Bettbox 映射缺失或路径错误。");
+
+            // Depth-3, hidden, and ignored names MUST NOT appear.
+            foreach (string forbiddenName in new[] { "DeepSub", "HiddenApp", "staging.tmp", "HiddenGroup", "InsideHidden" })
+            {
+                string forbiddenDesktop = DesktopUpdateMatchRules.NormalizePath(Path.Combine(desktopDir, forbiddenName));
+                require(!mappings.Any(m => m.OldDesktopPrefix.Equals(forbiddenDesktop, StringComparison.OrdinalIgnoreCase)),
+                    $"不应映射隐藏/忽略/超深目录：{forbiddenName}");
+            }
+
+            // TargetPathExistsInOrganizer MUST validate multi-segment App Paths & MSI ModifyPath cleanly.
+            string orgVpn = DesktopUpdateMatchRules.NormalizePath(Path.Combine(orgCore, "vpn"));
+            require(InstalledAppPathService.TargetPathExistsInOrganizer($@"C:\Other;{orgVpn}\Bettbox;{orgVpn}\Bettbox\bin", orgVpn),
+                "TargetPathExistsInOrganizer 未识别分号分隔 App Paths 中的有效目标目录。");
+            require(InstalledAppPathService.TargetPathExistsInOrganizer($"MsiExec.exe /I \"{orgVpn}\\Bettbox\\setup.msi\"", orgVpn),
+                "TargetPathExistsInOrganizer 未识别 ModifyPath 命令中的有效收纳目录。");
+            require(!InstalledAppPathService.TargetPathExistsInOrganizer($"\"{orgVpn}\\NonExistentApp\\app.exe\"", orgVpn),
+                "TargetPathExistsInOrganizer 误放行了不存在于收纳窗中的目录。");
+        }
+        finally
+        {
+            ClearHiddenIfExists(hiddenApp);
+            ClearHiddenIfExists(hiddenGroup);
+            if (Directory.Exists(tempRoot)) Directory.Delete(tempRoot, recursive: true);
+        }
+    }
+
+    private static void CheckElevatedRepairScriptContractsAndPowerShellSyntax(Action<bool, string> require)
+    {
+        string script = InstalledAppPathService.BuildElevatedRepairScript();
+        require(script.Contains("Set-ItemProperty -LiteralPath $psPath -Name '(Default)' -Value $e.NewValue", StringComparison.Ordinal),
+            "提权修复脚本缺少 (Default) 注册表默认值写入分支。");
+        require(script.Contains("CleanupFilePaths", StringComparison.Ordinal) &&
+                script.Contains("Remove-Item -LiteralPath $p -Force", StringComparison.Ordinal),
+            "提权修复脚本缺少 CleanupFilePaths 公共桌面副本清理逻辑。");
+        require(script.Contains("reg.exe export", StringComparison.Ordinal),
+            "提权修复脚本缺少修改前 .reg 备份导出逻辑。");
+
+        string tempDir = Path.Combine(Path.GetTempPath(), "TuckPane-PsSyntax-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            Directory.CreateDirectory(tempDir);
+            string scriptPath = Path.Combine(tempDir, "apply-repair.ps1");
+            string crlfScript = script.Replace("\r\n", "\n").Replace("\n", "\r\n");
+            File.WriteAllText(scriptPath, crlfScript, new UTF8Encoding(encoderShouldEmitUTF8Identifier: true));
+
+            // 1. Validate with Windows PowerShell 5.1 AST parser.
+            string winPsExe = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.System),
+                "WindowsPowerShell",
+                "v1.0",
+                "powershell.exe");
+            require(File.Exists(winPsExe), "未找到 Windows PowerShell 5.1 可执行文件。");
+            AssertPowerShellAstValid(winPsExe, scriptPath, "Windows PowerShell 5.1", require);
+
+            // 2. Validate with PowerShell 7 (pwsh) AST parser if installed.
+            string? pwshExe = ResolvePwshExecutable();
+            if (!string.IsNullOrWhiteSpace(pwshExe))
+                AssertPowerShellAstValid(pwshExe, scriptPath, "PowerShell 7 (pwsh)", require);
+        }
+        finally
+        {
+            if (Directory.Exists(tempDir)) Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    private static void AssertPowerShellAstValid(
+        string shellExe,
+        string scriptPath,
+        string label,
+        Action<bool, string> require)
+    {
+        var psi = new ProcessStartInfo(shellExe)
+        {
+            UseShellExecute = false,
+            RedirectStandardOutput = false,
+            RedirectStandardError = true,
+            CreateNoWindow = true
+        };
+        psi.ArgumentList.Add("-NoProfile");
+        psi.ArgumentList.Add("-NonInteractive");
+        psi.ArgumentList.Add("-Command");
+        psi.ArgumentList.Add(
+            "$errors = $null; [void][System.Management.Automation.Language.Parser]::ParseFile($env:TUCKPANE_PS_CHECK_PATH, [ref]$null, [ref]$errors); " +
+            "if ($errors -and $errors.Count -gt 0) { $errors | ForEach-Object { [Console]::Error.WriteLine($_.Message) }; exit 1 }");
+        psi.Environment["TUCKPANE_PS_CHECK_PATH"] = scriptPath;
+
+        using Process proc = Process.Start(psi) ?? throw new InvalidOperationException($"无法启动 {label} 语法校验进程。");
+        string stderr = proc.StandardError.ReadToEnd();
+        bool exited = proc.WaitForExit(15_000);
+        require(exited && proc.ExitCode == 0, $"{label} AST 语法解析失败（exited={exited}）：{stderr}");
+    }
+
+    private static string? ResolvePwshExecutable()
+    {
+        string pathEnv = Environment.GetEnvironmentVariable("PATH") ?? string.Empty;
+        foreach (string segment in pathEnv.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries))
+        {
+            try
+            {
+                string candidate = Path.Combine(segment.Trim().Trim('"'), "pwsh.exe");
+                if (File.Exists(candidate)) return candidate;
+            }
+            catch
+            {
+                // Skip invalid PATH entry.
+            }
+        }
+
+        string programFilesPwsh = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),
+            "PowerShell",
+            "7",
+            "pwsh.exe");
+        return File.Exists(programFilesPwsh) ? programFilesPwsh : null;
+    }
+
+    private static void ClearHiddenIfExists(string directoryPath)
+    {
+        try
+        {
+            if (Directory.Exists(directoryPath))
+                File.SetAttributes(directoryPath, FileAttributes.Directory);
+        }
+        catch
+        {
+            // Best-effort cleanup.
+        }
     }
 
     private static void CheckOriginLedgerAndSuppression(Action<bool, string> require)
@@ -236,6 +476,134 @@ internal static class DesktopUpdateReconcilerChecks
         finally
         {
             if (Directory.Exists(tempRoot)) Directory.Delete(tempRoot, recursive: true);
+        }
+    }
+
+    private static async Task CheckProactiveImportShortcutRebindAsync(Action<bool, string> require)
+    {
+        string tempRoot = Path.Combine(Path.GetTempPath(), "TuckPane-ImportRebind-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            string tempDesktop = Path.Combine(tempRoot, "Desktop");
+            string orgCore = Path.Combine(tempRoot, "OrgCore");
+            string orgApps = Path.Combine(tempRoot, "OrgApps");
+            string otherAppDir = Path.Combine(tempRoot, "OtherApp");
+            Directory.CreateDirectory(tempDesktop);
+            Directory.CreateDirectory(orgCore);
+            Directory.CreateDirectory(orgApps);
+            Directory.CreateDirectory(otherAppDir);
+
+            string folderName = "TempAppFolder_" + Guid.NewGuid().ToString("N")[..8];
+            string oldDesktopFolder = Path.Combine(tempDesktop, folderName);
+            string oldExeDir = Path.Combine(oldDesktopFolder, "Bettbox");
+            string oldExePath = Path.Combine(oldExeDir, "Bettbox.exe");
+            Directory.CreateDirectory(oldExeDir);
+            await File.WriteAllTextAsync(oldExePath, "fake-exe");
+
+            string otherExePath = Path.Combine(otherAppDir, "Other.exe");
+            await File.WriteAllTextAsync(otherExePath, "other-exe");
+
+            string desktopLnk = Path.Combine(tempDesktop, "Bettbox.lnk");
+            string orgAppsLnk = Path.Combine(orgApps, "Bettbox.lnk");
+            string unrelatedLnk = Path.Combine(orgApps, "Other.lnk");
+            CreateTestShortcut(desktopLnk, oldExePath, oldExeDir, oldExePath);
+            CreateTestShortcut(orgAppsLnk, oldExePath, oldExeDir, oldExePath);
+            CreateTestShortcut(unrelatedLnk, otherExePath, otherAppDir, otherExePath);
+
+            // Simulate dragging folder from Desktop into OrgCore.
+            string newOrganizerFolder = Path.Combine(orgCore, folderName);
+            Directory.Move(oldDesktopFolder, newOrganizerFolder);
+            string expectedNewExe = DesktopUpdateMatchRules.NormalizePath(Path.Combine(newOrganizerFolder, "Bettbox", "Bettbox.exe"));
+            string expectedNewWorkDir = DesktopUpdateMatchRules.NormalizePath(Path.Combine(newOrganizerFolder, "Bettbox"));
+
+            Guid orgCoreId = Guid.NewGuid();
+            var state = new AppStateV2
+            {
+                Organizers =
+                [
+                    new OrganizerDefinition { Id = orgCoreId, Name = "Core", StorageAbsolutePath = orgCore },
+                    new OrganizerDefinition { Id = Guid.NewGuid(), Name = "Apps", StorageAbsolutePath = orgApps }
+                ]
+            };
+
+            // Verify BuildShortcutSearchRoots includes Start Menu & all organizers.
+            List<string> searchRoots = DesktopUpdateReconcilerService.BuildShortcutSearchRoots(state);
+            string startMenu = Environment.GetFolderPath(Environment.SpecialFolder.StartMenu);
+            if (!string.IsNullOrWhiteSpace(startMenu) && Directory.Exists(startMenu))
+            {
+                require(searchRoots.Any(r => DesktopUpdateMatchRules.NormalizePath(r)
+                    .Equals(DesktopUpdateMatchRules.NormalizePath(startMenu), StringComparison.OrdinalIgnoreCase)),
+                    "BuildShortcutSearchRoots 未包含用户开始菜单目录。");
+            }
+            require(searchRoots.Any(r => DesktopUpdateMatchRules.NormalizePath(r)
+                .Equals(DesktopUpdateMatchRules.NormalizePath(orgApps), StringComparison.OrdinalIgnoreCase)),
+                "BuildShortcutSearchRoots 未包含收纳窗存储目录。");
+
+            var ledger = new DesktopOriginLedger(Path.Combine(tempRoot, "ledger.json"));
+            using var reconciler = new DesktopUpdateReconcilerService(() => state, new TransferQueue(), (_, _) => { }, ledger);
+            int stateChangedCount = 0;
+            reconciler.StateChanged += () => Interlocked.Increment(ref stateChangedCount);
+
+            // 1. When disabled, NotifyFolderImportedFromDesktopAsync MUST be a no-op.
+            await reconciler.NotifyFolderImportedFromDesktopAsync(oldDesktopFolder, newOrganizerFolder, orgCoreId);
+            ShortcutInspection? stillOld = ShortcutIntegrityService.InspectLink(orgAppsLnk);
+            require(stillOld is not null &&
+                    DesktopUpdateMatchRules.NormalizePath(stillOld.ExpandedTargetPath)
+                        .Equals(DesktopUpdateMatchRules.NormalizePath(oldExePath), StringComparison.OrdinalIgnoreCase) &&
+                    stateChangedCount == 0,
+                "服务未启用时 NotifyFolderImportedFromDesktopAsync 不应修改快捷方式或触发事件。");
+
+            // 2. When enabled, NotifyFolderImportedFromDesktopAsync MUST rebind shortcuts on temp Desktop & Organizers immediately.
+            reconciler.SetEnabled(true);
+            await reconciler.NotifyFolderImportedFromDesktopAsync(oldDesktopFolder, newOrganizerFolder, orgCoreId);
+
+            ShortcutInspection? reboundDesktop = ShortcutIntegrityService.InspectLink(desktopLnk);
+            ShortcutInspection? reboundOrg = ShortcutIntegrityService.InspectLink(orgAppsLnk);
+            ShortcutInspection? untouchedOther = ShortcutIntegrityService.InspectLink(unrelatedLnk);
+
+            require(reboundDesktop is not null &&
+                    DesktopUpdateMatchRules.NormalizePath(reboundDesktop.ExpandedTargetPath)
+                        .Equals(expectedNewExe, StringComparison.OrdinalIgnoreCase) &&
+                    DesktopUpdateMatchRules.NormalizePath(reboundDesktop.RawWorkingDirectory)
+                        .Equals(expectedNewWorkDir, StringComparison.OrdinalIgnoreCase),
+                $"NotifyFolderImportedFromDesktopAsync 未重绑桌面快捷方式：{reboundDesktop?.ExpandedTargetPath}");
+
+            require(reboundOrg is not null &&
+                    DesktopUpdateMatchRules.NormalizePath(reboundOrg.ExpandedTargetPath)
+                        .Equals(expectedNewExe, StringComparison.OrdinalIgnoreCase) &&
+                    DesktopUpdateMatchRules.NormalizePath(reboundOrg.RawWorkingDirectory)
+                        .Equals(expectedNewWorkDir, StringComparison.OrdinalIgnoreCase),
+                $"NotifyFolderImportedFromDesktopAsync 未重绑收纳窗快捷方式：{reboundOrg?.ExpandedTargetPath}");
+
+            require(untouchedOther is not null &&
+                    DesktopUpdateMatchRules.NormalizePath(untouchedOther.ExpandedTargetPath)
+                        .Equals(DesktopUpdateMatchRules.NormalizePath(otherExePath), StringComparison.OrdinalIgnoreCase),
+                "NotifyFolderImportedFromDesktopAsync 误修改了无关快捷方式。");
+
+            require(stateChangedCount >= 1,
+                "NotifyFolderImportedFromDesktopAsync 完成后未触发 StateChanged 通知。");
+        }
+        finally
+        {
+            if (Directory.Exists(tempRoot)) Directory.Delete(tempRoot, recursive: true);
+        }
+    }
+
+    private static void CreateTestShortcut(string lnkPath, string targetPath, string workingDir, string iconPath)
+    {
+        object instance = new NativeMethods.ShellLink();
+        try
+        {
+            var link = (NativeMethods.IShellLinkW)instance;
+            Marshal.ThrowExceptionForHR(link.SetPath(targetPath));
+            Marshal.ThrowExceptionForHR(link.SetWorkingDirectory(workingDir));
+            Marshal.ThrowExceptionForHR(link.SetIconLocation(iconPath, 0));
+            ((IPersistFile)instance).Save(lnkPath, true);
+        }
+        finally
+        {
+            if (Marshal.IsComObject(instance))
+                _ = Marshal.FinalReleaseComObject(instance);
         }
     }
 

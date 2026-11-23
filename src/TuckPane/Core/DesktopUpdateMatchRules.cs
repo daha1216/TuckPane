@@ -458,9 +458,21 @@ public static partial class DesktopUpdateMatchRules
         return current;
     }
 
+    private static readonly string[] CommandExecutableExtensions =
+    [
+        ".exe",
+        ".bat",
+        ".cmd",
+        ".com",
+        ".msi",
+        ".ps1",
+        ".vbs"
+    ];
+
     /// <summary>
     /// Safely rewrites an old Desktop directory prefix inside registry values such as
-    /// InstallLocation, Inno Setup: App Path, UninstallString, DisplayIcon (with ",0"), or Service ImagePath,
+    /// InstallLocation, Inno Setup: App Path, InstallSource, UninstallString, ModifyPath,
+    /// DisplayIcon (with ",0"), App Paths (Default &amp; semicolon-delimited Path), Run, or Service ImagePath,
     /// preserving surrounding quotes, trailing slashes, icon indices, and command-line arguments.
     /// </summary>
     public static bool TryRewritePathPrefix(
@@ -485,25 +497,51 @@ public static partial class DesktopUpdateMatchRules
             return false;
         }
 
-        int matchIndex = rawValue.IndexOf(normOld, StringComparison.OrdinalIgnoreCase);
-        if (matchIndex < 0) return false;
+        int searchFrom = 0;
+        bool replacedAny = false;
+        System.Text.StringBuilder? sb = null;
+        int copiedUntil = 0;
 
-        int afterIndex = matchIndex + normOld.Length;
-        if (afterIndex < rawValue.Length)
+        while (searchFrom <= rawValue.Length - normOld.Length)
         {
-            char next = rawValue[afterIndex];
-            // Must end on a path boundary (slash, quote, comma for icon index, whitespace, or end-of-string)
-            // so "Desktop\vpn" never accidentally rewrites "Desktop\vpn2".
-            if (next is not ('\\' or '/' or '"' or ',' or ' ' or '\t'))
-                return false;
+            int matchIndex = rawValue.IndexOf(normOld, searchFrom, StringComparison.OrdinalIgnoreCase);
+            if (matchIndex < 0) break;
+
+            bool leadingOk = matchIndex == 0 ||
+                rawValue[matchIndex - 1] is ('"' or '\'' or ';' or '=' or ' ' or '\t');
+
+            int afterIndex = matchIndex + normOld.Length;
+            // Must end on a path boundary (slash, quote, comma for icon index, semicolon for PATH lists,
+            // whitespace, or end-of-string) so "Desktop\vpn" never accidentally rewrites "Desktop\vpn2".
+            bool trailingOk = afterIndex == rawValue.Length ||
+                rawValue[afterIndex] is ('\\' or '/' or '"' or '\'' or ',' or ';' or ' ' or '\t');
+
+            if (leadingOk && trailingOk)
+            {
+                sb ??= new System.Text.StringBuilder(rawValue.Length + Math.Max(0, normNew.Length - normOld.Length));
+                sb.Append(rawValue, copiedUntil, matchIndex - copiedUntil);
+                sb.Append(normNew);
+                copiedUntil = afterIndex;
+                searchFrom = afterIndex;
+                replacedAny = true;
+            }
+            else
+            {
+                searchFrom = matchIndex + 1;
+            }
         }
 
-        rewritten = string.Concat(rawValue.AsSpan(0, matchIndex), normNew, rawValue.AsSpan(afterIndex));
+        if (!replacedAny || sb is null)
+            return false;
+
+        sb.Append(rawValue, copiedUntil, rawValue.Length - copiedUntil);
+        rewritten = sb.ToString();
         return !string.Equals(rewritten, rawValue, StringComparison.Ordinal);
     }
 
     /// <summary>
-    /// Extracts the filesystem path portion from a registry value (stripping quotes, trailing arguments, or ",iconIndex").
+    /// Extracts the filesystem path portion from a registry value (stripping quotes,
+    /// semicolon-delimited PATH suffixes, trailing arguments, or ",iconIndex").
     /// </summary>
     public static string ExtractLeadingPath(string? rawValue)
     {
@@ -512,20 +550,60 @@ public static partial class DesktopUpdateMatchRules
         if (s.StartsWith('"'))
         {
             int endQuote = s.IndexOf('"', 1);
-            if (endQuote > 1) return s[1..endQuote].Trim();
-            return s.Trim('"');
+            s = endQuote > 1 ? s[1..endQuote].Trim() : s.Trim('"').Trim();
+            return StripTrailingIconIndex(s);
         }
 
-        // Strip trailing ",0" icon index if present.
-        int commaIndex = s.LastIndexOf(',');
-        if (commaIndex > 2 && int.TryParse(s[(commaIndex + 1)..].Trim(), out _))
-            s = s[..commaIndex].Trim();
+        // For semicolon-delimited PATH values (e.g. App Paths\Path), take the first non-empty entry.
+        int semicolonIndex = s.IndexOf(';');
+        if (semicolonIndex >= 0)
+        {
+            foreach (string part in s.Split(';', StringSplitOptions.RemoveEmptyEntries))
+            {
+                string trimmedPart = part.Trim().Trim('"');
+                if (trimmedPart.Length > 0)
+                {
+                    s = trimmedPart;
+                    break;
+                }
+            }
+        }
 
-        // If unquoted command line with .exe followed by arguments, truncate right after .exe.
-        int exeIndex = s.IndexOf(".exe ", StringComparison.OrdinalIgnoreCase);
-        if (exeIndex > 0)
-            s = s[..(exeIndex + 4)].Trim();
+        // Strip trailing ",0" or ",-101" icon index if present.
+        s = StripTrailingIconIndex(s);
+
+        // If unquoted command line with an executable extension followed by whitespace arguments,
+        // truncate right after the executable extension.
+        int bestCut = -1;
+        foreach (string ext in CommandExecutableExtensions)
+        {
+            int searchFrom = 0;
+            while (searchFrom < s.Length)
+            {
+                int idx = s.IndexOf(ext, searchFrom, StringComparison.OrdinalIgnoreCase);
+                if (idx <= 0) break;
+                int endIdx = idx + ext.Length;
+                if (endIdx < s.Length && s[endIdx] is ' ' or '\t')
+                {
+                    if (bestCut < 0 || endIdx < bestCut)
+                        bestCut = endIdx;
+                    break;
+                }
+                searchFrom = endIdx;
+            }
+        }
+
+        if (bestCut > 0)
+            s = s[..bestCut].Trim();
 
         return s;
+    }
+
+    private static string StripTrailingIconIndex(string value)
+    {
+        int commaIndex = value.LastIndexOf(',');
+        if (commaIndex > 2 && int.TryParse(value[(commaIndex + 1)..].Trim(), out _))
+            return value[..commaIndex].Trim();
+        return value;
     }
 }

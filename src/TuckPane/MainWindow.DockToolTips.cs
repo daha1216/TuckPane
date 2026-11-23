@@ -16,17 +16,89 @@ public sealed partial class MainWindow
     private HoverRect _lastDockTipPixels;
     private double _lastDockTipScale;
     private bool _lastDockTipHorizontal;
+    private Border? _suppressedToolTipHost;
+    private object? _suppressedToolTipContent;
+    private Border? _suppressedToolTipProxy;
+    private object? _suppressedToolTipProxyContent;
 
     private void SetItemToolTip(Border host, string text)
     {
         if (!IsDock || !_hoverItems.TryGetValue(host, out HoverItemVisual? item))
         {
+            if (ReferenceEquals(_suppressedToolTipHost, host))
+            {
+                _suppressedToolTipContent = text;
+                if (ToolTipService.GetToolTip(host) is ToolTip suppressedTip) suppressedTip.IsOpen = false;
+                ToolTipService.SetToolTip(host, null);
+                return;
+            }
             ToolTipService.SetToolTip(host, text);
             return;
         }
         ToolTipService.SetToolTip(host, null);
         ToolTipService.SetToolTip(item.Content, null);
         item.DockToolTipText = text;
+    }
+
+    private void SuppressItemHostToolTip(Border host)
+    {
+        CloseDockToolTip();
+        if (_suppressedToolTipHost is not null && !ReferenceEquals(_suppressedToolTipHost, host))
+            RestoreSuppressedItemHostToolTip();
+
+        object? current = ToolTipService.GetToolTip(host);
+        if (current is ToolTip openTip) openTip.IsOpen = false;
+        if (!ReferenceEquals(_suppressedToolTipHost, host))
+        {
+            _suppressedToolTipHost = host;
+            _suppressedToolTipContent = current;
+        }
+        else if (_suppressedToolTipContent is null && current is not null)
+        {
+            _suppressedToolTipContent = current;
+        }
+        ToolTipService.SetToolTip(host, null);
+
+        if (_hoverItems.TryGetValue(host, out HoverItemVisual? hoverItem) && hoverItem.Proxy is { } proxy)
+        {
+            object? proxyTip = ToolTipService.GetToolTip(proxy);
+            if (proxyTip is ToolTip openProxyTip) openProxyTip.IsOpen = false;
+            if (!ReferenceEquals(_suppressedToolTipProxy, proxy))
+            {
+                _suppressedToolTipProxy = proxy;
+                _suppressedToolTipProxyContent = proxyTip;
+            }
+            else if (_suppressedToolTipProxyContent is null && proxyTip is not null)
+            {
+                _suppressedToolTipProxyContent = proxyTip;
+            }
+            ToolTipService.SetToolTip(proxy, null);
+            hoverItem.AppliedToolTip = null;
+        }
+    }
+
+    private void RestoreSuppressedItemHostToolTip()
+    {
+        if (_suppressedToolTipHost is { } host)
+        {
+            object? content = _suppressedToolTipContent;
+            _suppressedToolTipHost = null;
+            _suppressedToolTipContent = null;
+            if (content is not null && !IsDock && ToolTipService.GetToolTip(host) is null)
+            {
+                ToolTipService.SetToolTip(host, content);
+            }
+        }
+        if (_suppressedToolTipProxy is { } proxy)
+        {
+            object? proxyContent = _suppressedToolTipProxyContent;
+            _suppressedToolTipProxy = null;
+            _suppressedToolTipProxyContent = null;
+            if (proxyContent is not null && !IsDock && ToolTipService.GetToolTip(proxy) is null)
+            {
+                ToolTipService.SetToolTip(proxy, proxyContent);
+            }
+        }
     }
 
     private void UpdateDockToolTip(Point point)

@@ -423,7 +423,11 @@ public sealed partial class AppHost
     internal async Task<AutoOrganizeRunSummary> RunAutoOrganizeAsync()
     {
         IReadOnlyList<AutoOrganizePlannedMove> plan = _autoOrganize.PreviewPlan(State);
-        AutoOrganizeRunSummary summary = await _autoOrganize.ExecutePlanAsync(plan, TransferQueue);
+        AutoOrganizeRunSummary summary = await _autoOrganize.ExecutePlanAsync(
+            plan,
+            TransferQueue,
+            cancellationToken: default,
+            onDesktopFolderImported: NotifyDesktopFolderImported);
         foreach (Guid targetId in plan.Select(item => item.TargetOrganizerId).Distinct())
         {
             if (_windows.TryGetValue(targetId, out MainWindow? window))
@@ -473,6 +477,11 @@ public sealed partial class AppHost
         if (_desktopUpdateReconciler is null)
             return Task.FromResult(new DesktopUpdateReconcileSummary(0, 0, 0, 0, 0, 0, [], []));
         return _desktopUpdateReconciler.ReconcileAllAsync(allowElevationUi, cancellationToken);
+    }
+
+    internal void NotifyDesktopFolderImported(string oldDesktopPath, string newOrganizerPath, Guid organizerId)
+    {
+        _desktopUpdateReconciler?.NotifyFolderImportedFromDesktop(oldDesktopPath, newOrganizerPath, organizerId);
     }
 
     internal Task<ElevatedRepairOutcome> ResolveLockedDesktopUpdatesAndPathsAsync(

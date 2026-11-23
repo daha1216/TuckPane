@@ -543,4 +543,8 @@
   <data name="DesktopUpdateSyncRepairDoneFormat" xml:space="preserve"><value>修复完成：合并覆盖 {0} 个文件，更新 {1} 条安装注册表路径与 {2} 个服务路径（已自动备份 .reg）。</value></data>
   <data name="DesktopUpdateSyncRepairCancelled" xml:space="preserve"><value>已取消管理员授权，未修改系统路径或正在运行的程序。</value></data>
   <data name="DesktopUpdateSyncErrorTitle" xml:space="preserve"><value>桌面更新同步失败</value></data>
+  <data name="DragBadgeMoveToDesktop" xml:space="preserve"><value>移到桌面</value></data>
+  <data name="DragBadgeCopyToDesktop" xml:space="preserve"><value>复制到桌面</value></data>
+  <data name="DragBadgeMoveToOrganizerFormat" xml:space="preserve"><value>移入「{0}」</value></data>
+  <data name="DragBadgeCopyToOrganizerFormat" xml:space="preserve"><value>复制到「{0}」</value></data>
 </root>

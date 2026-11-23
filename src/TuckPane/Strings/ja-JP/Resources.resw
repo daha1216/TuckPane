@@ -543,4 +543,8 @@
   <data name="DesktopUpdateSyncRepairDoneFormat" xml:space="preserve"><value>修復完了：{0} ファイルを統合し、{1} 件のレジストリと {2} 件のサービスパスを更新しました（.reg バックアップ保存済み）。</value></data>
   <data name="DesktopUpdateSyncRepairCancelled" xml:space="preserve"><value>管理者権限の承認がキャンセルされたため、変更は行われませんでした。</value></data>
   <data name="DesktopUpdateSyncErrorTitle" xml:space="preserve"><value>デスクトップ更新の同期に失敗しました</value></data>
+  <data name="DragBadgeMoveToDesktop" xml:space="preserve"><value>デスクトップへ移動</value></data>
+  <data name="DragBadgeCopyToDesktop" xml:space="preserve"><value>デスクトップへコピー</value></data>
+  <data name="DragBadgeMoveToOrganizerFormat" xml:space="preserve"><value>「{0}」へ移動</value></data>
+  <data name="DragBadgeCopyToOrganizerFormat" xml:space="preserve"><value>「{0}」へコピー</value></data>
 </root>

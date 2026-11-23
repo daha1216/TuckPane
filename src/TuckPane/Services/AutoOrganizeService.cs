@@ -57,7 +57,8 @@ internal sealed class AutoOrganizeService
     internal async Task<AutoOrganizeRunSummary> ExecutePlanAsync(
         IReadOnlyList<AutoOrganizePlannedMove> plan,
         TransferQueue? transferQueue = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        Action<string, string, Guid>? onDesktopFolderImported = null)
     {
         if (plan.Count == 0) return new(0, 0, 0, null);
 
@@ -94,6 +95,8 @@ internal sealed class AutoOrganizeService
                                 ? ShortcutIntegrityService.InspectLink(outcome.DestinationPath)?.ExpandedTargetPath
                                 : null;
                             DesktopOriginLedger.Shared.RecordMovedFromDesktop(outcome.SourcePath, orgId, relName, isDir, target);
+                            if (isDir)
+                                onDesktopFolderImported?.Invoke(outcome.SourcePath, outcome.DestinationPath, orgId);
                         }
                         break;
                     case TransferStatus.ShortcutCreated when !string.IsNullOrWhiteSpace(outcome.DestinationPath):
