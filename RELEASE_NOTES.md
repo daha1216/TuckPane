@@ -1,3 +1,17 @@
+## 4.4.0
+
+本版合入 **「桌面应用更新源头防重与无损覆盖同步」** 及 **「240Hz 无裁切跨窗超流体拖拽引擎 + Windows 11 桌面精准落位」** 两大旗舰特性 PR（[#20](https://github.com/daha1216/TuckPane/pull/20)），从源头彻底终结已收纳软件更新后在桌面重复生成副本的顽疾，并将收纳窗向桌面/跨收纳窗拖出图标的流畅度打磨至全新高度（完全保持 `SchemaVersion = 16` 配置向后兼容，应用内更新只检查本 fork `daha1216/TuckPane`）。
+
+- **已收纳软件更新「源头断根 + 事后无损吸收」双保险**：
+  - **拖入收纳窗即刻源头重绑**：新增 `DesktopOriginLedger` 来源账本、`DesktopUpdateReconcilerService` 与 `InstalledAppPathService`。应用文件夹通过拖入、右键或一键整理收纳进窗的瞬间，立即自动重绑用户桌面、开始菜单（递归 3 层含 `Startup`）及全收纳窗内的 `.lnk` 快捷方式，并静默修复 `HKCU` 下 `Uninstall`（含 `InstallLocation` / `Inno Setup: App Path` / `InstallSource` / `ModifyPath` / `UninstallString` / `DisplayIcon`）、`App Paths` 及 `Run` 开机自启路径；同步支持二级嵌套应用目录自动识别。
+  - **实时双桌面监听与无损覆盖合并**：同时监听用户桌面与公共桌面（`C:\Users\Public\Desktop`），以 7 级确定性规则（精确同名、同目标程序、跨版本号目录段、同 `.url` 目标、目录结构交集、账本追踪、安全防浏览器多 Profile 误合）识别软件更新后落在桌面的新副本，静默就地覆写收纳窗内原项（完整保留自由网格槽位与其余兄弟目录），零弹窗零打扰。
+  - **运行锁检测 + 一键 `.reg` 备份提权同步**：遇到运行中进程或 Windows 服务占用（如代理工具/后台助手服务）或 `HKLM`/公共桌面需提权项时，自动枚举精确占用进程与服务，在控制面板「设置 → 系统」提供安全的一键提权合并与路径同步：先自动导出 `.reg` 可回滚备份，优雅停服停进程、逐文件无损覆盖合并、通过 `sc.exe config` 更新服务路径、同步清理公共桌面重复快捷方式，并以普通用户权限从收纳窗目录自动拉起原应用。
+- **240Hz 无裁切跨窗超流体拖拽引擎 & Windows 11 桌面精准落位**：
+  - **专属 `DwmFlush` 240Hz 原生分层浮窗（`FloatingDragGhostWindow`）**：运行在独立高优先级 VSync 渲染线程（空闲 0% CPU 休眠），全屏穿透置顶（`WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_TOPMOST | WS_EX_NOACTIVATE`），PerMonitorV2 跨不同 DPI 显示器动态重绘，即使主线程进入原生 OLE 拖放循环也保持 120–240Hz 满帧不卡顿；采用 Win2D Liquid Glass 双层苹果景深阴影、磨砂琉璃圆角卡片、1px 顶部高光描边、超采样图标、多选扇形叠牌与蓝标计数、速度耦合 `±8.5°` 弹簧惯性倾斜、稳态位置零重绘快路径与软件渲染回退。
+  - **触边前 6 DIP 原子预升空（零半裁切、零跨边消失、零双影）**：新增 `CrossWindowDragMath` 在图标放大边界距窗口裁剪沿 6 DIP 时即以 0px 偏差无缝移交顶层浮窗，彻底消除图标在收纳窗边缘被切半与拖出后消失的断层；全部文件/文件夹/快捷方式统一关闭旧版模糊 64px OLE 拖影；新增三语实时自适应液态玻璃操作胶囊（`移到桌面` / 按 `Ctrl` 实时切 `复制到桌面` / `移入「收纳窗名」`），放手播放 `180ms` 临界阻尼弹簧落地，按 `Esc` 取消播放 `240ms` 弹性弹簧回弹飞回原格。
+  - **Tooltip 彻底净化与 Windows 11 指哪落哪**：拖动瞬间自动关闭并屏蔽所有悬浮提示框，日常悬停统一展示简洁名称不再泄露内部存储路径；新增 `DesktopIconPositionService`，通过 Windows Shell COM `IFolderView2::SelectAndPositionItems` 在落桌后将图标精确落到松手光标位置（多选批量拖出自动按桌面网格扇形排开，并自动尊重系统「自动排列图标」开关）。
+- **验证**：Release x64 **0 警告 0 错误**；无头 `TuckPane.LogicChecks` **65/65**（新增 `--desktop-update-reconciler` 与 `--cross-window-drag`）、`TuckPane.UpdateChecks` **5/5**、`check-portable-launcher.ps1` **6/6** 及 PowerShell 5.1/7 语法与实机场景全部通过验收。
+
 ## 4.3.3
 
 本版为应用内更新体验热修版，彻底解决共享代理/VPN 出口节点下点击「检查更新」触发 GitHub REST API `403 (rate limit exceeded)` 限流报错的问题（完全保持 `SchemaVersion = 16` 配置向后兼容，应用内更新只检查本 fork `daha1216/TuckPane`）。
